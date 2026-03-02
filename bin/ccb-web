@@ -45,6 +45,16 @@ def main():
         "--token",
         help="Use specified token for authentication",
     )
+    parser.add_argument(
+        "--desktop-mode",
+        action="store_true",
+        help="Enable desktop integration mode",
+    )
+    parser.add_argument(
+        "--work-dir",
+        default="",
+        help="Default work directory for desktop-triggered requests",
+    )
 
     args = parser.parse_args()
 
@@ -71,7 +81,12 @@ def main():
 
     # Create app
     from web.app import create_app
-    app = create_app(local_only=local_only, auth_token=args.token)
+    app = create_app(
+        local_only=local_only,
+        auth_token=args.token,
+        desktop_mode=args.desktop_mode,
+        default_work_dir=args.work_dir or None,
+    )
 
     # Print startup info
     print(f"CCB Web Controller starting on http://{args.host}:{args.port}")

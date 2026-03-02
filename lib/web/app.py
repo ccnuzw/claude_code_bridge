@@ -30,6 +30,8 @@ STATIC_DIR = WEB_DIR / "static"
 def create_app(
     local_only: bool = True,
     auth_token: Optional[str] = None,
+    desktop_mode: bool = False,
+    default_work_dir: Optional[str] = None,
 ) -> FastAPI:
     """Create the FastAPI application."""
 
@@ -43,6 +45,8 @@ def create_app(
     # Store config in app state
     app.state.local_only = local_only
     app.state.auth_token = auth_token
+    app.state.desktop_mode = desktop_mode
+    app.state.default_work_dir = default_work_dir
 
     # Mount static files
     if STATIC_DIR.exists():
