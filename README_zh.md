@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.18-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.0.19-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -98,6 +98,15 @@ cmd; writer:codex, reviewer:claude; qa:gemini(worktree)
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v6.0.19</b> - Claude 官方登录继承</summary>
+
+- **Claude 官方登录凭据投影**：managed Claude home 现在会把 Claude Code 官方登录使用的 `.config/claude-code/auth.json` 投影到隔离运行时中，使浏览器登录态也能被 CCB 继承，而不再只有 API token / settings 这一路生效
+- **Managed 登录态保留**：当全局 Claude 登录凭据消失、但 managed Claude 已经持有有效项目级登录态时，启动现在会保留这份 managed 登录凭据，不再在重启时被静默丢掉
+- **鉴权清理与回归覆盖**：关闭 auth 继承时会清理陈旧的 Claude 登录凭据副本，并新增针对投影、清理和 launcher 启动路径的回归测试
+
+</details>
+
+<details>
 <summary><b>v6.0.18</b> - Gemini Hook 空回复保护</summary>
 
 - **Gemini 空 Hook 回复不再误烧掉任务**：managed Gemini 的 `AfterAgent` hook 如果在空回复下触发，现在会降级成 `incomplete`，不再被当作错误的 exact completion 直接终结任务
