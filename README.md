@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.24-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.0.25-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -92,13 +92,22 @@ This layout means:
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v6.0.25</b> - Gemini Managed Home Alignment</summary>
+
+- **Gemini Login Inheritance Fixed**: managed Gemini panes now set `GEMINI_CLI_HOME` to the isolated home root so Gemini CLI reads the projected `.gemini/.env`, settings, and login state from the same managed boundary
+- **Regression Coverage Added**: launcher tests now lock the aligned `HOME`, `GEMINI_CLI_HOME`, and `GEMINI_ROOT` contract and guard against writing settings under nested `.gemini/.gemini`
+- **Community Contact Trimmed**: the standalone Linux.do contact entry was removed while keeping the Linux.do community acknowledgement below the contact block
+
+</details>
+
+<details>
 <summary><b>v6.0.24</b> - WSL Official Login Transport</summary>
 
 - **WSL Provider Transport Inherited**: managed provider panes now preserve user-session proxy, CA, browser, and WSL interop environment needed by official-login and Codex Apps/MCP networking paths
 - **Managed Isolation Preserved**: transport inheritance is centralized and does not allow caller-global `CODEX_HOME`, `GEMINI_ROOT`, `CLAUDE_PROJECTS_ROOT`, or `CCB_CALLER_*` runtime authority to override agent-scoped managed state
 - **Gemini Login Projection Extended**: managed Gemini homes now project allowlisted `.gemini/.env` API credentials, `google_accounts.json`, and `GEMINI_CLI_HOME` while diagnostics continue excluding copied auth artifacts
 - **Opencode Session Detection Hardened**: opencode now treats env-session mode as active only when its provider-specific runtime env is present, avoiding stale generic `CCB_SESSION_ID` contamination
-- **Community Entry Refreshed**: README now includes the refreshed WeChat group QR image and Linux.do community entry so users can find the current support channels from the public project page
+- **Community Entry Refreshed**: README now includes the refreshed WeChat group QR image and Linux.do community acknowledgement so users can find the current support channels from the public project page
 
 </details>
 
@@ -981,7 +990,6 @@ ccb reinstall
 
 📧 Email: bfly123@126.com
 💬 WeChat: seemseam-com
-🌐 [Linux.do](https://linux.do/)
 
 Thanks to the [Linux.do community](https://linux.do) for the testing, feedback, and discussion support.
 

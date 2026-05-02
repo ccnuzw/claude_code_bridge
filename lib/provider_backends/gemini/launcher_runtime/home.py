@@ -31,7 +31,7 @@ def prepare_gemini_home_overrides(runtime_dir: Path, profile) -> dict[str, str]:
     materialize_gemini_home_config(layout.home_root, profile=profile)
     return {
         'HOME': str(layout.home_root),
-        'GEMINI_CLI_HOME': str(layout.gemini_dir),
+        'GEMINI_CLI_HOME': str(layout.home_root),
         'GEMINI_ROOT': str(layout.tmp_root),
     }
 

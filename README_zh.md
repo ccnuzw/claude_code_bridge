@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.24-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.0.25-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -98,13 +98,22 @@ cmd; writer:codex, reviewer:claude; qa:gemini(worktree)
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v6.0.25</b> - Gemini Managed Home 对齐</summary>
+
+- **修复 Gemini 登录继承**：managed Gemini pane 现在会把 `GEMINI_CLI_HOME` 设置为隔离 home 根目录，让 Gemini CLI 从同一个 managed 边界读取投影后的 `.gemini/.env`、settings 与登录状态
+- **补充回归覆盖**：launcher 测试锁定 `HOME`、`GEMINI_CLI_HOME` 与 `GEMINI_ROOT` 的对齐契约，并防止 settings 再写入嵌套 `.gemini/.gemini`
+- **精简社区联系方式**：移除独立的 Linux.do 联系入口，保留联系区块后面的 Linux.do 社区致谢
+
+</details>
+
+<details>
 <summary><b>v6.0.24</b> - WSL 官方登录传输环境</summary>
 
 - **继承 WSL Provider 传输环境**：managed provider pane 现在会保留官方登录与 Codex Apps/MCP 联网路径所需的用户会话 proxy、CA、browser 与 WSL interop 环境
 - **保持 Managed 隔离边界**：传输环境继承集中在共性层，不允许调用者全局 `CODEX_HOME`、`GEMINI_ROOT`、`CLAUDE_PROJECTS_ROOT` 或 `CCB_CALLER_*` runtime authority 覆盖 agent 级 managed state
 - **扩展 Gemini 登录投影**：managed Gemini home 现在会投影 allowlist 后的 `.gemini/.env` API 凭据、`google_accounts.json` 与 `GEMINI_CLI_HOME`，诊断包仍会排除复制的 auth artifacts
 - **加固 Opencode Session 检测**：opencode 现在只有在 provider 专属 runtime env 存在时才进入 env-session 模式，避免 stale 通用 `CCB_SESSION_ID` 污染
-- **刷新社区入口**：README 已更新微信群二维码，并加入 Linux.do 社区入口与致谢，方便用户从公开项目页找到当前交流渠道
+- **刷新社区入口**：README 已更新微信群二维码，并加入 Linux.do 社区致谢，方便用户从公开项目页找到当前交流渠道
 
 </details>
 
@@ -926,7 +935,6 @@ ccb reinstall
 
 📧 Email: bfly123@126.com
 💬 微信: seemseam-com
-🌐 [Linux.do](https://linux.do/)
 
 感谢 [Linux.do 社区](https://linux.do) 在测试、反馈和讨论中的支持。
 

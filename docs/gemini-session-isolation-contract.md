@@ -91,6 +91,9 @@ These fields are authority for managed Gemini runtime recovery.
 When `ccb` starts a managed Gemini agent:
 
 - it must explicitly set the effective `HOME`
+- it must explicitly set the effective `GEMINI_CLI_HOME` to the same managed
+  home root as `HOME`; Gemini CLI core derives its global `.gemini` directory
+  as `$GEMINI_CLI_HOME/.gemini`
 - it must explicitly set the effective `GEMINI_ROOT`
 - it must ensure `GEMINI_ROOT == <gemini_home>/.gemini/tmp`
 - it must create the managed home and managed temp root before launching Gemini

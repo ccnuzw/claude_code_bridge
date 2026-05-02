@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v6.0.25 (2026-05-02)
+
+### Gemini Managed Home Alignment
+
+- **Gemini Login Inheritance Fixed**: managed Gemini panes now set `GEMINI_CLI_HOME` to the isolated home root so Gemini CLI reads projected `.gemini/.env`, settings, and login state from the intended managed boundary
+- **Regression Coverage Added**: launcher tests now lock the aligned `HOME`, `GEMINI_CLI_HOME`, and `GEMINI_ROOT` contract and guard against nested `.gemini/.gemini` settings writes
+- **Community Contact Trimmed**: README removed the standalone Linux.do contact entry while keeping the Linux.do community acknowledgement
+
 ## v6.0.24 (2026-05-02)
 
 ### WSL Official Login Transport
@@ -10,7 +18,7 @@
 - **Managed Isolation Preserved**: transport inheritance is centralized and does not allow caller-global `CODEX_HOME`, `GEMINI_ROOT`, `CLAUDE_PROJECTS_ROOT`, or `CCB_CALLER_*` runtime authority to override agent-scoped managed state
 - **Gemini Login Projection Extended**: managed Gemini homes now project allowlisted `.gemini/.env` API credentials, `google_accounts.json`, and `GEMINI_CLI_HOME` while diagnostics continue excluding copied auth artifacts
 - **Opencode Session Detection Hardened**: opencode now treats env-session mode as active only when its provider-specific runtime env is present, avoiding stale generic `CCB_SESSION_ID` contamination
-- **Community Entry Refreshed**: README now includes the refreshed WeChat group QR image and Linux.do community entry so users can find the current support channels from the public project page
+- **Community Entry Refreshed**: README now includes the refreshed WeChat group QR image and Linux.do community acknowledgement so users can find the current support channels from the public project page
 
 ## v6.0.23 (2026-05-01)
 
