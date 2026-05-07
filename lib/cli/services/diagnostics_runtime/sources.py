@@ -42,6 +42,18 @@ def project_root_sources(context) -> tuple[tuple[str, Path], ...]:
         ('ccbd-log', context.paths.ccbd_dir / 'keeper.stderr.log'),
     ]
 
+    if (
+        context.paths.runtime_state_placement.root_kind == 'relocated'
+        or context.paths.runtime_root_ref_path.exists()
+        or context.paths.runtime_root_marker_path.exists()
+    ):
+        items.extend(
+            [
+                ('runtime-root', context.paths.runtime_root_ref_path),
+                ('runtime-root', context.paths.runtime_root_marker_path),
+            ]
+        )
+
     items.extend(iter_dir_files('ccbd-execution', context.paths.ccbd_executions_dir, suffixes={'.json'}))
     items.extend(iter_dir_files('ccbd-snapshot', context.paths.ccbd_snapshots_dir, suffixes={'.json'}))
     items.extend(iter_dir_files('ccbd-cursor', context.paths.ccbd_cursors_dir, suffixes={'.json'}))
@@ -104,12 +116,19 @@ def session_path_from_runtime(runtime_path: Path) -> Path | None:
 
 
 def archive_path_for_source(context, source: Path) -> str:
+    source_path = _resolve_source(source)
     try:
-        relative = source.resolve().relative_to(context.project.project_root.resolve())
+        relative = source_path.relative_to(_resolve_source(context.project.project_root))
         return str(Path('project') / relative)
     except Exception:
+        pass
+    try:
+        relative = source_path.relative_to(_resolve_source(context.paths.runtime_state_root))
+        return str(Path('project') / '.ccb' / relative)
+    except Exception:
         safe_parts = [part for part in source.parts if part not in ('/', '')]
-        return str(Path('external') / Path(*safe_parts[-4:]))
+        suffix = Path(*safe_parts[-4:]) if safe_parts else Path(source.name)
+        return str(Path('external') / suffix)
 
 
 def _agent_source_items(context, *, seen_sources: set[Path]) -> list[tuple[str, Path]]:

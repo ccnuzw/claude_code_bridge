@@ -33,6 +33,7 @@ def record_startup_report(
             config_signature=str(supervisor._config_identity.get('config_signature') or '').strip() or None,
             inspection=inspection.to_record(),
             socket_placement={
+                **supervisor._paths.runtime_state_payload(),
                 **socket_placement_payload(supervisor._paths.ccbd_socket_placement),
                 **socket_placement_payload(supervisor._paths.ccbd_tmux_socket_placement, prefix='tmux'),
             },

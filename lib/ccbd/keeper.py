@@ -37,6 +37,7 @@ class ProjectKeeper(KeeperAppStateMixin):
     ) -> None:
         resolved_project_root = Path(project_root).expanduser().resolve()
         paths = PathLayout(resolved_project_root)
+        paths.ensure_runtime_state_root()
         mount_manager = MountManager(paths, clock=clock)
         self._runtime_state = KeeperAppState(
             project_root=resolved_project_root,

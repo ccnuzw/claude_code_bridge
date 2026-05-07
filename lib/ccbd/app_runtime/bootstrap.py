@@ -47,6 +47,7 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
     app.project_root = Path(project_root).expanduser().resolve()
     app.project_id = compute_project_id(app.project_root)
     app.paths = PathLayout(app.project_root)
+    app.paths.ensure_runtime_state_root()
     app.clock = clock
     app.pid = pid or os.getpid()
     app.config = load_project_config(app.project_root).config

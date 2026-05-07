@@ -7,6 +7,7 @@ import tarfile
 from cli.context import CliContextBuilder
 from cli.models import ParsedDoctorCommand
 from cli.services.diagnostics import export_diagnostic_bundle
+from project.ids import compute_project_id
 
 
 def _read_tar_json(bundle_path: Path, member_name: str) -> dict:
@@ -81,6 +82,44 @@ def test_export_diagnostic_bundle_collects_reports_and_log_tails(tmp_path: Path)
     assert any(entry['archive_path'] == 'project/.ccb/ccbd/startup-report.json' for entry in manifest['entries'])
     assert any(entry['archive_path'] == 'project/.ccb/ccbd/ccbd.stdout.log' for entry in manifest['entries'])
     assert any(entry['archive_path'] == 'project/.ccb/agents/demo/runtime.json' for entry in manifest['entries'])
+
+
+def test_export_diagnostic_bundle_includes_relocated_runtime_state_files(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-bundle-relocated'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    relocated_root = tmp_path / 'state-root'
+    project_id = compute_project_id(project_root)
+    (project_root / '.ccb' / 'runtime-root-ref.json').write_text(
+        (
+            '{"schema_version":1,"record_type":"ccb_runtime_root_ref","project_id":"'
+            + project_id
+            + '","runtime_state_root":"'
+            + str(relocated_root)
+            + '","created_at":"2026-05-07T00:00:00Z"}\n'
+        ),
+        encoding='utf-8',
+    )
+    context = CliContextBuilder().build(
+        ParsedDoctorCommand(project=None, bundle=True),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+
+    context.paths.ensure_runtime_state_root(created_at='2026-05-07T00:00:00Z')
+    context.paths.ccbd_state_path.parent.mkdir(parents=True, exist_ok=True)
+    context.paths.ccbd_state_path.write_text('{"record_type":"ccbd_project_namespace_state"}\n', encoding='utf-8')
+    context.paths.ccbd_start_policy_path.write_text('{"record_type":"ccbd_start_policy"}\n', encoding='utf-8')
+
+    summary = export_diagnostic_bundle(context, ParsedDoctorCommand(project=None, bundle=True))
+    bundle_path = Path(summary.bundle_path)
+    manifest = _read_tar_json(bundle_path, f'{summary.bundle_id}/manifest.json')
+
+    assert any(entry['archive_path'] == 'project/.ccb/runtime-root-ref.json' for entry in manifest['entries'])
+    assert any(entry['archive_path'] == 'project/.ccb/runtime-root.json' for entry in manifest['entries'])
+    assert any(entry['archive_path'] == 'project/.ccb/ccbd/state.json' for entry in manifest['entries'])
+    assert any(entry['archive_path'] == 'project/.ccb/ccbd/start-policy.json' for entry in manifest['entries'])
+    assert any(entry['source_path'] == str(context.paths.runtime_root_marker_path) for entry in manifest['entries'])
 
 
 def test_export_diagnostic_bundle_survives_corrupt_runtime_and_report_files(tmp_path: Path) -> None:

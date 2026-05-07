@@ -24,6 +24,12 @@ class LocalPingSummary:
     desired_state: str
     health: str
     generation: int | None
+    project_anchor_path: str | None
+    runtime_state_root: str | None
+    runtime_root_kind: str | None
+    runtime_relocation_reason: str | None
+    runtime_filesystem_hint: str | None
+    runtime_marker_status: str | None
     socket_path: str | None
     preferred_socket_path: str | None
     effective_socket_path: str | None

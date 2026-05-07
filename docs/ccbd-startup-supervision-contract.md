@@ -141,7 +141,7 @@ Evidence sources:
 - provider session files
 - tmux pane liveness
 - provider-runtime pid files
-- runtime-root contents
+- runtime-root contents when runtime state is relocated away from the anchor
 
 Residue sources:
 
@@ -163,6 +163,7 @@ Rules:
 - provider-base session files such as `.codex-session` or `.claude-session` are legacy or unscoped evidence only:
   - they must not be reinterpreted as a configured agent's identity
   - they may be consulted only when no explicit agent binding is available
+- runtime-state relocation markers under either the anchor or the relocated runtime root are evidence only; they must not redefine project authority
 - residue such as provider session files or preserved workspaces must not by itself block config bootstrap
 - neither evidence nor residue may silently redefine authority
 - runtime pid loss is evidence only; for pane-backed runtime it must not preempt pane/session-based recovery checks

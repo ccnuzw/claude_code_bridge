@@ -14,6 +14,10 @@ def _tmux_safe_name(value: object, *, fallback: str) -> str:
 
 class ProjectAnchorPathMixin:
     @property
+    def project_anchor_dir(self):
+        return self.ccb_dir
+
+    @property
     def ccb_dir(self):
         return self.project_root / '.ccb'
 
@@ -23,7 +27,7 @@ class ProjectAnchorPathMixin:
 
     @property
     def ccbd_dir(self):
-        return self.ccb_dir / 'ccbd'
+        return self.runtime_state_root / 'ccbd'
 
 
 class CcbdMailboxPathMixin:

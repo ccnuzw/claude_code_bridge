@@ -17,6 +17,12 @@ def ping_target(context: CliContext, command: ParsedPingCommand) -> dict:
                 'mount_state': local.mount_state,
                 'health': local.health,
                 'generation': local.generation,
+                'project_anchor_path': local.project_anchor_path,
+                'runtime_state_root': local.runtime_state_root,
+                'runtime_root_kind': local.runtime_root_kind,
+                'runtime_relocation_reason': local.runtime_relocation_reason,
+                'runtime_filesystem_hint': local.runtime_filesystem_hint,
+                'runtime_marker_status': local.runtime_marker_status,
                 'socket_path': local.socket_path,
                 'preferred_socket_path': local.preferred_socket_path,
                 'effective_socket_path': local.effective_socket_path,
@@ -39,6 +45,8 @@ def ping_target(context: CliContext, command: ParsedPingCommand) -> dict:
                 'startup_stage': local.startup_stage,
                 'last_progress_at': local.last_progress_at,
                 'startup_deadline_at': local.startup_deadline_at,
+                'last_failure_reason': local.last_failure_reason,
+                'shutdown_intent': local.shutdown_intent,
             }
         return {
             'project_id': local.project_id,

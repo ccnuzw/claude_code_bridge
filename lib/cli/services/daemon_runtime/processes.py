@@ -89,6 +89,7 @@ def wait_for_pid_exit(pid: int, *, timeout_s: float) -> bool:
 
 def spawn_ccbd(context, *, start_timeout_s: float) -> None:
     try:
+        context.paths.ensure_runtime_state_root()
         spawn_ccbd_process(
             project_root=context.project.project_root,
             socket_path=context.paths.ccbd_socket_path,

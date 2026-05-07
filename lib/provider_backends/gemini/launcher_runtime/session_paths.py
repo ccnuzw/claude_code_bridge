@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from provider_core.pathing import session_filename_for_agent
+from storage.path_helpers import runtime_project_anchor_from_path
 
 
 def session_file_for_runtime_dir(runtime_dir: Path) -> Path | None:
@@ -39,7 +40,7 @@ def find_project_ccb_dir(runtime_dir: Path) -> Path | None:
     for parent in (current, *current.parents):
         if parent.name == '.ccb':
             return parent
-    return None
+    return runtime_project_anchor_from_path(current)
 
 
 def read_session_payload(session_path: Path) -> dict[str, object] | None:

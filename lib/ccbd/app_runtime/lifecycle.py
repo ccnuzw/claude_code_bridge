@@ -248,6 +248,7 @@ def record_startup_report(
             config_signature=str(app.config_identity.get('config_signature') or '').strip() or None,
             inspection=inspection.to_record(),
             socket_placement={
+                **app.paths.runtime_state_payload(),
                 **socket_placement_payload(app.paths.ccbd_socket_placement),
                 **socket_placement_payload(app.paths.ccbd_tmux_socket_placement, prefix='tmux'),
             },

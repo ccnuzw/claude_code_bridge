@@ -22,6 +22,7 @@
 - 仅按 socket 路径长度判断是否可用，而不判断底层文件系统是否支持 Unix socket
 - 让安装脚本直接承担 CRLF 自救，而忽略脚本在解析前就可能失败
 - 为兼容 WSL 而新增第二套 lifecycle authority
+- 把 `.ccb/ccb.config`、session files、workspaces 和 provider-state 混成同一类“运行态”
 
 ## 2. 当前根因
 
@@ -98,12 +99,26 @@ WSL 兼容性必须收敛到统一的 runtime/system 边界，而不是散落在
 
 ### 4.2 把 artifact 与 authority 分离
 
-以下内容属于 authority，不迁移：
+以下内容属于逻辑 authority，不因物理迁移改变语义：
 
 - `.ccb/ccbd/lifecycle.json`
 - `.ccb/ccbd/lease.json`
 - `.ccb/agents/<agent>/runtime.json`
 - `.ccb/ccb.config`
+- `.ccb/workspaces/` 仍保持在 anchor 下，作为 workspace authority / worktree 结构的一部分
+- provider session files 仍保持在 `.ccb/` anchor 下，继续作为 discovery evidence 而不是运行态 authority
+
+以下逻辑路径属于可迁移运行态；在 WSL mounted-drive 项目上，物理存储可以离开 anchor，但 bundle/doctor 仍按逻辑 `.ccb` 路径呈现：
+
+- `.ccb/ccbd/`
+- `.ccb/agents/`
+
+迁移规则：
+
+- 在 WSL mounted-drive 项目上，`ccbd/` 和 `agents/` 的物理存储可以放到本机 Linux state root
+- `.ccb/` 仍是项目 anchor，`ccb.config`、session file、workspaces 仍从 anchor 读写
+- 迁移后的 runtime root 必须由 marker/ref 文件显式记录，不能依赖隐式 symlink 作为 authority
+- 诊断与 bundle 必须把 runtime-root 物理位置映射回逻辑 `.ccb` 路径，避免误把迁移后的物理路径当成新 authority
 
 以下内容属于 transport/execution artifact，可按平台能力放置：
 

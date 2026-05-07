@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from storage.path_helpers import runtime_project_anchor_from_path
 
 @dataclass(frozen=True)
 class ProviderRestoreTarget:
@@ -45,7 +46,7 @@ def _find_ccb_dir(start: Path) -> Path | None:
     for parent in (current, *current.parents):
         if parent.name == '.ccb':
             return parent
-    return None
+    return runtime_project_anchor_from_path(current)
 
 
 __all__ = ['ProviderRestoreContext', 'ProviderRestoreTarget', 'resolve_restore_context']

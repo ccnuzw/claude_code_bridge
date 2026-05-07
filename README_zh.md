@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.28-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.0.29-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -74,9 +74,10 @@
 <details>
 <summary><b>最新版本亮点</b></summary>
 
-- **WSL 挂载盘启动更稳**：ccbd control-plane 探测不会再把短暂 socket 卡顿误判为后台漂移。
-- **Control-plane socket 更抗抖**：慢 client 不再阻塞新探测，短暂 connect race 会在原 timeout 预算内重试。
-- **README 已按 agent 团队重新组织**：安装、配置、更新和委派说明现在对齐当前 CLI 表面。
+- **WSL Runtime State 已迁移**：挂载盘 WSL 项目中，项目 authority 仍留在 `.ccb`，`ccbd` 和 agent runtime state 会迁到本机 Linux state root，并带有显式 marker 与诊断映射。
+- **Provider Lookup 和 Ask Routing 保持稳定**：relocated runtime 目录仍能回溯到 project anchor，用于 session discovery 和 ask sender attribution。
+- **Control-plane socket 保持抗抖**：慢 client 不再阻塞新探测，短暂 connect race 会在原 timeout 预算内重试。
+- **README 持续对齐当前版本**：安装、配置、更新和委派说明继续对齐当前 CLI 表面。
 
 完整历史见 [新版本记录](#新版本记录)。
 
@@ -224,6 +225,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 install
 
 - Linux 和 macOS 共用 `install.sh`。
 - WSL 场景下，请让 `ccb` 和 agent CLI 都留在 WSL 内。
+- 在 WSL 挂载盘项目上，项目 authority 仍然留在 `.ccb`，但运行态 state 可以迁移到本机 Linux state root，以保证 socket 和 agent runtime 的稳定性。
 - 原生 Windows mux 仍在按 `psmux` 重构。
 - 更完整的 Windows bootstrap 脚本在 `scripts/bootstrap-windows-test-env.ps1`。
 
@@ -289,6 +291,15 @@ ccb reinstall
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v6.0.29</b> - WSL Runtime State 迁移</summary>
+
+- **运行态移出挂载盘**：在 `/mnt/<drive>/...` 下的 WSL 项目中，项目 authority 仍留在 `.ccb`，`ccbd/` 和 agent runtime state 会迁移到本机 Linux state root，并写入显式 marker
+- **诊断和 Bundle 映射更新**：doctor 输出和 support bundle 现在会暴露 project anchor、runtime-state root、迁移原因，并把 relocated runtime 文件映射回逻辑 `.ccb` archive 路径
+- **Provider Lookup 和 Ask Routing 保持稳定**：relocated runtime 目录仍能回溯到 project anchor，用于 session discovery 和 ask sender attribution，Linux/macOS 默认布局不变
+
+</details>
+
+<details>
 <summary><b>v6.0.28</b> - WSL Control Plane Socket 加固</summary>
 
 - **加固 WSL Control Plane 启动**：keeper 和 daemon readiness probe 现在共用配置化 control-plane RPC timeout，不再使用更短的硬编码预算，避免把挂载盘上的慢启动误判为 config drift

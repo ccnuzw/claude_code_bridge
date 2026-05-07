@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v6.0.29 (2026-05-07)
+
+### WSL Runtime State Relocation
+
+- **Runtime State Moved Off Mounted Drives**: on WSL projects rooted under `/mnt/<drive>/...`, project authority remains in `.ccb` while `ccbd/` and agent runtime state relocate to a local Linux state root with explicit marker files
+- **Diagnostics and Bundle Mapping Updated**: doctor output and support bundles now expose the project anchor, runtime-state root, relocation reason, and logical `.ccb` archive paths for relocated runtime files
+- **Provider Lookup and Ask Routing Kept Stable**: relocated runtime directories still resolve back to the project anchor for session discovery and ask sender attribution without changing Linux or macOS default layout behavior
+
 ## v6.0.28 (2026-05-07)
 
 ### WSL Control Plane Socket Hardening

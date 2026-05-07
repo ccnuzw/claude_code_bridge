@@ -52,10 +52,10 @@ def _account_home_root() -> Path | None:
 
 def _looks_like_ccb_provider_home(path: Path) -> bool:
     parts = Path(path).expanduser().parts
-    for index in range(0, max(len(parts) - 5, 0)):
-        if parts[index : index + 2] != ('.ccb', 'agents'):
+    for index in range(0, max(len(parts) - 4, 0)):
+        if parts[index] != 'agents':
             continue
-        if parts[index + 3] == 'provider-state' and parts[index + 5] == 'home':
+        if parts[index + 2] == 'provider-state' and parts[index + 4] == 'home':
             return True
     return False
 

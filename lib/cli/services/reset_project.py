@@ -12,6 +12,7 @@ from cli.services.tmux_ui import set_tmux_ui_active
 from ccbd.services.project_namespace import ProjectNamespaceController
 from project.ids import compute_project_id
 from project.resolver import ProjectContext
+from storage.path_helpers import RUNTIME_ROOT_REF_FILENAME
 from storage.paths import PathLayout
 from workspace.git_worktree import unregister_worktrees_under
 from workspace.reconcile import format_workspace_blockers, prepare_reset_workspaces
@@ -40,7 +41,9 @@ def reset_project_state(project_root: Path, *, context: CliContext | None = None
         _stop_project_runtime(context or _build_reset_context(root))
         prepare_reset_workspaces(root, apply=True)
         _unregister_project_worktrees(root, layout)
-        _clear_anchor(layout.ccb_dir)
+        layout.ensure_runtime_state_root()
+        _clear_runtime_state(layout)
+        _clear_anchor_contents(layout.ccb_dir)
         if preserved_config_text is not None:
             layout.ccb_dir.mkdir(parents=True, exist_ok=True)
             layout.config_path.write_text(preserved_config_text, encoding='utf-8')
@@ -120,12 +123,30 @@ def _stop_project_runtime(context: CliContext) -> None:
     )
 
 
-def _clear_anchor(ccb_dir: Path) -> None:
+def _clear_runtime_state(layout: PathLayout) -> None:
+    for path in (layout.ccbd_dir, layout.agents_dir):
+        _remove_path(path)
+
+
+def _clear_anchor_contents(ccb_dir: Path) -> None:
     if ccb_dir.is_symlink() or ccb_dir.is_file():
         ccb_dir.unlink()
+        ccb_dir.mkdir(parents=True, exist_ok=True)
         return
-    if ccb_dir.is_dir():
-        shutil.rmtree(ccb_dir)
+    if not ccb_dir.is_dir():
+        return
+    for child in tuple(ccb_dir.iterdir()):
+        if child.name in {'ccb.config', RUNTIME_ROOT_REF_FILENAME}:
+            continue
+        _remove_path(child)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
 
 
 def _unregister_project_worktrees(project_root: Path, layout: PathLayout) -> None:

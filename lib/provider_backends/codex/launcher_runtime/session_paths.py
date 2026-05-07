@@ -5,6 +5,7 @@ from pathlib import Path
 
 from provider_core.pathing import session_filename_for_agent
 from provider_backends.codex.session_authority import resume_authority_matches
+from storage.path_helpers import runtime_project_anchor_from_path
 
 from ..start_cmd import extract_resume_session_id
 
@@ -33,7 +34,7 @@ def find_project_ccb_dir(runtime_dir: Path) -> Path | None:
     for parent in (current, *current.parents):
         if parent.name == '.ccb':
             return parent
-    return None
+    return runtime_project_anchor_from_path(current)
 
 
 def session_file_for_runtime_dir(runtime_dir: Path) -> Path | None:

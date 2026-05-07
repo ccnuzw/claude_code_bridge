@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agents.models import normalize_agent_name
 from provider_core.protocol import request_anchor_for_job
+from storage.path_helpers import runtime_state_root_from_anchor
 
 
 def running_request_anchors(*, session_file: Path, session_data: dict[str, object]) -> tuple[str, ...]:
@@ -34,7 +35,13 @@ def _jobs_path(*, session_file: Path, session_data: dict[str, object]) -> Path |
     ccb_dir = _ccb_dir(session_file)
     if ccb_dir is None:
         return None
-    return ccb_dir / "agents" / agent_name / "jobs.jsonl"
+    raw_state_root = str(session_data.get("runtime_state_root") or "").strip()
+    if raw_state_root:
+        state_root = Path(raw_state_root).expanduser()
+    else:
+        project_id = str(session_data.get("ccb_project_id") or "").strip() or None
+        state_root = runtime_state_root_from_anchor(ccb_dir, project_id=project_id)
+    return state_root / "agents" / agent_name / "jobs.jsonl"
 
 
 def _agent_name(*, session_file: Path, session_data: dict[str, object]) -> str:

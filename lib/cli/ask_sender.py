@@ -44,7 +44,7 @@ def _resolve_session_actor(context: CliContext, *, allowed_session_actors: froze
     for env_name in ('CCB_CALLER_RUNTIME_DIR', 'CODEX_RUNTIME_DIR'):
         actor = _actor_from_runtime_dir(
             os.environ.get(env_name),
-            project_root=context.project.project_root,
+            agents_dir=context.paths.agents_dir,
             allowed_session_actors=allowed_session_actors,
         )
         if actor is not None:
@@ -56,27 +56,23 @@ def _resolve_session_actor(context: CliContext, *, allowed_session_actors: froze
 def _actor_from_runtime_dir(
     value: str | None,
     *,
-    project_root: Path,
+    agents_dir: Path,
     allowed_session_actors: frozenset[str],
 ) -> str | None:
     runtime_dir = str(value or '').strip()
     if not runtime_dir:
         return None
     resolved_runtime_dir = _resolve_path(Path(runtime_dir))
-    resolved_project_root = _resolve_path(project_root)
+    resolved_agents_dir = _resolve_path(agents_dir)
     try:
-        resolved_runtime_dir.relative_to(resolved_project_root)
+        relative = resolved_runtime_dir.relative_to(resolved_agents_dir)
     except ValueError:
         return None
-    parts = resolved_runtime_dir.parts
-    for index, part in enumerate(parts[:-2]):
-        if part != '.ccb':
-            continue
-        if parts[index + 1] != 'agents':
-            continue
-        candidate = _normalized_actor_candidate(parts[index + 2])
-        if candidate in allowed_session_actors:
-            return candidate
+    if not relative.parts:
+        return None
+    candidate = _normalized_actor_candidate(relative.parts[0])
+    if candidate in allowed_session_actors:
+        return candidate
     return None
 
 

@@ -291,7 +291,7 @@ def cleanup_transient_keeper_files(app, *, lock_path: Path) -> None:
             continue
         except Exception:
             continue
-    for path in (app.paths.ccbd_dir, app.paths.ccb_dir):
+    for path in (app.paths.ccbd_dir,):
         try:
             path.rmdir()
         except OSError:

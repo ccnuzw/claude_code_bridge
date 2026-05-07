@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import os
 import re
@@ -14,6 +15,8 @@ from ccbd.api_models import TargetKind
 TARGET_SEGMENT_PATTERN = re.compile(r'[^a-z0-9._-]+')
 UNIX_SOCKET_SAFE_BYTES = 100
 _WSL_MOUNTED_DRIVE_RE = re.compile(r'^/mnt/([A-Za-z])(?:/|$)')
+RUNTIME_ROOT_MARKER_FILENAME = 'runtime-root.json'
+RUNTIME_ROOT_REF_FILENAME = 'runtime-root-ref.json'
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,15 @@ class SocketPlacement:
     effective_path: Path
     root_kind: Literal['project', 'runtime']
     fallback_reason: str | None = None
+    filesystem_hint: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeStatePlacement:
+    anchor_path: Path
+    effective_path: Path
+    root_kind: Literal['project', 'relocated']
+    relocation_reason: str | None = None
     filesystem_hint: str | None = None
 
 
@@ -71,6 +83,36 @@ def runtime_socket_root_candidates() -> tuple[Path, ...]:
     return tuple(unique)
 
 
+def runtime_state_root_candidates() -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    xdg_state_home = str(os.environ.get('XDG_STATE_HOME') or '').strip()
+    if xdg_state_home:
+        candidates.append(Path(xdg_state_home).expanduser() / 'ccb' / 'projects')
+    candidates.append(Path.home().expanduser() / '.local' / 'state' / 'ccb' / 'projects')
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return tuple(unique)
+
+
+def runtime_state_base_root() -> Path:
+    candidates = runtime_state_root_candidates()
+    for candidate in candidates:
+        if pathname_runtime_state_supported(candidate):
+            return candidate
+    if candidates:
+        return candidates[0]
+    return Path.home().expanduser() / '.local' / 'state' / 'ccb' / 'projects'
+
+
+def runtime_state_root_for_project(project_id: str) -> Path:
+    normalized = str(project_id or '').strip()
+    if not normalized:
+        raise ValueError('project_id cannot be empty')
+    return runtime_state_base_root() / normalized
+
+
 def is_wsl() -> bool:
     if os.environ.get('WSL_INTEROP') or os.environ.get('WSL_DISTRO_NAME'):
         return True
@@ -90,6 +132,45 @@ def socket_filesystem_hint(path: Path) -> str | None:
 
 def pathname_unix_socket_supported(path: Path) -> bool:
     return socket_filesystem_hint(path) != 'wsl_drvfs'
+
+
+def pathname_runtime_state_supported(path: Path) -> bool:
+    return socket_filesystem_hint(path) != 'wsl_drvfs'
+
+
+def choose_runtime_state_placement(
+    *,
+    project_root: Path,
+    project_id: str,
+    anchor_path: Path,
+) -> RuntimeStatePlacement:
+    del project_root
+    anchor = Path(anchor_path).expanduser()
+    filesystem_hint = socket_filesystem_hint(anchor)
+    ref_root = runtime_state_root_from_anchor_ref(anchor, project_id=project_id)
+    if ref_root is not None:
+        return RuntimeStatePlacement(
+            anchor_path=anchor,
+            effective_path=ref_root,
+            root_kind='relocated',
+            relocation_reason='runtime_root_ref',
+            filesystem_hint=filesystem_hint,
+        )
+    if filesystem_hint == 'wsl_drvfs':
+        return RuntimeStatePlacement(
+            anchor_path=anchor,
+            effective_path=runtime_state_root_for_project(project_id),
+            root_kind='relocated',
+            relocation_reason='wsl_drvfs',
+            filesystem_hint=filesystem_hint,
+        )
+    return RuntimeStatePlacement(
+        anchor_path=anchor,
+        effective_path=anchor,
+        root_kind='project',
+        relocation_reason=None,
+        filesystem_hint=filesystem_hint,
+    )
 
 
 def choose_socket_placement(
@@ -133,6 +214,80 @@ def socket_placement_payload(placement: SocketPlacement, *, prefix: str = '') ->
     }
 
 
+def runtime_state_placement_payload(placement: RuntimeStatePlacement) -> dict[str, Any]:
+    return {
+        'project_anchor_path': str(placement.anchor_path),
+        'runtime_state_root': str(placement.effective_path),
+        'runtime_root_kind': placement.root_kind,
+        'runtime_relocation_reason': placement.relocation_reason,
+        'runtime_filesystem_hint': placement.filesystem_hint,
+    }
+
+
+def runtime_root_marker_path(runtime_state_root: Path) -> Path:
+    return Path(runtime_state_root).expanduser() / RUNTIME_ROOT_MARKER_FILENAME
+
+
+def runtime_root_ref_path(anchor_path: Path) -> Path:
+    return Path(anchor_path).expanduser() / RUNTIME_ROOT_REF_FILENAME
+
+
+def runtime_state_root_from_anchor_ref(anchor_path: Path, *, project_id: str | None = None) -> Path | None:
+    payload = _read_json_object(runtime_root_ref_path(anchor_path))
+    if not payload:
+        return None
+    if project_id is not None:
+        recorded_project_id = str(payload.get('project_id') or '').strip()
+        if recorded_project_id and recorded_project_id != str(project_id).strip():
+            return None
+    raw = str(payload.get('runtime_state_root') or '').strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def runtime_state_root_from_anchor(anchor_path: Path, *, project_id: str | None = None) -> Path:
+    ref_root = runtime_state_root_from_anchor_ref(anchor_path, project_id=project_id)
+    return ref_root if ref_root is not None else Path(anchor_path).expanduser()
+
+
+def runtime_project_anchor_from_path(path: Path) -> Path | None:
+    marker_path = find_runtime_root_marker_path(path)
+    if marker_path is None:
+        return None
+    payload = _read_json_object(marker_path)
+    anchor = str(payload.get('anchor_path') or '').strip()
+    if anchor:
+        return Path(anchor).expanduser()
+    project_root = str(payload.get('project_root') or '').strip()
+    if project_root:
+        return Path(project_root).expanduser() / '.ccb'
+    return None
+
+
+def runtime_project_root_from_path(path: Path) -> Path | None:
+    marker_path = find_runtime_root_marker_path(path)
+    if marker_path is None:
+        return None
+    payload = _read_json_object(marker_path)
+    project_root = str(payload.get('project_root') or '').strip()
+    if not project_root:
+        return None
+    return Path(project_root).expanduser()
+
+
+def find_runtime_root_marker_path(path: Path) -> Path | None:
+    current = Path(path).expanduser()
+    for candidate in (current, *current.parents):
+        marker = candidate / RUNTIME_ROOT_MARKER_FILENAME
+        try:
+            if marker.is_file():
+                return marker
+        except Exception:
+            continue
+    return None
+
+
 def _runtime_socket_placement(
     *,
     preferred_path: Path,
@@ -151,16 +306,40 @@ def _runtime_socket_placement(
     )
 
 
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 __all__ = [
+    'RUNTIME_ROOT_MARKER_FILENAME',
+    'RUNTIME_ROOT_REF_FILENAME',
+    'RuntimeStatePlacement',
     'SocketPlacement',
     'TARGET_SEGMENT_PATTERN',
     'UNIX_SOCKET_SAFE_BYTES',
     'choose_socket_placement',
+    'choose_runtime_state_placement',
+    'find_runtime_root_marker_path',
     'is_wsl',
     'normalized_segment',
+    'pathname_runtime_state_supported',
     'pathname_unix_socket_supported',
+    'runtime_project_anchor_from_path',
+    'runtime_project_root_from_path',
+    'runtime_root_marker_path',
+    'runtime_root_ref_path',
     'runtime_socket_root',
     'runtime_socket_root_candidates',
+    'runtime_state_base_root',
+    'runtime_state_placement_payload',
+    'runtime_state_root_candidates',
+    'runtime_state_root_for_project',
+    'runtime_state_root_from_anchor',
+    'runtime_state_root_from_anchor_ref',
     'socket_placement_payload',
     'socket_filesystem_hint',
     'target_segment',

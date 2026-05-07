@@ -10,7 +10,11 @@ from project.discovery import WORKSPACE_BINDING_FILENAME
 class AgentRuntimePathMixin:
     @property
     def agents_dir(self):
-        return self.ccb_dir / 'agents'
+        return self.runtime_state_root / 'agents'
+
+    @property
+    def provider_profiles_dir(self):
+        return self.ccb_dir / 'provider-profiles'
 
     def agent_dir(self, agent_name: str) -> Path:
         return self.agents_dir / normalize_agent_name(agent_name)

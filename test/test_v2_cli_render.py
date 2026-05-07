@@ -400,6 +400,12 @@ def test_render_ps_and_doctor_keep_expected_line_shapes() -> None:
         'ccbd': {
             'state': 'mounted',
             'socket_path': '/tmp/ccb-runtime/ccbd-proj.sock',
+            'project_anchor_path': '/mnt/e/repo/.ccb',
+            'runtime_state_root': '/home/demo/.local/state/ccb/projects/proj-1',
+            'runtime_root_kind': 'relocated',
+            'runtime_relocation_reason': 'wsl_drvfs',
+            'runtime_filesystem_hint': 'wsl_drvfs',
+            'runtime_marker_status': 'ok',
             'preferred_socket_path': '/mnt/e/repo/.ccb/ccbd/ccbd.sock',
             'effective_socket_path': '/tmp/ccb-runtime/ccbd-proj.sock',
             'preferred_socket_path_bytes': 31,
@@ -498,6 +504,12 @@ def test_render_ps_and_doctor_keep_expected_line_shapes() -> None:
     assert 'ccbd_state: mounted' in doctor_lines
     assert 'ccbd_effective_socket_path: /tmp/ccb-runtime/ccbd-proj.sock' in doctor_lines
     assert 'ccbd_effective_socket_path_bytes: 31' in doctor_lines
+    assert 'ccbd_project_anchor_path: /mnt/e/repo/.ccb' in doctor_lines
+    assert 'ccbd_runtime_state_root: /home/demo/.local/state/ccb/projects/proj-1' in doctor_lines
+    assert 'ccbd_runtime_root_kind: relocated' in doctor_lines
+    assert 'ccbd_runtime_relocation_reason: wsl_drvfs' in doctor_lines
+    assert 'ccbd_runtime_filesystem_hint: wsl_drvfs' in doctor_lines
+    assert 'ccbd_runtime_marker_status: ok' in doctor_lines
     assert 'ccbd_socket_fallback_reason: unsupported_filesystem' in doctor_lines
     assert 'ccbd_tmux_effective_socket_path: /tmp/ccb-runtime/tmux-proj.sock' in doctor_lines
     assert 'ccbd_tmux_effective_socket_path_bytes: 31' in doctor_lines

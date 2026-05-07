@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from provider_runtime.helper_manifest import load_helper_manifest
+from storage.paths import PathLayout
 
 from .procfs import read_pid_file, read_proc_cmdline
 from .utils import coerce_pid, resolved_runtime_roots
@@ -37,8 +38,8 @@ def collect_project_process_candidates(
 ) -> dict[int, list[Path]]:
     current_pid = int(current_pid or os.getpid())
     ccb_root = project_root.expanduser() / '.ccb'
-    marker = str(ccb_root)
-    if not marker:
+    markers = _project_runtime_markers(project_root, ccb_root=ccb_root)
+    if not markers:
         return {}
     candidates: dict[int, list[Path]] = {}
     try:
@@ -50,9 +51,10 @@ def collect_project_process_candidates(
         if pid is None or pid == current_pid:
             continue
         cmdline = str(read_proc_cmdline_fn(pid) or '').strip()
-        if marker not in cmdline:
+        matched_markers = tuple(marker for marker in markers if str(marker) in cmdline)
+        if not matched_markers:
             continue
-        candidates.setdefault(pid, []).append(ccb_root)
+        candidates.setdefault(pid, []).extend(matched_markers)
     return candidates
 
 
@@ -64,3 +66,13 @@ def _load_helper_manifest_best_effort(path: Path):
         return load_helper_manifest(path)
     except Exception:
         return None
+
+
+def _project_runtime_markers(project_root: Path, *, ccb_root: Path) -> tuple[Path, ...]:
+    layout = PathLayout(project_root)
+    markers: list[Path] = [ccb_root]
+    if layout.runtime_state_placement.root_kind == 'relocated':
+        for path in (layout.runtime_state_root / 'agents', layout.runtime_state_root / 'ccbd'):
+            if path not in markers:
+                markers.append(path)
+    return tuple(markers)

@@ -12,6 +12,7 @@ from cli.context import CliContextBuilder
 from cli.models import ParsedAskCommand
 from cli.services import ask as ask_service
 from cli.services.daemon import CcbdServiceError
+from project.ids import compute_project_id
 
 
 def _build_context(project_root: Path) -> object:
@@ -194,6 +195,33 @@ def test_resolve_ask_sender_prefers_runtime_dir_actor(monkeypatch: pytest.Monkey
     monkeypatch.setenv('CODEX_RUNTIME_DIR', str(runtime_dir))
     monkeypatch.setenv('CCB_SESSION_ID', 'legacy-session-without-actor')
 
+    assert ask_service.resolve_ask_sender(context, None) == 'agent1'
+
+
+def test_resolve_ask_sender_prefers_relocated_runtime_dir_actor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-ask-relocated-runtime-actor'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('agent1:codex\n', encoding='utf-8')
+    relocated_root = tmp_path / 'state-root'
+    project_id = compute_project_id(project_root)
+    (project_root / '.ccb' / 'runtime-root-ref.json').write_text(
+        f'{{"schema_version":1,"record_type":"ccb_runtime_root_ref","project_id":"{project_id}","runtime_state_root":"{relocated_root}","created_at":"2026-05-07T00:00:00Z"}}',
+        encoding='utf-8',
+    )
+    context = CliContextBuilder().build(
+        ParsedAskCommand(project=None, target='agent1', sender=None, message='hello'),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+    runtime_dir = context.paths.agents_dir / 'agent1' / 'provider-runtime' / 'codex'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.delenv('CCB_CALLER_ACTOR', raising=False)
+    monkeypatch.delenv('CCB_CALLER_RUNTIME_DIR', raising=False)
+    monkeypatch.setenv('CODEX_RUNTIME_DIR', str(runtime_dir))
+    monkeypatch.setenv('CCB_SESSION_ID', 'legacy-session-without-actor')
+
+    assert context.paths.runtime_state_root == relocated_root
     assert ask_service.resolve_ask_sender(context, None) == 'agent1'
 
 

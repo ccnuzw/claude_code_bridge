@@ -5,11 +5,16 @@ import json
 import uuid
 from pathlib import Path
 
+import pytest
+
 from agents.models import AgentSpec, PermissionMode, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
 from cli.models import ParsedStartCommand
+from provider_backends.codex.launcher_runtime import session_paths as codex_session_paths
 from provider_backends.claude import launcher as claude_launcher
 from provider_backends.claude.launcher_runtime.history import ClaudeHistoryLocator
+from provider_backends.claude.launcher_runtime import session_paths as claude_session_paths
 from provider_backends.gemini import launcher as gemini_launcher
+from provider_backends.gemini.launcher_runtime import session_paths as gemini_session_paths
 
 
 def _spec(name: str, provider: str) -> AgentSpec:
@@ -213,6 +218,48 @@ def test_gemini_build_start_cmd_ignores_ambient_global_history_for_fresh_agent(m
     )
 
     assert '--resume latest' not in cmd
+
+
+@pytest.mark.parametrize(
+    ('session_paths_module', 'provider'),
+    (
+        (codex_session_paths, 'codex'),
+        (claude_session_paths, 'claude'),
+        (gemini_session_paths, 'gemini'),
+    ),
+)
+def test_session_file_for_runtime_dir_follows_relocated_runtime_anchor(
+    session_paths_module,
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-relocated-session-path'
+    anchor = project_root / '.ccb'
+    anchor.mkdir(parents=True, exist_ok=True)
+    relocated_root = tmp_path / 'state-root'
+    relocated_root.mkdir(parents=True, exist_ok=True)
+    runtime_marker = relocated_root / 'runtime-root.json'
+    runtime_marker.write_text(
+        json.dumps(
+            {
+                'schema_version': 1,
+                'record_type': 'ccb_runtime_root',
+                'project_id': 'proj-1',
+                'project_root': str(project_root),
+                'anchor_path': str(anchor),
+                'runtime_root_path': str(relocated_root),
+                'created_at': '2026-05-07T00:00:00Z',
+            }
+        ),
+        encoding='utf-8',
+    )
+    runtime_dir = relocated_root / 'agents' / 'reviewer' / 'provider-runtime' / provider
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    expected = anchor / f'.{provider}-reviewer-session'
+
+    assert session_paths_module.find_project_ccb_dir(runtime_dir) == anchor
+    assert session_paths_module.session_file_for_runtime_dir(runtime_dir) == expected
 
 
 def test_claude_build_start_cmd_ignores_non_managed_persisted_home(monkeypatch, tmp_path: Path) -> None:

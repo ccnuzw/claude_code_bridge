@@ -36,7 +36,8 @@ That means the diagnostics surface must answer at least:
 ### 3.1 Project Scope
 
 - Diagnostics are scoped to one `.ccb` anchor.
-- All project diagnostics records must live under that anchor's `.ccb/ccbd/`, except for provider session files that may live outside the project and are referenced as evidence.
+- All project diagnostics records must live under that anchor's logical `.ccb/ccbd/`, even when the physical runtime state root is relocated on WSL mounted-drive projects.
+- Runtime-root marker and reference files are part of the project diagnostics evidence chain and must be mapped back into the logical `.ccb` archive path in support bundles.
 - Project-local provider state under `.ccb/agents/<agent>/provider-state/` is diagnostics evidence and should be exported when it is relevant to session isolation or binding analysis.
 - Diagnostics export must never merge multiple project anchors into one bundle.
 

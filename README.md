@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.28-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.0.29-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -74,9 +74,10 @@ Build project-local teams with roles, pane layout, provider state, worktree isol
 <details>
 <summary><b>Latest release highlights</b></summary>
 
-- **WSL mounted-drive startup is sturdier**: ccbd control-plane probes no longer misread short socket stalls as backend drift.
-- **Control-plane sockets are more resilient**: slow clients no longer block new probes, and transient connect races are retried inside the existing timeout budget.
-- **README is reorganized around agent teams**: install, config, update, and delegation guidance now match the current CLI surface.
+- **WSL Runtime State Relocated**: on mounted-drive WSL projects, project authority stays under `.ccb` while `ccbd` and agent runtime state move to a local Linux state root with explicit runtime-root markers and diagnostics mapping.
+- **Provider Lookup and Ask Routing Stay Stable**: relocated runtime directories still resolve back to the project anchor for session discovery and ask sender attribution.
+- **Control-plane sockets remain resilient**: slow clients no longer block new probes, and transient connect races are retried inside the existing timeout budget.
+- **README stays aligned with the current release**: install, config, update, and delegation guidance continue to match the current CLI surface.
 
 See [Release Notes](#release-notes) for the full history.
 
@@ -224,6 +225,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 install
 
 - macOS and Linux share the same `install.sh` path.
 - For WSL, keep both `ccb` and the agent CLIs inside WSL.
+- On WSL mounted-drive projects, project authority stays under `.ccb` while runtime state may relocate to a local Linux state root for socket and agent runtime durability.
 - Native Windows mux is still being rebuilt around `psmux`.
 - The fuller Windows bootstrap helper lives at `scripts/bootstrap-windows-test-env.ps1`.
 
@@ -291,6 +293,15 @@ Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and 
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v6.0.29</b> - WSL Runtime State Relocation</summary>
+
+- **Runtime State Moved Off Mounted Drives**: on WSL projects rooted under `/mnt/<drive>/...`, project authority remains in `.ccb` while `ccbd/` and agent runtime state relocate to a local Linux state root with explicit marker files
+- **Diagnostics and Bundle Mapping Updated**: doctor output and support bundles now expose the project anchor, runtime-state root, relocation reason, and logical `.ccb` archive paths for relocated runtime files
+- **Provider Lookup and Ask Routing Kept Stable**: relocated runtime directories still resolve back to the project anchor for session discovery and ask sender attribution without changing Linux or macOS default layout behavior
+
+</details>
+
+<details>
 <summary><b>v6.0.28</b> - WSL Control Plane Socket Hardening</summary>
 
 - **WSL Control Plane Startup Hardened**: keeper and daemon readiness probes now share the configured control-plane RPC timeout instead of using shorter hardcoded budgets that could misread a slow mounted-drive startup as config drift

@@ -187,6 +187,7 @@ def spawn_keeper_process(context) -> None:
         if not current_pythonpath
         else str(lib_root) + os.pathsep + current_pythonpath
     )
+    context.paths.ensure_runtime_state_root()
     context.paths.ccbd_dir.mkdir(parents=True, exist_ok=True)
     stdout_log = open(context.paths.ccbd_dir / 'keeper.stdout.log', 'ab')
     stderr_log = open(context.paths.ccbd_dir / 'keeper.stderr.log', 'ab')

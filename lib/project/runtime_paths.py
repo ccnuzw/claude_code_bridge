@@ -18,7 +18,9 @@ def project_anchor_exists(work_dir: Path | str) -> bool:
 
 
 def project_ccbd_dir(work_dir: Path | str) -> Path:
-    return project_anchor_dir(work_dir) / 'ccbd'
+    from storage.paths import PathLayout
+
+    return PathLayout(resolve_project_root(work_dir)).ccbd_dir
 
 
 def project_registry_dir(work_dir: Path | str) -> Path:
