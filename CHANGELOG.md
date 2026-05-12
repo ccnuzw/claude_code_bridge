@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v6.1.7 (2026-05-12)
+
+### Codex Memory Freshness Hotfix
+
+- **Codex Shared Memory Refresh Fixed**: Codex startup now records the managed `AGENTS.md` memory projection fingerprint and skips stale `resume` bindings when `.ccb/ccb_memory.md` changes
+- **Ask Skill Submit Discipline Tightened**: Claude and Droid ask skills now require heredoc submission and stop immediately after submit, avoiding accidental polling or waiting
+
 ## v6.1.6 (2026-05-11)
 
 ### Startup And Claude Auth Hotfix

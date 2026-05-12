@@ -7,7 +7,10 @@ from cli.context import CliContext
 from cli.models import ParsedStartCommand
 from provider_core.contracts import ProviderRuntimeLauncher
 from provider_backends.codex.runtime_artifacts import codex_runtime_artifact_layout
-from provider_profiles.codex_home_config import codex_provider_authority_fingerprint
+from provider_backends.codex.session_authority import (
+    current_memory_projection_fingerprint,
+    current_provider_authority_fingerprint,
+)
 from provider_profiles import load_resolved_provider_profile
 from workspace.models import WorkspacePlan
 from .launcher_runtime import build_start_cmd as _build_start_cmd_impl
@@ -99,7 +102,10 @@ def build_session_payload(
     payload['codex_session_root'] = str(layout.session_root)
     if layout.codex_home is not None:
         payload['codex_home'] = str(layout.codex_home)
-    provider_authority_fingerprint = codex_provider_authority_fingerprint(profile)
+    memory_projection_fingerprint = current_memory_projection_fingerprint(runtime_dir)
+    if memory_projection_fingerprint:
+        payload['codex_memory_projection_sha256'] = memory_projection_fingerprint
+    provider_authority_fingerprint = current_provider_authority_fingerprint(profile)
     if provider_authority_fingerprint:
         payload['codex_provider_authority_fingerprint'] = provider_authority_fingerprint
     return payload

@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.1.6-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.1.7-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -74,11 +74,9 @@
 <details>
 <summary><b>最新版本亮点</b></summary>
 
-- **Tmux 启动更稳**：布局 pane 创建时立即启动静默 placeholder，避免 fast-exiting shell 导致启动 split race。
-- **首次启动 pane 竞争已修复**：ccbd start 会阻止 heartbeat maintenance 在 layout/launch 过程中改动 tmux pane。
+- **Codex 共享记忆刷新已修复**：`.ccb/ccb_memory.md` 变化后，managed Codex 启动会避开旧 `resume` 上下文并加载新的项目记忆。
+- **Ask skill 提交更严格**：Claude 和 Droid ask skill 只使用 heredoc 提交，并在提交后立即结束，不再轮询回复。
 - **项目记忆只有一个锚点**：`.ccb/ccb_memory.md` 是所有 managed agent 共享的项目全局记忆文档。
-- **Claude macOS 登录继承更新**：managed Claude 启动会优先读取当前 `Claude Code-credentials` Keychain service。
-- **发布检查更严格**：README、changelog、GitHub Release 资产、Actions 状态和 SHA256SUMS 都纳入维护工具审计。
 
 完整历史见 [新版本记录](#新版本记录)。
 
@@ -298,6 +296,14 @@ ccb reinstall
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v6.1.7</b> - Codex 记忆刷新 Hotfix</summary>
+
+- `.ccb/ccb_memory.md` 变化后，Codex 会刷新共享项目记忆，不再继续 resume 旧 AGENTS 上下文。
+- Claude 和 Droid ask skill 改为 heredoc 提交，并在提交后立即结束。
+
+</details>
+
+<details>
 <summary><b>v6.1.6</b> - 启动与 Claude 认证 Hotfix</summary>
 
 - 修复首次启动时 ccbd start 与 heartbeat maintenance 的 pane 竞争。

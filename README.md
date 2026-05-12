@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.1.6-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.1.7-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -74,11 +74,9 @@ Build project-local teams with roles, pane layout, provider state, worktree isol
 <details>
 <summary><b>Latest release highlights</b></summary>
 
-- **Tmux startup is hardened**: layout panes now start with a silent placeholder immediately, avoiding fast-exiting shell races during startup.
-- **First-start pane races are fixed**: ccbd start now blocks heartbeat maintenance from mutating tmux panes while the launch layout is still being built.
+- **Codex shared memory refresh is fixed**: when `.ccb/ccb_memory.md` changes, managed Codex startup avoids stale `resume` context and loads the refreshed project memory.
+- **Ask skill submit is stricter**: Claude and Droid ask skills use heredoc-only submission and stop immediately after submit instead of polling for replies.
 - **Project memory has one anchor**: `.ccb/ccb_memory.md` is the project-wide shared memory document for every managed agent.
-- **Claude macOS login inheritance is current**: managed Claude startup checks the `Claude Code-credentials` Keychain service before older service names.
-- **Release checks are stricter**: README, changelog, GitHub Release assets, Actions status, and SHA256SUMS are now audited through maintainer tooling.
 
 See [Release Notes](#release-notes) for the full history.
 
@@ -300,6 +298,14 @@ Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and 
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v6.1.7</b> - Codex Memory Freshness Hotfix</summary>
+
+- Codex now refreshes shared project memory instead of resuming stale AGENTS context after `.ccb/ccb_memory.md` changes.
+- Claude and Droid ask skills now submit through heredoc and stop immediately after submit.
+
+</details>
+
+<details>
 <summary><b>v6.1.6</b> - Startup And Claude Auth Hotfix</summary>
 
 - Fixes a first-start race between ccbd start and heartbeat maintenance.

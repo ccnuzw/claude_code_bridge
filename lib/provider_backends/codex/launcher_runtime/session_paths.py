@@ -10,14 +10,26 @@ from storage.path_helpers import runtime_project_anchor_from_path
 from ..start_cmd import extract_resume_session_id
 
 
-def load_resume_session_id(spec, runtime_dir: Path, profile=None) -> str | None:
+def load_resume_session_id(
+    spec,
+    runtime_dir: Path,
+    profile=None,
+    *,
+    current_fingerprint: str | None = None,
+    current_memory_fingerprint: str | None = None,
+) -> str | None:
     session_path = preferred_session_path(spec, runtime_dir)
     if session_path is None:
         return None
     data = read_session_payload(session_path)
     if data is None:
         return None
-    if not _provider_authority_matches(data, profile=profile):
+    if not _provider_authority_matches(
+        data,
+        profile=profile,
+        current_fingerprint=current_fingerprint,
+        current_memory_fingerprint=current_memory_fingerprint,
+    ):
         return None
     if not _resume_session_binding_is_usable(data):
         return None
@@ -93,8 +105,19 @@ def payload_resume_session_id(data: dict) -> str | None:
     return extract_resume_session_id(start_cmd)
 
 
-def _provider_authority_matches(data: dict, *, profile) -> bool:
-    return resume_authority_matches(data, profile=profile)
+def _provider_authority_matches(
+    data: dict,
+    *,
+    profile,
+    current_fingerprint: str | None,
+    current_memory_fingerprint: str | None,
+) -> bool:
+    return resume_authority_matches(
+        data,
+        profile=profile,
+        current_fingerprint=current_fingerprint,
+        current_memory_fingerprint=current_memory_fingerprint,
+    )
 
 
 def _resume_session_binding_is_usable(data: dict) -> bool:

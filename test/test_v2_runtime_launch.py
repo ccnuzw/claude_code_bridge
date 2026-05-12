@@ -1545,10 +1545,18 @@ def test_codex_launcher_build_start_cmd_uses_agent_scoped_resume_session(monkeyp
     runtime_dir.mkdir(parents=True, exist_ok=True)
     ccb_dir = project_root / '.ccb'
     ccb_dir.mkdir(parents=True, exist_ok=True)
+    spec = _spec('agent1')
+    command = ParsedStartCommand(project=None, agent_names=('agent1',), restore=True, auto_permission=False)
+
+    monkeypatch.delenv('CODEX_HOME', raising=False)
+    _write_project_memory(project_root, 'shared memory\n')
+    prepared = _prepare_codex_home_for_test(spec, runtime_dir)
+    marker = json.loads((runtime_dir / 'codex-memory-projection.json').read_text(encoding='utf-8'))
     (ccb_dir / '.codex-agent1-session').write_text(
         json.dumps(
             {
                 'codex_session_id': 'agent1-session-id',
+                'codex_memory_projection_sha256': marker['sha256'],
                 'codex_start_cmd': 'codex resume agent1-session-id',
             },
             ensure_ascii=False,
@@ -1560,6 +1568,7 @@ def test_codex_launcher_build_start_cmd_uses_agent_scoped_resume_session(monkeyp
         json.dumps(
             {
                 'codex_session_id': 'agent2-session-id',
+                'codex_memory_projection_sha256': marker['sha256'],
                 'codex_start_cmd': 'codex resume agent2-session-id',
             },
             ensure_ascii=False,
@@ -1568,12 +1577,7 @@ def test_codex_launcher_build_start_cmd_uses_agent_scoped_resume_session(monkeyp
         encoding='utf-8',
     )
 
-    spec = _spec('agent1')
-    command = ParsedStartCommand(project=None, agent_names=('agent1',), restore=True, auto_permission=False)
-
-    monkeypatch.delenv('CODEX_HOME', raising=False)
-
-    cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-restore')
+    cmd = codex_launcher.build_start_cmd(command, spec, runtime_dir, 'sess-restore', prepared_state=prepared)
 
     assert cmd.endswith('resume agent1-session-id')
     assert 'agent2-session-id' not in cmd
@@ -1585,10 +1589,11 @@ def test_codex_launcher_build_start_cmd_reads_resume_cmd_from_agent_scoped_sessi
     runtime_dir.mkdir(parents=True, exist_ok=True)
     ccb_dir = project_root / '.ccb'
     ccb_dir.mkdir(parents=True, exist_ok=True)
+    demo_home = tmp_path / 'demo-codex-home'
     (ccb_dir / '.codex-codex-session').write_text(
         json.dumps(
             {
-                'codex_start_cmd': 'export CODEX_HOME=/tmp/demo; codex -c disable_paste_burst=true resume codex-session-id',
+                'codex_start_cmd': f'export CODEX_HOME={shlex.quote(str(demo_home))}; codex -c disable_paste_burst=true resume codex-session-id',
             },
             ensure_ascii=False,
             indent=2,
@@ -1978,6 +1983,76 @@ def test_codex_launcher_build_start_cmd_skips_resume_when_explicit_api_authority
     cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-authority-change')
 
     assert 'resume legacy-session-id' not in cmd
+
+
+def test_codex_launcher_build_start_cmd_skips_resume_when_memory_projection_changed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    project_root = tmp_path / 'repo-codex-memory-authority'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-runtime' / 'codex'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    source_home = tmp_path / 'source-home'
+    source_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('CODEX_HOME', str(source_home))
+    _write_project_memory(project_root, 'new shared memory\n')
+
+    codex_home = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'codex' / 'home'
+    session_root = codex_home / 'sessions'
+    old_log = session_root / '2026' / '05' / '01' / 'legacy-session.jsonl'
+    old_log.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text('', encoding='utf-8')
+    (codex_home / '.ccb-session-namespace.json').write_text(
+        json.dumps(
+            {
+                'provider': 'codex',
+                'provider_authority_fingerprint': '',
+                'memory_projection_sha256': 'old-memory-sha',
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    ccb_dir = project_root / '.ccb'
+    ccb_dir.mkdir(parents=True, exist_ok=True)
+    session_file = ccb_dir / '.codex-agent1-session'
+    resume_cmd = (
+        f'export CODEX_HOME={shlex.quote(str(codex_home))} '
+        f'CODEX_SESSION_ROOT={shlex.quote(str(session_root))}; '
+        'codex -c disable_paste_burst=true resume legacy-session-id'
+    )
+    session_file.write_text(
+        json.dumps(
+            {
+                'codex_home': str(codex_home),
+                'codex_session_root': str(session_root),
+                'codex_session_id': 'legacy-session-id',
+                'codex_session_path': str(old_log),
+                'codex_memory_projection_sha256': 'old-memory-sha',
+                'start_cmd': resume_cmd,
+                'codex_start_cmd': resume_cmd,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+
+    spec = _spec('agent1')
+    command = ParsedStartCommand(project=None, agent_names=('agent1',), restore=True, auto_permission=False)
+
+    cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-memory-change')
+
+    assert 'resume legacy-session-id' not in cmd
+    data = json.loads(session_file.read_text(encoding='utf-8'))
+    assert data['old_codex_session_id'] == 'legacy-session-id'
+    assert 'codex_session_id' not in data
+    assert 'resume legacy-session-id' not in data['start_cmd']
+    assert not any(session_root.iterdir())
+    assert any((codex_home / 'archived-sessions').rglob('legacy-session.jsonl'))
+    marker = json.loads((codex_home / '.ccb-session-namespace.json').read_text(encoding='utf-8'))
+    assert marker['memory_projection_sha256']
+    assert marker['memory_projection_sha256'] != 'old-memory-sha'
 
 
 def test_codex_launcher_build_start_cmd_skips_resume_when_explicit_api_binding_proof_missing(tmp_path: Path) -> None:

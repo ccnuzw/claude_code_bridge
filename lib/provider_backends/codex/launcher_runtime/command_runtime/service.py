@@ -7,6 +7,10 @@ from typing import Callable
 
 from provider_core.caller_env import caller_context_env, provider_user_session_env
 from provider_backends.codex.runtime_artifacts import codex_runtime_artifact_layout
+from provider_backends.codex.session_authority import (
+    current_memory_projection_fingerprint,
+    current_provider_authority_fingerprint,
+)
 from provider_profiles.codex_home_config import codex_api_authority
 
 
@@ -19,7 +23,7 @@ def build_start_cmd(
     load_resolved_provider_profile_fn: Callable[[Path], object | None],
     prepare_codex_home_overrides_fn: Callable[..., dict[str, str]],
     provider_start_parts_fn: Callable[[str], list[str]],
-    load_resume_session_id_fn: Callable[[object, Path], str | None],
+    load_resume_session_id_fn: Callable[..., str | None],
     build_codex_shell_prefix_fn: Callable[..., list[str]],
     prepared_state: dict[str, object] | None = None,
 ) -> str:
@@ -90,7 +94,13 @@ def _codex_args(command, spec, runtime_dir: Path, *, profile, provider_start_par
         )
     codex_args.extend(spec.startup_args)
     if command.restore:
-        session_id = load_resume_session_id_fn(spec, runtime_dir, profile)
+        session_id = load_resume_session_id_fn(
+            spec,
+            runtime_dir,
+            profile,
+            current_fingerprint=current_provider_authority_fingerprint(profile),
+            current_memory_fingerprint=current_memory_projection_fingerprint(runtime_dir),
+        )
         if session_id:
             codex_args.extend(['resume', session_id])
     return codex_args
