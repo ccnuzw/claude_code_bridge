@@ -9,6 +9,8 @@ description: Maintain this CCB project's GitHub-facing release surface. Use when
 
 Treat GitHub as the user-facing product page. A release is not done until local version files, both READMEs, changelog, GitHub Release, release assets, and Actions status all agree.
 
+GitHub's repository homepage renders README from the default branch, not from the latest release tag. If release documentation is prepared on a feature or hotfix branch, merge that branch to the default branch before calling the homepage updated.
+
 Use repository `SeemSeam/claude_codex_bridge` unless the user explicitly gives a different repo.
 
 ## Quick Audit
@@ -30,6 +32,7 @@ The checker is read-only. It catches mechanical drift, but still manually inspec
 - After pushing a tag or creating a release: run `--phase published`; fix every FAIL before reporting success.
 - After an interruption: run both phases, then follow the recovery runbook below from the first failing state.
 - During README-only maintenance: still run `--phase prepare` so version badges, release notes, install URLs, and memory wording stay aligned.
+- When the user asks for the final published result, include commit, push, merge-to-main when needed, GitHub Actions verification, Release assets verification, and homepage README verification.
 
 ## Release Preparation Checklist
 
@@ -76,17 +79,28 @@ Use this order:
 
 1. Commit release changes.
 2. Push the branch.
-3. Create and push tag `vX.Y.Z`.
-4. Create the GitHub Release page for `vX.Y.Z`.
-5. Let `Release Artifacts` upload assets.
-6. Confirm `Release Artifacts` is green for the tag or a valid `workflow_dispatch` recovery, and confirm branch validation workflows for the release commit are green or consciously accepted as warnings:
+3. Merge the release branch into the default branch when the repository homepage must reflect the release docs:
+   ```bash
+   git checkout main
+   git pull --ff-only origin main
+   git merge --no-ff <release-branch>
+   git push origin main
+   ```
+4. Create and push tag `vX.Y.Z` from the intended release commit.
+5. Create the GitHub Release page for `vX.Y.Z`.
+6. Let `Release Artifacts` upload assets.
+7. Confirm `Release Artifacts` is green for the tag or a valid `workflow_dispatch` recovery, and confirm branch validation workflows for the release commit are green or consciously accepted as warnings:
    - `Tests`
    - `CCBD Real Platform Smoke`
    - `Cross-Platform Compatibility Test`
-7. Confirm release assets exist:
+8. Confirm release assets exist:
    - `ccb-linux-x86_64.tar.gz`
    - `ccb-macos-universal.tar.gz`
    - `SHA256SUMS`
+9. Confirm the GitHub homepage README is updated by reading default-branch README through GitHub:
+   ```bash
+   gh api 'repos/SeemSeam/claude_codex_bridge/contents/README.md?ref=main' --jq .content | base64 -d | rg 'version-|vX.Y.Z'
+   ```
 
 The current workflow expects the Release page to exist before uploading assets. If `Release Artifacts` fails with `release not found`, create the Release and rerun the workflow.
 
@@ -102,6 +116,7 @@ Use the checker output first; each FAIL includes a suggested fix. Common cases:
 - GitHub CLI unauthenticated: run `gh auth login`, then rerun the published check.
 - Workflow red: open the failed run, fix the root cause, rerun the workflow, and keep the release incomplete until it is green.
 - README install URL mismatch: update both English and Chinese install snippets to the active public repo.
+- GitHub homepage still shows an old version: merge/push the release documentation changes to the default branch; updating a tag or non-default branch is not enough.
 - Empty changelog or README release entry: add concrete user-facing bullets, not placeholder headings.
 
 ## Post-Release Verification
@@ -111,6 +126,7 @@ Run:
 ```bash
 gh release view vX.Y.Z --repo SeemSeam/claude_codex_bridge --json tagName,url,assets
 gh run list --repo SeemSeam/claude_codex_bridge --limit 10
+gh api 'repos/SeemSeam/claude_codex_bridge/contents/README.md?ref=main' --jq .content | base64 -d | rg 'version-|vX.Y.Z'
 git status --short --branch
 ```
 
@@ -127,4 +143,5 @@ Do not call the release complete if any of these are true:
 - Required release assets are missing.
 - `SHA256SUMS` does not contain checksum entries for every required tarball asset.
 - Tests or Release Artifacts failed.
+- GitHub homepage README on `main` still shows an old current version.
 - The worktree has uncommitted release edits.
