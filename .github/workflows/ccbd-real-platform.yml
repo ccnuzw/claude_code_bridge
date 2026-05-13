@@ -302,10 +302,9 @@ jobs:
           assert "cleanup_status: ok" in cleanup_text
           assert "old_claude_version_cache" in cleanup_text
           assert "rebuildable_gemini_cache" in cleanup_text
-          assert before["shared_cache_reason"] in {
-              "wsl_drvfs_requires_runtime_relocation",
-              "not_implemented_runtime_relocated",
-          }
+          assert before["runtime_root_kind"] == "relocated"
+          assert before["shared_cache_status"] == "enabled"
+          assert before["shared_cache_reason"] == "enabled"
           checks = {
               "old_removed": not (claude_home / ".local/share/claude/versions/2.1.132").exists(),
               "rollback_kept": (claude_home / ".local/share/claude/versions/2.1.133/claude").exists(),

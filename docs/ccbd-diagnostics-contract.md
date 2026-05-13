@@ -174,9 +174,9 @@ Rules:
   and future provider cache sharing decisions are diagnosable from the same
   storage view. When the reason is `wsl_drvfs_requires_runtime_relocation`, the
   root must be reported as unavailable instead of pointing at an unsafe drvfs
-  path. Supported disabled reason codes are `not_implemented`,
-  `not_implemented_runtime_relocated`, and
-  `wsl_drvfs_requires_runtime_relocation`.
+  path. The current disabled reason code is
+  `wsl_drvfs_requires_runtime_relocation`; relocated WSL projects should report
+  shared cache as enabled.
 - it must not crash only because one diagnostics artifact is missing or malformed
 - malformed diagnostics files must surface as diagnostics errors, not silent omission
 

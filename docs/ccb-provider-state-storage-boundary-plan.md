@@ -629,13 +629,9 @@ WSL:
   an unsafe mounted-drive path by default
 - if the project anchor is on drvfs and runtime-state relocation is not active,
   Phase D shared cache must be disabled and per-agent cache retained
-- `ccb doctor storage` must report that relocation is required before shared
-  provider cache can be enabled on drvfs
-- shared-cache disabled reason codes are:
-  - `not_implemented`: shared cache redirection is not implemented for this
-    project yet
-  - `not_implemented_runtime_relocated`: runtime state is relocated but
-    provider shared-cache redirection is still not implemented
+- `ccb doctor storage` must report shared cache as enabled once drvfs projects
+  have a usable relocated runtime-state root
+- shared-cache disabled reason codes are currently limited to:
   - `wsl_drvfs_requires_runtime_relocation`: the anchor is on drvfs without a
     usable relocated runtime-state root; shared cache root must be reported as
     unavailable
@@ -772,8 +768,9 @@ Implemented:
 - Phase A storage classification API exists under `lib/storage_classification/`.
 - `ccb doctor storage` and `ccb doctor storage --json` expose storage totals and
   per-entry class/provider/agent/size metadata.
-- `ccb doctor storage` reports `shared_cache_status=disabled` and a disabled
-  reason while Phase D shared-cache redirection remains unimplemented.
+- `ccb doctor storage` reports `shared_cache_status=enabled` for usable project
+  and relocated runtime roots; WSL drvfs without runtime relocation remains
+  disabled with `wsl_drvfs_requires_runtime_relocation`.
 - `PathLayout` exposes `shared_cache_dir` and `provider_shared_cache_dir()` as
   the single future shared-cache root under the effective runtime-state root,
   so WSL relocation will not split shared cache back onto unsupported anchor

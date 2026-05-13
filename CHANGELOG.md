@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v6.1.11 (2026-05-13)
+
+### WSL Cleanup Smoke Alignment
+
+- **WSL Storage Smoke Updated**: real-platform WSL cleanup validation now expects relocated mounted-drive projects to report shared cache as enabled, matching the current storage contract
+- **Claude Cleanup Rollback Fix Included**: keeps the active Claude Code version plus one rollback version during `ccb cleanup`
+
 ## v6.1.10 (2026-05-13)
 
 ### Claude Cleanup Rollback Hotfix
