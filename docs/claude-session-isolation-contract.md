@@ -68,6 +68,13 @@ Inside that home, the managed Claude state is:
   - only when inherited Claude Code login auth is projected into the managed home
   - on macOS, this may be materialized from the user's Claude Code Keychain
     entry when that entry can be read during startup
+- `.ccb/agents/<agent>/provider-state/claude/home/Library/Preferences/com.apple.security.plist`
+  - on macOS, copied as Keychain preference compatibility state when the source
+    preference exists
+- `.ccb/agents/<agent>/provider-state/claude/home/Library/Keychains`
+  - on macOS, a symlink to the user's `~/Library/Keychains` only when
+    `com.apple.security.plist` is absent and auth inheritance is enabled
+  - this link is auth compatibility state, not project evidence or cache
 - `.ccb/agents/<agent>/provider-state/claude/home/.config/claude-code/auth.json`
   - copied only for compatibility with older or alternate Claude Code login
     cache layouts
@@ -146,6 +153,11 @@ When `ccb` starts a managed Claude agent:
   read the user's Claude Code Keychain item and materialize the equivalent
   managed `.claude/.credentials.json` cache; projected secret material remains
   provider state and must be excluded from diagnostics
+- if `~/Library/Preferences/com.apple.security.plist` does not exist on macOS,
+  managed login-auth projection may instead link the managed
+  `Library/Keychains` path to the user's `~/Library/Keychains`; this link must
+  be removed when auth inheritance is disabled and must be classified as secret
+  auth state by storage diagnostics
 - managed login-auth projection may also synchronize older or alternate Claude
   Code credential cache artifacts such as `.config/claude-code/auth.json` when
   they exist in the source home
@@ -298,4 +310,6 @@ Diagnostics export should include:
   home
 
 Diagnostics export must exclude copied credential files and projected trust/auth
-state such as `.claude/.credentials.json` and `.config/claude-code/auth.json`.
+state such as `.claude/.credentials.json`, `.config/claude-code/auth.json`, and
+the macOS `Library/Keychains` fallback link. Support bundles must not follow
+that symlink.

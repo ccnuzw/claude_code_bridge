@@ -213,6 +213,7 @@ Examples:
 - API key material
 - OAuth credential files
 - macOS Keychain-derived Claude credentials
+- macOS Claude `Library/Keychains` fallback symlink
 - `.env` files containing provider credentials
 
 Secrets may still live inside managed provider homes, but storage tooling must
@@ -320,7 +321,9 @@ Rules:
   state that affects startup should follow the same effective runtime state root
   unless the user explicitly opts into an external path.
 - macOS Keychain-derived credentials must remain inside agent-scoped managed
-  homes and must not be shared.
+  homes and must not be shared. When `com.apple.security.plist` is absent,
+  the managed Claude `Library/Keychains` fallback symlink is also secret auth
+  compatibility state and must not be treated as cache or unknown residue.
 
 ## 5. Code-Level Changes
 
@@ -578,6 +581,7 @@ Must remain secret and agent-local:
 
 - `.claude/.credentials.json`
 - `.config/claude-code/auth.json`
+- `Library/Keychains` macOS fallback symlink
 
 Candidates for shared/rebuildable cache:
 
@@ -639,6 +643,8 @@ WSL:
 macOS:
 
 - Claude Keychain-derived credentials must remain per managed home
+- the managed Claude `Library/Keychains` fallback symlink must remain
+  agent-local, classified as secret, and never followed into diagnostics bundles
 - shared binary/cache logic must not move or export Keychain-derived auth files
 - cleanup must handle symlink metadata conservatively
 
