@@ -228,16 +228,20 @@ submit_one() {
   local target="$2"
   local sender="$3"
   local started ended elapsed out job_id
-  local ask_args=()
-  if [ "${sender}" != "user" ]; then
-    ask_args+=(--silence)
-  fi
   started="$(now_ms)"
-  out="$(ccb_project ask "${ask_args[@]}" "${target}" from "${sender}" "fastpath-${index}-${target}")" || {
-    printf '%s\n' "${out}" >"${PROJECT}/ask-${index}.err"
-    fail "submit ${index} ${target}"
-    return
-  }
+  if [ "${sender}" = "user" ]; then
+    out="$(ccb_project ask "${target}" from "${sender}" "fastpath-${index}-${target}")" || {
+      printf '%s\n' "${out}" >"${PROJECT}/ask-${index}.err"
+      fail "submit ${index} ${target}"
+      return
+    }
+  else
+    out="$(ccb_project ask --silence "${target}" from "${sender}" "fastpath-${index}-${target}")" || {
+      printf '%s\n' "${out}" >"${PROJECT}/ask-${index}.err"
+      fail "submit ${index} ${target}"
+      return
+    }
+  fi
   ended="$(now_ms)"
   elapsed=$(( ended - started ))
   job_id="$(extract_job_id <<<"${out}" | head -n 1)"
