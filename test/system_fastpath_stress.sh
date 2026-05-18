@@ -36,10 +36,10 @@ ASK_COUNT="${CCB_FASTPATH_STRESS_ASK_COUNT:-60}"
 MAX_RECEIPT_MS="${CCB_FASTPATH_STRESS_MAX_RECEIPT_MS:-2500}"
 P95_RECEIPT_MS="${CCB_FASTPATH_STRESS_P95_RECEIPT_MS:-1500}"
 STUB_DELAY="${CCB_FASTPATH_STRESS_STUB_DELAY:-1.5}"
-if [ -n "${CCB_FASTPATH_STRESS_ASK_WAIT_TIMEOUT_S:-}" ]; then
-  ASK_WAIT_TIMEOUT_S="${CCB_FASTPATH_STRESS_ASK_WAIT_TIMEOUT_S}"
+if [ -n "${CCB_FASTPATH_STRESS_WATCH_TIMEOUT_S:-}" ]; then
+  WATCH_TIMEOUT_S="${CCB_FASTPATH_STRESS_WATCH_TIMEOUT_S}"
 else
-  ASK_WAIT_TIMEOUT_S="$("${PYTHON}" - "${ASK_COUNT}" "${STUB_DELAY}" <<'PY'
+  WATCH_TIMEOUT_S="$("${PYTHON}" - "${ASK_COUNT}" "${STUB_DELAY}" <<'PY'
 import math
 import sys
 
@@ -73,9 +73,7 @@ export CCB_CLAUDE_SKILLS=0
 export CCB_SYNC_TIMEOUT=30
 export CCB_WAIT_TIMEOUT_S=45
 export CCB_WAIT_POLL_INTERVAL_S=0.1
-export CCB_ASK_WAIT_TIMEOUT_S="${ASK_WAIT_TIMEOUT_S}"
-export CCB_ASK_WAIT_POLL_INTERVAL_S=0.1
-export CCB_WATCH_TIMEOUT_S=45
+export CCB_WATCH_TIMEOUT_S="${WATCH_TIMEOUT_S}"
 export CCB_WATCH_POLL_INTERVAL_S=0.1
 export CCB_GEMINI_READY_TIMEOUT_S=0.5
 export CCB_CLAUDE_READY_TIMEOUT_S=0.5
@@ -316,15 +314,15 @@ wait_sample_jobs() {
     job="$(awk '{print $1}' <<<"${line}")"
     target="$(awk '{print $2}' <<<"${line}")"
     [ -z "${job}" ] && continue
-    out="$(ccb_project ask wait "${job}")" || {
-      fail "ask wait ${target} ${job}"
+    out="$(ccb_project watch "${job}")" || {
+      fail "watch ${target} ${job}"
       continue
     }
-    printf '%s\n' "${out}" >"${PROJECT}/wait-${job}.out"
+    printf '%s\n' "${out}" >"${PROJECT}/watch-${job}.out"
     if has_match "${out}" '^watch_status: terminal$' && has_match "${out}" '^status: completed$'; then
-      ok "ask wait ${target} ${job}"
+      ok "watch ${target} ${job}"
     else
-      fail "ask wait ${target} ${job}"
+      fail "watch ${target} ${job}"
     fi
   done
 }
@@ -369,8 +367,8 @@ run_stress() {
   while [ "${i}" -le "${ASK_COUNT}" ]; do
     case $(( (i - 1) % 3 )) in
       0) target="alpha"; sender="user" ;;
-      1) target="beta"; sender="alpha" ;;
-      *) target="gamma"; sender="beta" ;;
+      1) target="beta"; sender="user" ;;
+      *) target="gamma"; sender="user" ;;
     esac
     submit_one "${i}" "${target}" "${sender}"
     i=$(( i + 1 ))

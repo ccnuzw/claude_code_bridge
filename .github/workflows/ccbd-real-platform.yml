@@ -64,7 +64,7 @@ jobs:
           CCB_LINUX_SOAK_SECONDS=35 \
           CCB_LINUX_SOAK_KILL_EVERY=2 \
           CCB_LINUX_SOAK_STUB_DELAY=0.2 \
-          CCB_LINUX_SOAK_ASK_WAIT_TIMEOUT_S=90 \
+          CCB_LINUX_SOAK_WATCH_TIMEOUT_S=90 \
             bash test/system_linux_soak.sh
 
       - name: Fastpath stress smoke
@@ -74,7 +74,7 @@ jobs:
           export TERM=xterm-256color
           CCB_FASTPATH_STRESS_ASK_COUNT=12 \
           CCB_FASTPATH_STRESS_STUB_DELAY=0.3 \
-          CCB_FASTPATH_STRESS_ASK_WAIT_TIMEOUT_S=240 \
+          CCB_FASTPATH_STRESS_WATCH_TIMEOUT_S=240 \
             bash test/system_fastpath_stress.sh
 
       - name: Storage doctor and cleanup smoke
@@ -230,7 +230,7 @@ jobs:
           CCB_LINUX_SOAK_SECONDS=35 \
           CCB_LINUX_SOAK_KILL_EVERY=2 \
           CCB_LINUX_SOAK_STUB_DELAY=0.2 \
-          CCB_LINUX_SOAK_ASK_WAIT_TIMEOUT_S=90 \
+          CCB_LINUX_SOAK_WATCH_TIMEOUT_S=90 \
             bash test/system_linux_soak.sh
 
       - name: Fastpath stress smoke in WSL mounted checkout
@@ -240,7 +240,7 @@ jobs:
           export TERM=xterm-256color
           CCB_FASTPATH_STRESS_ASK_COUNT=12 \
           CCB_FASTPATH_STRESS_STUB_DELAY=0.3 \
-          CCB_FASTPATH_STRESS_ASK_WAIT_TIMEOUT_S=240 \
+          CCB_FASTPATH_STRESS_WATCH_TIMEOUT_S=240 \
             bash test/system_fastpath_stress.sh
 
       - name: Storage doctor and cleanup smoke in WSL mounted checkout

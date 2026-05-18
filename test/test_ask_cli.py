@@ -33,7 +33,7 @@ def test_ask_alias_forwards_to_phase2(monkeypatch, tmp_path: Path) -> None:
     assert captured['stderr'] is stderr
 
 
-def test_ask_alias_forwards_wait_subcommand(monkeypatch) -> None:
+def test_ask_alias_forwards_get_subcommand(monkeypatch) -> None:
     ask_main_module = importlib.import_module('ask_cli.main')
     captured: dict[str, object] = {}
 
@@ -43,10 +43,10 @@ def test_ask_alias_forwards_wait_subcommand(monkeypatch) -> None:
 
     monkeypatch.setattr(ask_main_module, 'maybe_handle_phase2', fake_phase2)
 
-    code = ask_main_module.main(['wait', 'job_123'], stdout=io.StringIO(), stderr=io.StringIO())
+    code = ask_main_module.main(['get', 'job_123'], stdout=io.StringIO(), stderr=io.StringIO())
 
     assert code == 0
-    assert captured['argv'] == ['ask', 'wait', 'job_123']
+    assert captured['argv'] == ['ask', 'get', 'job_123']
 
 
 def test_ask_alias_help_uses_canonical_usage(monkeypatch) -> None:

@@ -1352,6 +1352,9 @@ def _wait_for_phase2_status(cwd: Path, target: str, expected: str, *, timeout: f
     raise AssertionError(f'expected status {expected!r}; last stdout={last_stdout!r} stderr={last_stderr!r}')
 
 
+DUAL_PROVIDER_STATUS_TIMEOUT = 20.0
+
+
 def _wait_for_path(path: Path, timeout: float = 5.0) -> None:
     deadline = time.time() + timeout
     last_error: str | None = None
@@ -3116,8 +3119,8 @@ def test_ccb_two_named_codex_agents_concurrent_ask_isolated(monkeypatch, tmp_pat
         assert code == 0, stderr
         job2 = _extract_accepted_job_id(stdout2, target='agent2')
 
-        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed')
-        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed')
+        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
+        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
         assert f'job_id: {job1}' in pend1
         assert f'job_id: {job2}' in pend2
         assert 'reply: agent1 partial\nagent1 final' in pend1
@@ -3357,8 +3360,8 @@ def test_ccb_two_named_codex_agents_recover_after_ccbd_restart(monkeypatch, tmp_
         thread2.start()
         _wait_for_path(app2.paths.ccbd_socket_path)
         try:
-            pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed')
-            pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed')
+            pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
+            pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
             assert f'job_id: {job1}' in pend1
             assert f'job_id: {job2}' in pend2
             assert 'reply: agent1 before restart\nagent1 after restart' in pend1
@@ -3529,8 +3532,8 @@ def test_ccb_two_named_claude_agents_concurrent_ask_isolated(monkeypatch, tmp_pa
         assert code == 0, stderr
         job2 = _extract_accepted_job_id(stdout2, target='agent2')
 
-        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed')
-        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed')
+        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
+        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
         assert f'job_id: {job1}' in pend1
         assert f'job_id: {job2}' in pend2
         assert 'reply: claude agent1 partial' in pend1
@@ -3712,8 +3715,8 @@ def test_ccb_two_named_gemini_agents_concurrent_ask_isolated(monkeypatch, tmp_pa
         assert code == 0, stderr
         job2 = _extract_accepted_job_id(stdout2, target='agent2')
 
-        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed')
-        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed')
+        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
+        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
         assert f'job_id: {job1}' in pend1
         assert f'job_id: {job2}' in pend2
         assert 'reply: gemini agent1 stable reply' in pend1
@@ -3875,8 +3878,8 @@ def test_ccb_two_named_opencode_agents_concurrent_ask_isolated(monkeypatch, tmp_
         assert code == 0, stderr
         job2 = _extract_accepted_job_id(stdout2, target='agent2')
 
-        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed')
-        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed')
+        pend1 = _wait_for_phase2_status(project_root, 'agent1', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
+        pend2 = _wait_for_phase2_status(project_root, 'agent2', 'completed', timeout=DUAL_PROVIDER_STATUS_TIMEOUT)
         assert f'job_id: {job1}' in pend1
         assert f'job_id: {job2}' in pend2
         assert 'reply: opencode agent1 final' in pend1

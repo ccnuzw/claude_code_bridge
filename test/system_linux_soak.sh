@@ -37,7 +37,7 @@ KILL_EVERY="${CCB_LINUX_SOAK_KILL_EVERY:-5}"
 MAX_RECEIPT_MS="${CCB_LINUX_SOAK_MAX_RECEIPT_MS:-2500}"
 P95_RECEIPT_MS="${CCB_LINUX_SOAK_P95_RECEIPT_MS:-1500}"
 STUB_DELAY="${CCB_LINUX_SOAK_STUB_DELAY:-0.4}"
-ASK_WAIT_TIMEOUT_S="${CCB_LINUX_SOAK_ASK_WAIT_TIMEOUT_S:-90}"
+WATCH_TIMEOUT_S="${CCB_LINUX_SOAK_WATCH_TIMEOUT_S:-90}"
 
 mkdir -p "${PROJECT}/.ccb" "${HOME_DIR}" "${STUB_BIN}" "${CODEX_ROOT}" "${CLAUDE_ROOT}" "${GEMINI_ROOT}" "${OPENCODE_ROOT}" "${DROID_ROOT}"
 
@@ -57,9 +57,7 @@ export CCB_CLAUDE_SKILLS=0
 export CCB_SYNC_TIMEOUT=30
 export CCB_WAIT_TIMEOUT_S=45
 export CCB_WAIT_POLL_INTERVAL_S=0.1
-export CCB_ASK_WAIT_TIMEOUT_S="${ASK_WAIT_TIMEOUT_S}"
-export CCB_ASK_WAIT_POLL_INTERVAL_S=0.1
-export CCB_WATCH_TIMEOUT_S=45
+export CCB_WATCH_TIMEOUT_S="${WATCH_TIMEOUT_S}"
 export CCB_WATCH_POLL_INTERVAL_S=0.1
 export CCB_GEMINI_READY_TIMEOUT_S=0.5
 export CCB_CLAUDE_READY_TIMEOUT_S=0.5
@@ -209,7 +207,7 @@ submit_and_wait_one() {
   local iteration="$1"
   local target="$2"
   local sender="$3"
-  local started ended elapsed out job_id wait_out pend_out
+  local started ended elapsed out job_id watch_out pend_out
   started="$(now_ms)"
   out="$(ccb_project ask "${target}" from "${sender}" "soak-${iteration}-${target}")" || {
     printf '%s\n' "${out}" >"${PROJECT}/ask-${iteration}.err"
@@ -232,15 +230,15 @@ submit_and_wait_one() {
     fail "submit ${iteration} ${target} receipt ${elapsed}ms > ${MAX_RECEIPT_MS}ms"
   fi
 
-  wait_out="$(ccb_project ask wait "${job_id}")" || {
-    fail "ask wait ${iteration} ${target} ${job_id}"
+  watch_out="$(ccb_project watch "${job_id}")" || {
+    fail "watch ${iteration} ${target} ${job_id}"
     return
   }
-  printf '%s\n' "${wait_out}" >"${PROJECT}/wait-${iteration}-${job_id}.out"
-  if has_match "${wait_out}" '^watch_status: terminal$' && has_match "${wait_out}" '^status: completed$'; then
-    ok "ask wait ${iteration} ${target}"
+  printf '%s\n' "${watch_out}" >"${PROJECT}/watch-${iteration}-${job_id}.out"
+  if has_match "${watch_out}" '^watch_status: terminal$' && has_match "${watch_out}" '^status: completed$'; then
+    ok "watch ${iteration} ${target}"
   else
-    fail "ask wait ${iteration} ${target}"
+    fail "watch ${iteration} ${target}"
   fi
 
   pend_out="$(ccb_project pend "${target}")" || {
