@@ -84,36 +84,88 @@ def parse_topology_windows(raw_windows: Any) -> tuple[WindowSpec, ...] | None:
 def agents_from_topology_windows(
     windows: tuple[WindowSpec, ...] | None,
     *,
-    existing_agents: dict[str, object],
+    raw_agents: Any,
 ) -> dict[str, object]:
-    agents = dict(existing_agents)
     if windows is None:
-        return agents
+        return {}
+    window_agent_names = {
+        agent_name
+        for window in windows
+        for agent_name in tuple(getattr(window, 'agent_names', ()) or ())
+    }
+    overlays = _topology_agent_overlays(raw_agents, referenced_agent_names=window_agent_names)
+    agents: dict[str, object] = {}
     for window in windows:
         layout = parse_layout_spec(window.layout_spec)
         for leaf in layout.iter_leaves():
             name = normalize_agent_name(leaf.name)
-            if name in agents:
-                existing = agents[name]
-                provider = getattr(existing, 'provider', None)
-                if provider and str(provider).strip().lower() != str(leaf.provider).strip().lower():
-                    raise ConfigValidationError(
-                        f'agent {name!r} provider conflicts between windows and agents table'
-                    )
-                continue
-            agents[name] = build_agent_spec(
-                name,
-                {
-                    'provider': leaf.provider,
-                    'target': '.',
-                    'workspace_mode': 'git-worktree'
-                    if str(leaf.workspace_mode or '').strip() == 'worktree'
-                    else 'inplace',
-                    'restore': 'auto',
-                    'permission': 'manual',
-                },
+            raw_spec = _merge_topology_agent_overlay(
+                _topology_leaf_agent_defaults(leaf),
+                overlays.get(name, {}),
             )
+            _validate_topology_overlay_provider(name, raw_spec=raw_spec, leaf_provider=leaf.provider)
+            agents[name] = build_agent_spec(name, raw_spec)
     return agents
+
+
+def _topology_agent_overlays(
+    raw_agents: Any,
+    *,
+    referenced_agent_names: set[str],
+) -> dict[str, dict[str, Any]]:
+    raw_agents_map = expect_mapping({} if raw_agents is None else raw_agents, field_name='agents')
+    overlays: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_spec in raw_agents_map.items():
+        if not isinstance(raw_name, str):
+            raise ConfigValidationError('agents table keys must be strings')
+        try:
+            normalized_name = normalize_agent_name(raw_name)
+        except AgentValidationError as exc:
+            raise ConfigValidationError(str(exc)) from exc
+        if normalized_name not in referenced_agent_names:
+            continue
+        if normalized_name in overlays:
+            raise ConfigValidationError(f'duplicate agent name after normalization: {normalized_name}')
+        overlays[normalized_name] = expect_mapping(raw_spec, field_name=f'agents.{raw_name}')
+    return overlays
+
+
+def _topology_leaf_agent_defaults(leaf) -> dict[str, object]:
+    return {
+        'provider': leaf.provider,
+        'target': '.',
+        'workspace_mode': 'git-worktree'
+        if str(leaf.workspace_mode or '').strip() == 'worktree'
+        else 'inplace',
+        'restore': 'auto',
+        'permission': 'manual',
+    }
+
+
+def _merge_topology_agent_overlay(
+    defaults: dict[str, object],
+    overlay: dict[str, Any],
+) -> dict[str, object]:
+    merged = dict(defaults)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_topology_agent_overlay(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _validate_topology_overlay_provider(
+    agent_name: str,
+    *,
+    raw_spec: dict[str, object],
+    leaf_provider: object,
+) -> None:
+    provider = expect_string(raw_spec.get('provider'), field_name=f'agents.{agent_name}.provider')
+    if provider.strip().lower() != str(leaf_provider or '').strip().lower():
+        raise ConfigValidationError(
+            f'agent {agent_name!r} provider conflicts between windows and agents table'
+        )
 
 
 __all__ = ['agents_from_topology_windows', 'parse_sidebar', 'parse_topology_windows']

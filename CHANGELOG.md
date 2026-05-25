@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v7.0.8 (2026-05-25)
+
+### Clear Context And Config Overlay Release
+
+- **Agent Context Clear Command Added**: `ccb clear [agent...]` sends provider-native `/clear` to all or selected mounted agent panes without deleting project state or restarting runtimes, with `all` and unknown-agent validation handled through `ccbd`.
+- **Pane Click Focus Fixed**: project tmux pane mouse clicks now use the correct `select-pane` action, restoring normal focus switching instead of emitting `command select-pane`.
+- **Windows Overlay Config Parsing Corrected**: explicit `version = 2` `[windows]` topology is now the authoritative mounted-agent set, same-name `[agents.<name>]` tables act as overlays, stale unreferenced agent tables are ignored, and overlay providers must still match the window leaf provider.
+- **CCB Clear Skill Added**: Claude and Codex inherited skills now include `ccb-clear`, installers project the skill, and Claude managed settings allow `Bash(ccb clear *)`.
+
 ## v7.0.7 (2026-05-25)
 
 ### Sidebar Controls And Width Sync Release

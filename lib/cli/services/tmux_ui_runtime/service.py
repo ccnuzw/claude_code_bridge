@@ -67,7 +67,7 @@ def _apply_sidebar_mouse_controls(
     ccbd_socket = str(ccbd_socket_path or '').strip()
     if not tmux_socket or not ccbd_socket:
         return
-    default_action = 'select-pane -t = \\; send-keys -M'
+    default_action = 'select-pane -t = ; send-keys -M'
     sidebar_match = (
         '#{&&:#{==:#{session_name},'
         + session_name

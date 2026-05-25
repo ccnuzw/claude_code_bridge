@@ -91,6 +91,7 @@ def test_run_cli_entrypoint_prints_start_help_without_phase2() -> None:
     assert "usage: ccb [-s] [-n]" in stdout.getvalue()
     assert "Primary workflow:" in stdout.getvalue()
     assert "ccb -s" in stdout.getvalue()
+    assert "ccb clear [agent...]" in stdout.getvalue()
     assert "Core commands:" in stdout.getvalue()
     assert "ccb ask <agent> [from <sender>] <message>" in stdout.getvalue()
     assert "ccb doctor" in stdout.getvalue()
@@ -145,6 +146,25 @@ def test_run_cli_entrypoint_prints_start_help_for_start_flags() -> None:
     assert "usage: ccb [-s] [-n]" in stdout.getvalue()
     assert "Primary workflow:" in stdout.getvalue()
     assert "Core commands:" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+def test_run_cli_entrypoint_prints_clear_help() -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    result = run_cli_entrypoint(
+        ["clear", "--help"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 0
+    assert "usage: ccb clear [agent_name|all]..." in stdout.getvalue()
+    assert "Send /clear to every configured mounted agent pane." in stdout.getvalue()
     assert stderr.getvalue() == ""
 
 

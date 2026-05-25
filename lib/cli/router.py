@@ -62,6 +62,7 @@ def print_start_help(*, file=None) -> None:
               ccb                  Start project agents from `.ccb/ccb.config`.
               ccb -s               Safe start. Disable CLI auto-permission override.
               ccb -n               Rebuild runtime state while preserving config and managed agent history.
+              ccb clear [agent...]  Send provider-native /clear to managed agent panes.
               ccb kill             Stop the current project's background runtime.
               ccb kill -f          Force cleanup project-owned runtime residue.
               ccb cleanup          Prune safe provider rebuildable caches after ccbd is stopped.
@@ -229,6 +230,20 @@ _COMMAND_HELP = {
           - Keeps Claude versions currently referenced by managed homes.
           - Does not remove provider sessions, auth, plugin bundles, mailbox data, or runtime authority.
           - Use `ccb doctor storage` before cleanup to inspect storage classes.
+    """,
+    "clear": """
+        usage: ccb clear [agent_name|all]...
+
+        Agent context reset:
+          ccb clear             Send /clear to every configured mounted agent pane.
+          ccb clear agent1      Send /clear to one agent pane.
+          ccb clear agent1 agent2
+                                Send /clear to multiple agent panes.
+
+        Notes:
+          - This sends the provider-native /clear command into each pane.
+          - It does not delete .ccb state, workspaces, auth, sessions, or logs.
+          - Use `ccb kill` or the sidebar restart control when you need process restart.
     """,
     "doctor": """
         usage: ccb doctor [ps|logs <agent>|storage] [--output [PATH]]

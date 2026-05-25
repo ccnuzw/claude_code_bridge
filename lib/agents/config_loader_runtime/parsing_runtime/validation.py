@@ -14,11 +14,11 @@ from .topology import agents_from_topology_windows, parse_sidebar, parse_topolog
 def validate_project_config(document: dict[str, Any], *, source_path: Path | None = None) -> ProjectConfig:
     _validate_document_shape(document)
     windows = parse_topology_windows(document.get('windows'))
-    parsed_agents = parse_agents(document.get('agents', {}) if windows is not None else document.get('agents'))
     if windows is not None:
         default_agents = _parse_topology_default_agents(document, windows=windows)
-        parsed_agents = agents_from_topology_windows(windows, existing_agents=parsed_agents)
+        parsed_agents = agents_from_topology_windows(windows, raw_agents=document.get('agents', {}))
     else:
+        parsed_agents = parse_agents(document.get('agents'))
         default_agents = _parse_default_agents(document)
     cmd_enabled = _parse_cmd_enabled(document)
     layout_spec = _parse_layout_spec(document)

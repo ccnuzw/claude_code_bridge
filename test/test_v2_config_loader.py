@@ -196,7 +196,7 @@ def test_load_project_config_rejects_invalid_token(tmp_path: Path) -> None:
 def test_reserved_agent_name_is_rejected(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     config_path = project_root / '.ccb' / 'ccb.config'
-    _write(config_path, 'kill:codex\n')
+    _write(config_path, 'clear:codex\n')
     with pytest.raises(ConfigValidationError):
         load_project_config(project_root)
 
@@ -947,6 +947,78 @@ model = "gpt-5"
     assert spec.restore_default is RestoreMode.FRESH
     assert spec.permission_default is PermissionMode.AUTO
     assert spec.model == 'gpt-5'
+
+
+def test_load_project_config_supports_windows_topology_partial_agent_overlay(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-windows-partial-agent-overlay'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+
+[windows]
+main = "agent1:codex(worktree)"
+
+[agents.agent1]
+workspace_mode = "inplace"
+restore = "fresh"
+""",
+    )
+
+    result = load_project_config(project_root)
+    spec = result.config.agents['agent1']
+
+    assert result.config.default_agents == ('agent1',)
+    assert spec.provider == 'codex'
+    assert spec.target == '.'
+    assert spec.workspace_mode is WorkspaceMode.INPLACE
+    assert spec.restore_default is RestoreMode.FRESH
+    assert spec.permission_default is PermissionMode.MANUAL
+
+
+def test_load_project_config_ignores_windows_topology_stale_agent_overlays(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-windows-stale-agent-overlay'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+
+[windows]
+main = "agent2:codex"
+
+[agents.agent1]
+provider = "codex"
+target = "."
+workspace_mode = "git-worktree"
+restore = "auto"
+permission = "manual"
+""",
+    )
+
+    result = load_project_config(project_root)
+
+    assert result.config.default_agents == ('agent2',)
+    assert set(result.config.agents) == {'agent2'}
+    assert result.config.agents['agent2'].workspace_mode is WorkspaceMode.INPLACE
+
+
+def test_load_project_config_rejects_windows_topology_referenced_provider_conflict(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-windows-provider-conflict'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+
+[windows]
+main = "agent1:codex"
+
+[agents.agent1]
+provider = "claude"
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='provider conflicts between windows and agents table'):
+        load_project_config(project_root)
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ from .job_views import (
 )
 from .mailbox_views import render_ack, render_inbox, render_pend, render_queue, render_trace
 from .ops_views import (
+    render_clear,
     render_cleanup,
     render_config_validate,
     render_doctor,
@@ -27,6 +28,7 @@ __all__ = [
     'render_ack',
     'render_ask',
     'render_cancel',
+    'render_clear',
     'render_cleanup',
     'render_config_validate',
     'render_doctor',

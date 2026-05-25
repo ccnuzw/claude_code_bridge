@@ -12,6 +12,7 @@ RESERVED_AGENT_NAMES = frozenset(
         'system',
         'ask',
         'cancel',
+        'clear',
         'pend',
         'ping',
         'watch',

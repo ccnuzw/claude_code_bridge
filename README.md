@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-7.0.7-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.8-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -74,10 +74,10 @@ Build project-local teams with roles, pane layout, provider state, worktree isol
 <details>
 <summary><b>Latest release highlights</b></summary>
 
-- **Sidebar controls are richer**: the top bar now exposes full refresh, project pane restart, and exit actions directly from the sidebar UI.
-- **Clicks can restore focus through ccbd**: hidden sidebar click routing maps tree clicks back to project windows and agents instead of relying on raw tmux mouse passthrough.
-- **Width sync is stable across windows**: dragging one sidebar now syncs all windows, integer cell widths are supported, and resize events reapply the stored width for the current CCB session.
-- **Pane restart stays in place**: restart-all uses `project_restart_panes` so configured panes are respawned without rebuilding the whole tmux session.
+- **`ccb clear` is now built in**: you can send provider-native `/clear` to all mounted agents or only named agents without restarting the project runtime.
+- **Pane mouse focus is fixed**: tmux pane clicks now switch focus cleanly again instead of tripping the broken `select-pane` escape path.
+- **Windows overlays behave predictably**: `version = 2` `[windows]` is now the mounted-agent authority, while matching `[agents.<name>]` tables work as overlays and stale unreferenced tables are ignored.
+- **Clear workflows are installable skills**: inherited Claude and Codex installs now project `ccb-clear`, and Claude managed settings allow `Bash(ccb clear *)`.
 
 See [Release Notes](#release-notes) for the full history.
 
@@ -91,6 +91,7 @@ See [Release Notes](#release-notes) for the full history.
 ccb                              # Start default agents from .ccb/ccb.config
 ccb -s                           # Safe start: keep configured/manual permission behavior
 ccb -n                           # Rebuild runtime state; keep config and managed agent history
+ccb clear [agent...]             # Send /clear to all or selected managed agent panes
 ccb kill                         # Stop this project's background runtime
 ccb kill -f                      # Force cleanup before rebuilding state
 ```
@@ -353,6 +354,16 @@ Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and 
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v7.0.8</b> - Clear Context And Config Overlay Release</summary>
+
+- Adds `ccb clear [agent...]` so mounted agents can receive provider-native `/clear` without deleting project state or restarting runtimes.
+- Fixes tmux pane mouse focus switching by removing the bad `select-pane` escaping from the default pane click action.
+- Makes `version = 2` `[windows]` topology authoritative for mounted agents, treats same-name `[agents.<name>]` tables as overlays, and ignores stale unreferenced agent tables.
+- Ships inherited `ccb-clear` skills for Claude and Codex installs and grants Claude managed settings `Bash(ccb clear *)`.
+
+</details>
+
+<details>
 <summary><b>v7.0.7</b> - Sidebar Controls And Width Sync Release</summary>
 
 - Adds full refresh, in-place project pane restart, and exit controls to the sidebar title bar, with matching keyboard and tmux mouse paths.

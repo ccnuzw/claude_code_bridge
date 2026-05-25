@@ -121,6 +121,16 @@ def test_ccbd_client_project_restart_panes_endpoint_uses_empty_payload(monkeypat
     assert calls == [('project_restart_panes', {})]
 
 
+def test_ccbd_client_project_clear_context_endpoint_builds_payload(monkeypatch, tmp_path) -> None:
+    client = CcbdClient(tmp_path / "ccbd.sock")
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(client, 'request', lambda op, payload=None: calls.append((op, payload)) or {'ok': True})
+
+    client.project_clear_context(('agent1', 'agent2'))
+
+    assert calls == [('project_clear_context', {'agent_names': ['agent1', 'agent2']})]
+
+
 def test_ccbd_client_request_wraps_socket_connect_errors(monkeypatch, tmp_path) -> None:
     client = CcbdClient(tmp_path / "ccbd.sock")
 

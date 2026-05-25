@@ -15,6 +15,12 @@ def handle_cleanup(context, command, out, services) -> int:
     return 0
 
 
+def handle_clear(context, command, out, services) -> int:
+    summary = services.clear_agent_context(context, command)
+    services.write_lines(out, services.render_clear(summary))
+    return 0
+
+
 def handle_logs(context, command, out, services) -> int:
     summary = services.agent_logs(context, command)
     services.write_lines(out, services.render_logs(summary))
@@ -65,6 +71,7 @@ def handle_fault_clear(context, command, out, services) -> int:
 
 __all__ = [
     'handle_cleanup',
+    'handle_clear',
     'handle_doctor',
     'handle_fault_arm',
     'handle_fault_clear',

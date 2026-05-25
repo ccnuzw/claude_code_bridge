@@ -20,6 +20,7 @@ from cli.render import render_kill, write_lines
 from cli.services.ack import ack_reply
 from cli.services.ask import exit_code_for_ask_status, submit_ask, watch_ask_job, write_ask_output
 from cli.services.cancel import cancel_job
+from cli.services.clear import clear_agent_context
 from cli.services.cleanup import cleanup_project_storage
 from cli.services.config_validate import validate_config_context
 from cli.services.doctor import doctor_summary
@@ -131,6 +132,7 @@ def _dispatch_services():
         agent_logs=agent_logs,
         arm_fault_rule=arm_fault_rule,
         cancel_job=cancel_job,
+        clear_agent_context=clear_agent_context,
         cleanup_project_storage=cleanup_project_storage,
         clear_fault_rule=clear_fault_rule,
         doctor_summary=doctor_summary,

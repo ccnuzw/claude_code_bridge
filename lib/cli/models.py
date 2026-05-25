@@ -17,6 +17,7 @@ from .models_mailbox import (
     ParsedWatchCommand,
 )
 from .models_start import (
+    ParsedClearCommand,
     ParsedCleanupCommand,
     ParsedConfigValidateCommand,
     ParsedDoctorCommand,
@@ -32,6 +33,7 @@ ParsedCommand = Union[
     ParsedAckCommand,
     ParsedAskCommand,
     ParsedCancelCommand,
+    ParsedClearCommand,
     ParsedCleanupCommand,
     ParsedConfigValidateCommand,
     ParsedDoctorCommand,

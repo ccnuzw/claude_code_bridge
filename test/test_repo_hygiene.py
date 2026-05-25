@@ -69,17 +69,21 @@ def test_inherited_skills_live_under_inherit_skills_only() -> None:
     assert (inherited / "droid_skills" / "ask" / "SKILL.md").is_file()
     assert (inherited / "claude_skills" / "ccb-config" / "SKILL.md").is_file()
     assert (inherited / "codex_skills" / "ccb-config" / "SKILL.md").is_file()
+    assert (inherited / "claude_skills" / "ccb-clear" / "SKILL.md").is_file()
+    assert (inherited / "codex_skills" / "ccb-clear" / "SKILL.md").is_file()
 
     assert not (repo_root / "useful_tools" / "claude_skills" / "ccb-config").exists()
     assert not (repo_root / "useful_tools" / "codex_skills" / "ccb-config").exists()
+    assert not (repo_root / "useful_tools" / "claude_skills" / "ccb-clear").exists()
+    assert not (repo_root / "useful_tools" / "codex_skills" / "ccb-clear").exists()
 
 
 def test_inherited_skill_set_is_minimal() -> None:
     repo_root = Path(__file__).resolve().parents[1]
 
     expected = {
-        "claude_skills": {"ask", "ccb-config"},
-        "codex_skills": {"ask", "ccb-config"},
+        "claude_skills": {"ask", "ccb-config", "ccb-clear"},
+        "codex_skills": {"ask", "ccb-config", "ccb-clear"},
         "droid_skills": {"ask"},
     }
     for provider_root, expected_names in expected.items():
@@ -98,9 +102,9 @@ def test_install_scripts_current_skill_lists_are_minimal() -> None:
     install_sh = (repo_root / "install.sh").read_text(encoding="utf-8")
     install_ps1 = (repo_root / "install.ps1").read_text(encoding="utf-8")
 
-    assert 'local ccb_skills="ask ccb-config"' in install_sh
+    assert 'local ccb_skills="ask ccb-config ccb-clear"' in install_sh
     assert 'local ccb_skills="ask ping' not in install_sh
-    assert '$ccbSkills = @("ask", "ccb-config")' in install_ps1
+    assert '$ccbSkills = @("ask", "ccb-config", "ccb-clear")' in install_ps1
     assert '$ccbSkills = @("ask", "ccb-config", "ping"' not in install_ps1
     assert '$droidSkills = @("ask")' in install_ps1
 

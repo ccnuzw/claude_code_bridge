@@ -11,6 +11,7 @@ from ccbd.handlers import (
     build_ping_handler,
     build_project_focus_agent_handler,
     build_project_focus_window_handler,
+    build_project_clear_context_handler,
     build_project_restart_panes_handler,
     build_project_view_dismiss_comms_handler,
     build_project_view_handler,
@@ -56,6 +57,10 @@ def register_handlers(app) -> None:
     app.socket_server.register_handler(
         'project_restart_panes',
         build_project_restart_panes_handler(app),
+    )
+    app.socket_server.register_handler(
+        'project_clear_context',
+        build_project_clear_context_handler(app),
     )
     app.socket_server.register_handler(
         'ping',

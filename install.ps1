@@ -35,7 +35,7 @@ $script:SCRIPTS_TO_LINK = @(
 )
 
 $script:CLAUDE_MARKDOWN = @(
-  # Old CCB command markdown removed; ask is the only installed CCB skill.
+  # Old CCB command markdown removed; managed CCB workflows install as skills.
 )
 
 $script:LEGACY_SCRIPTS = @(
@@ -823,7 +823,7 @@ function Install-ClaudeConfig {
   Remove-CCBMemoryInjections
 
   $allowList = @(
-    "Bash(ccb ask *)", "Bash(ccb ping *)", "Bash(ccb pend *)"
+    "Bash(ccb ask *)", "Bash(ccb clear *)", "Bash(ccb ping *)", "Bash(ccb pend *)"
   )
 
   if (Test-Path $settingsJson) {
@@ -912,7 +912,7 @@ function Uninstall-Native {
 
   # 3. Remove Claude skills
   $claudeSkillsDir = Join-Path $env:USERPROFILE ".claude\skills"
-  $ccbSkills = @("ask", "ccb-config")
+  $ccbSkills = @("ask", "ccb-config", "ccb-clear")
   $legacySkills = @("ccb_config", "ping", "pend", "autonew", "all-plan", "docs", "tp", "tr", "file-op", "review", "continue")
   if (Test-Path $claudeSkillsDir) {
     Write-Host "Removing CCB Claude skills..."
@@ -946,7 +946,7 @@ function Uninstall-Native {
   $settingsFile = Join-Path $env:USERPROFILE ".claude\settings.json"
   if (Test-Path $settingsFile) {
     $permsToRemove = @(
-      "Bash(ccb ask *)", "Bash(ccb ping *)", "Bash(ccb pend *)",
+      "Bash(ccb ask *)", "Bash(ccb clear *)", "Bash(ccb ping *)", "Bash(ccb pend *)",
       "Bash(ask:*)", "Bash(ping:*)", "Bash(ccb-ping:*)", "Bash(pend:*)"
     )
     try {

@@ -97,6 +97,31 @@ def render_cleanup(summary) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def render_clear(summary) -> tuple[str, ...]:
+    results = tuple(summary.get('results', ()) or ()) if isinstance(summary, Mapping) else ()
+    cleared_count = sum(1 for item in results if item.get('status') == 'cleared')
+    skipped_count = sum(1 for item in results if item.get('status') == 'skipped')
+    failed_count = sum(1 for item in results if item.get('status') == 'failed')
+    lines = [
+        f'clear_status: {summary.get("status", "unknown") if isinstance(summary, Mapping) else "unknown"}',
+        f'cleared_count: {cleared_count}',
+        f'skipped_count: {skipped_count}',
+        f'failed_count: {failed_count}',
+    ]
+    for item in results:
+        agent = str(item.get('agent') or '')
+        status = str(item.get('status') or '')
+        pane_id = str(item.get('pane_id') or '')
+        reason = str(item.get('reason') or '')
+        detail = f'agent={agent} status={status}'
+        if pane_id:
+            detail += f' pane_id={pane_id}'
+        if reason:
+            detail += f' reason={reason}'
+        lines.append(f'clear_agent: {detail}')
+    return tuple(lines)
+
+
 def render_kill(summary) -> tuple[str, ...]:
     lines = [
         'kill_status: ok',
@@ -123,6 +148,7 @@ def render_ps(payload: Mapping[str, object]) -> tuple[str, ...]:
 
 
 __all__ = [
+    'render_clear',
     'render_cleanup',
     'render_config_validate',
     'render_doctor_bundle',

@@ -9,6 +9,7 @@ from cli.models import (
     ParsedAckCommand,
     ParsedAskCommand,
     ParsedCancelCommand,
+    ParsedClearCommand,
     ParsedCleanupCommand,
     ParsedConfigValidateCommand,
     ParsedDoctorCommand,
@@ -230,6 +231,20 @@ def test_parse_ask_invalid(parser: CliParser, argv: list[str]) -> None:
 def test_parse_kill(parser: CliParser) -> None:
     assert parser.parse(['kill']) == ParsedKillCommand(project=None, force=False)
     assert parser.parse(['kill', '-f']) == ParsedKillCommand(project=None, force=True)
+
+
+def test_parse_clear_command(parser: CliParser) -> None:
+    assert parser.parse(['clear']) == ParsedClearCommand(project=None, agent_names=())
+    assert parser.parse(['clear', 'all']) == ParsedClearCommand(project=None, agent_names=())
+    assert parser.parse(['clear', 'agent1', 'agent2']) == ParsedClearCommand(
+        project=None,
+        agent_names=('agent1', 'agent2'),
+    )
+
+
+def test_parse_clear_rejects_all_with_agent_names(parser: CliParser) -> None:
+    with pytest.raises(CliUsageError, match='cannot be combined'):
+        parser.parse(['clear', 'all', 'agent1'])
 
 
 def test_parse_cleanup(parser: CliParser) -> None:

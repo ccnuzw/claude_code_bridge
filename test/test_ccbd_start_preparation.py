@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agents.config_loader import load_project_config
-from agents.models import AgentRestoreState, RestoreMode
+from agents.models import AgentRestoreState, RestoreMode, WorkspaceMode
 from ccbd.start_preparation import prepare_start_agents
 from cli.context import CliContextBuilder
 from cli.models import ParsedStartCommand
@@ -42,6 +42,51 @@ def test_prepare_start_agents_rejects_git_worktree_for_non_git_project(tmp_path:
             restore_state_builder=lambda restore_mode: {'restore_mode': restore_mode},
         )
 
+    assert paths.workspace_path('agent1').exists() is False
+
+
+def test_prepare_start_agents_honors_windows_overlay_inplace_for_non_git_project(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-start-prep-windows-overlay-inplace'
+    (project_root / '.ccb').mkdir(parents=True)
+    (project_root / 'README.md').write_text('not a git repo\n', encoding='utf-8')
+    (project_root / '.ccb' / 'ccb.config').write_text(
+        """version = 2
+
+[windows]
+main = "agent1:codex(worktree)"
+
+[agents.agent1]
+workspace_mode = "inplace"
+""",
+        encoding='utf-8',
+    )
+    bootstrap_project(project_root)
+    command = ParsedStartCommand(project=None, agent_names=(), restore=True, auto_permission=False)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    config = load_project_config(project_root).config
+    paths = PathLayout(project_root)
+
+    prepared = prepare_start_agents(
+        targets=('agent1',),
+        config=config,
+        paths=paths,
+        context=context,
+        project_root=project_root,
+        project_id=context.project.project_id,
+        tmux_socket_path=None,
+        tmux_session_name=None,
+        workspace_window_id=None,
+        resolve_agent_binding_fn=lambda **kwargs: None,
+        project_binding_filter_fn=lambda binding, **kwargs: binding,
+        restore_state_builder=lambda restore_mode: AgentRestoreState(
+            restore_mode=RestoreMode(restore_mode),
+            last_checkpoint=None,
+            conversation_summary='pending restore',
+        ),
+    )
+
+    assert prepared[0].plan.workspace_mode is WorkspaceMode.INPLACE
+    assert prepared[0].plan.workspace_path == project_root.resolve()
     assert paths.workspace_path('agent1').exists() is False
 
 

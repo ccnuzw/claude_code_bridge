@@ -152,15 +152,17 @@ Contract:
 - legacy compact and hybrid configs that do not declare `[windows]` remain
   single-window configs; they are mounted in the project workspace window and
   keep their existing `cmd` pane semantics
-- `[windows]` is the authority for layout, default agent traversal, and per-window agent grouping.
+- `[windows]` is the authority for layout, default agent traversal, per-window agent grouping, and the effective configured-agent set.
 - Each `[windows]` value uses the compact layout grammar, but `cmd` is not supported in windows topology.
 - Every agent leaf in `[windows]` must declare a provider.
-- Each configured agent must appear in exactly one window layout.
+- Each configured agent is an agent leaf referenced by `[windows]` and must appear in exactly one window layout.
 - Windows topology must not be combined with legacy `default_agents`, `layout`, or `cmd_enabled` fields.
 - `entry_window` is optional and defaults to the first declared window.
 - `[ui.sidebar]` is valid only with windows topology. Defaults are `mode = "every_window"`, `width = "15%"`, and `bottom_height = 20`; `width` accepts either a positive integer column count or a percentage string.
 - In `mode = "every_window"`, CCB treats `width` as a project-wide sidebar width. Topology refreshes must resize every managed sidebar pane to the same configured share of its tmux window so page/window switches do not leave sidebars at different widths. If the user drags a sidebar border, CCB stores that runtime column width in the project tmux session and applies it to every managed sidebar window until the session is recreated. If tmux later resizes a window because a terminal client attaches or changes size, CCB reapplies the stored runtime width instead of treating the auto-resized pane width as a new user preference.
-- `[agents.<name>]` tables may provide agent overrides; if they repeat `provider`, it must match the provider declared in `[windows]`.
+- Agent leaves in `[windows]` provide default `provider` and default `workspace_mode` (`agent:provider` means `inplace`; `agent:provider(worktree)` means `git-worktree`).
+- `[agents.<name>]` tables are overlays for names referenced by `[windows]`. They may provide any agent-local override, including `workspace_mode`; if they repeat `provider`, it must match the provider declared in `[windows]`.
+- `[agents.<name>]` tables for names no longer referenced by `[windows]` are ignored as stale overlay residue and must not become configured agents or block startup.
 
 ### 4.2 Agent API Shortcut
 

@@ -135,7 +135,7 @@ def test_apply_project_tmux_ui_sets_session_theme_and_hook_from_current_install_
     assert '--socket /tmp/ccbd.sock' in sidebar_mouse_binding[9]
     assert '--mouse-y "$y" --pane-top "$top" --pane-height "$height"' in sidebar_mouse_binding[9]
     assert 'send-keys -M' not in sidebar_mouse_binding[9]
-    assert sidebar_mouse_binding[10] == 'select-pane -t = \\; send-keys -M'
+    assert sidebar_mouse_binding[10] == 'select-pane -t = ; send-keys -M'
     sidebar_resize_bindings = [
         call for call in calls if call[:4] == ['bind-key', '-T', 'root', 'MouseDrag1Border']
     ]

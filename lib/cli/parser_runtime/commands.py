@@ -5,6 +5,7 @@ import argparse
 from cli.models import (
     ParsedAckCommand,
     ParsedCancelCommand,
+    ParsedClearCommand,
     ParsedCleanupCommand,
     ParsedConfigValidateCommand,
     ParsedDoctorCommand,
@@ -30,6 +31,18 @@ def parse_cancel(tokens: list[str], *, project: str | None, error_type) -> Parse
     if len(tokens) != 1:
         raise error_type('cancel requires <job_id>')
     return ParsedCancelCommand(project=project, job_id=tokens[0])
+
+
+def parse_clear(tokens: list[str], *, project: str | None, error_type) -> ParsedClearCommand:
+    parser = argparse.ArgumentParser(prog='ccb clear', add_help=False)
+    parser.add_argument('agent_names', nargs='*')
+    namespace = parse_args(parser, tokens, error_message='invalid clear command', error_type=error_type)
+    agent_names = tuple(str(item).strip() for item in namespace.agent_names if str(item).strip())
+    if 'all' in {item.lower() for item in agent_names} and len(agent_names) > 1:
+        raise error_type('clear target "all" cannot be combined with agent names')
+    if tuple(item.lower() for item in agent_names) == ('all',):
+        agent_names = ()
+    return ParsedClearCommand(project=project, agent_names=agent_names)
 
 
 def parse_kill(tokens: list[str], *, project: str | None, error_type) -> ParsedKillCommand:
@@ -218,6 +231,7 @@ def parse_config(tokens: list[str], *, project: str | None, error_type) -> Parse
 __all__ = [
     'parse_ack',
     'parse_cancel',
+    'parse_clear',
     'parse_cleanup',
     'parse_config',
     'parse_doctor',

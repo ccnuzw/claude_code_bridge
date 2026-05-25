@@ -160,7 +160,7 @@ SCRIPTS_TO_LINK=(
 )
 
 CLAUDE_MARKDOWN=(
-  # Old CCB command markdown removed; ask is the only installed CCB skill.
+  # Old CCB command markdown removed; managed CCB workflows install as skills.
 )
 
 LEGACY_SCRIPTS=(
@@ -2271,6 +2271,7 @@ install_settings_permissions() {
 
   local perms_to_add=(
     'Bash(ccb ask *)'
+    'Bash(ccb clear *)'
     'Bash(ccb ping *)'
     'Bash(ccb pend *)'
   )
@@ -2281,6 +2282,7 @@ install_settings_permissions() {
 	  "permissions": {
 	    "allow": [
 	      "Bash(ccb ask *)",
+	      "Bash(ccb clear *)",
 	      "Bash(ccb ping *)",
 	      "Bash(ccb pend *)"
 	    ],
@@ -2726,6 +2728,7 @@ uninstall_settings_permissions() {
 
   local perms_to_remove=(
     'Bash(ccb ask *)'
+    'Bash(ccb clear *)'
     'Bash(ccb ping *)'
     'Bash(ccb pend *)'
     'Bash(ask *)'
@@ -2778,6 +2781,7 @@ import sys
 path = '$settings_file'
 perms_to_remove = [
     'Bash(ccb ask *)',
+    'Bash(ccb clear *)',
     'Bash(ccb ping *)',
     'Bash(ccb pend *)',
     'Bash(ask *)',
@@ -2837,7 +2841,7 @@ except Exception:
 
 uninstall_claude_skills() {
   local skills_dst="$HOME/.claude/skills"
-  local ccb_skills="ask ccb-config"
+  local ccb_skills="ask ccb-config ccb-clear"
   local legacy_skills="ccb_config ping pend autonew all-plan docs tp tr file-op review continue"
 
   if [[ ! -d "$skills_dst" ]]; then
@@ -2859,7 +2863,7 @@ uninstall_claude_skills() {
 uninstall_codex_skills() {
   local skills_dst
   skills_dst="$(resolve_codex_source_home)/skills"
-  local ccb_skills="ask ccb-config"
+  local ccb_skills="ask ccb-config ccb-clear"
   local legacy_skills="ccb_config ping pend autonew all-plan file-op"
 
   if [[ ! -d "$skills_dst" ]]; then

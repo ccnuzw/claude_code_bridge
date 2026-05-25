@@ -21,6 +21,13 @@ class ParsedKillCommand:
 
 
 @dataclass(frozen=True)
+class ParsedClearCommand:
+    project: str | None
+    agent_names: tuple[str, ...] = ()
+    kind: str = 'clear'
+
+
+@dataclass(frozen=True)
 class ParsedCleanupCommand:
     project: str | None
     kind: str = 'cleanup'
@@ -64,6 +71,7 @@ class ParsedPingCommand:
 
 
 __all__ = [
+    'ParsedClearCommand',
     'ParsedCleanupCommand',
     'ParsedConfigValidateCommand',
     'ParsedDoctorCommand',

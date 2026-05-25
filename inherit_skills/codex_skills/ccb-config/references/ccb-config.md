@@ -126,14 +126,15 @@ bottom_height = 20
 Rules:
 
 - Only `[windows]` enables multi-window topology. Do not rewrite an existing compact/hybrid config into `[windows]` unless the user asks for named windows or per-window grouping.
-- `[windows]` owns layout and the default agent set.
-- Each agent must appear in exactly one window layout.
+- `[windows]` owns layout and the effective configured-agent set.
+- Each configured agent must appear in exactly one window layout.
 - Window layout leaves must declare providers: `agent:provider` or `agent:provider(worktree)`.
 - `cmd` is not supported inside `[windows]` topology. Use compact/hybrid config when a persistent command pane is required.
 - Do not combine windows topology with `default_agents`, `layout`, or `cmd_enabled`.
 - `entry_window` is optional; it defaults to the first window.
 - `[ui.sidebar]` is optional. Defaults are `mode = "every_window"`, `width = "15%"`, and `bottom_height = 20`.
-- Agent overrides still live under `[agents.<name>]`; the provider there must match the provider in `[windows]` if it is repeated.
+- Agent leaves provide default provider and workspace mode. Same-name `[agents.<name>]` tables are overlays; they may override fields such as `workspace_mode`, and the provider there must match the provider in `[windows]` if it is repeated.
+- `[agents.<name>]` tables for names no longer present in `[windows]` are ignored as stale overlay residue.
 
 ## Migrating Old Configs To Windows
 

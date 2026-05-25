@@ -16,6 +16,7 @@ from .handlers_mailbox import (
 )
 from .handlers_ops import (
     handle_cleanup,
+    handle_clear,
     handle_doctor,
     handle_fault_arm,
     handle_fault_clear,
@@ -31,6 +32,7 @@ _HANDLERS = {
     'ack': handle_ack,
     'ask': handle_ask,
     'cancel': handle_cancel,
+    'clear': handle_clear,
     'cleanup': handle_cleanup,
     'config-validate': handle_config_validate,
     'doctor': handle_doctor,

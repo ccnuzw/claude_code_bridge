@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-7.0.7-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.8-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -74,10 +74,10 @@
 <details>
 <summary><b>最新版本亮点</b></summary>
 
-- **Sidebar 顶部控制更完整**：标题栏现在直接提供全量刷新、项目 pane 重启和退出动作。
-- **点击恢复焦点走 ccbd**：隐藏的 sidebar click 路径会把树节点点击还原为 window/agent focus，而不是依赖原始 tmux 鼠标透传。
-- **宽度同步在多 window 下更稳定**：拖动任意一个 sidebar 会同步所有 window，支持整数列宽，并且 `window-resized` 会按当前 CCB session 保存宽度重新应用。
-- **全量 pane 重启保持原位**：restart-all 通过 `project_restart_panes` 原地重启已配置 pane，不会重建整个 tmux session。
+- **`ccb clear` 现在内置可用**：可以对全部或指定 mounted agent 发送 provider-native `/clear`，而不必重启项目 runtime。
+- **pane 鼠标 focus 已修复**：tmux pane 点击现在能正常切换 focus，不会再落到错误转义后的 `select-pane` 路径。
+- **`[windows]` overlay 语义更稳定**：`version = 2` `[windows]` 现在是 mounted agent 的权威集合，同名 `[agents.<name>]` 只做 overlay，未被 windows 引用的 stale agent table 会被忽略。
+- **clear 工作流已做成继承 skill**：Claude/Codex 安装会同步 `ccb-clear`，并给 Claude managed settings 加上 `Bash(ccb clear *)`。
 
 完整历史见 [新版本记录](#新版本记录)。
 
@@ -91,6 +91,7 @@
 ccb                    # 按 .ccb/ccb.config 启动默认 agent
 ccb -s                 # 安全启动：保留 agent 自身配置的权限策略
 ccb -n                 # 重建运行态，保留配置和同名 managed agent 历史
+ccb clear [agent...]   # 向全部或指定 managed agent pane 发送 /clear
 ccb kill               # 停止当前项目相关后台
 ccb kill -f            # 强制清理项目残留后再配合 ccb -n 使用
 ```
@@ -330,6 +331,16 @@ ccb reinstall
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v7.0.8</b> - Clear Context And Config Overlay Release</summary>
+
+- 增加 `ccb clear [agent...]`，可向 mounted agent 发送 provider-native `/clear`，而不删除项目状态或重启 runtime。
+- 修复 tmux pane 鼠标 focus 切换，去掉默认 pane 点击动作里错误的 `select-pane` 转义。
+- 明确 `version = 2` `[windows]` 是 mounted agent 权威集合，同名 `[agents.<name>]` 作为 overlay，未被 windows 引用的 stale agent table 会被忽略。
+- 为 Claude/Codex 安装同步继承 `ccb-clear` skill，并给 Claude managed settings 增加 `Bash(ccb clear *)`。
+
+</details>
+
+<details>
 <summary><b>v7.0.7</b> - Sidebar Controls And Width Sync Release</summary>
 
 - 为 sidebar 标题栏增加全量刷新、原地重启项目 pane、退出等控制，并补齐对应的键盘与 tmux 鼠标路径。
