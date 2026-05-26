@@ -1,231 +1,121 @@
 <div align="center">
 
-# CCB - Agent CLI 聚合和团队
+# CCB - 可见、可控的多 Agent CLI 工作台
 
 <p>
-  <img src="https://img.shields.io/badge/交互皆可见-096DD9?style=for-the-badge" alt="交互皆可见">
-  <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
+  <img src="https://img.shields.io/badge/v7-multi--agent--workspace-0B7285?style=for-the-badge" alt="v7 multi-agent workspace">
+  <img src="https://img.shields.io/badge/terminal-tmux-2F9E44?style=for-the-badge" alt="tmux">
+  <img src="https://img.shields.io/badge/providers-Codex%20%7C%20Claude%20%7C%20Gemini%20%7C%20OpenCode-CF1322?style=for-the-badge" alt="providers">
 </p>
 
-[![Version](https://img.shields.io/badge/version-7.0.8-orange.svg)]()
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
+[![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
-[English](README.md) | **中文**
+**中文** | [English](README.md)
 
-[为什么 CCB](#为什么-ccb) · [最新亮点](#最新亮点) · [启动和退出](#启动和退出) · [配置控制](#配置控制) · [如何使用](#如何使用) · [如何安装](#如何安装) · [新版本记录](#新版本记录)
+[为什么需要多 agents](#为什么需要多-agents) · [方案对比](#多-agents-方案怎么选) · [v7 界面](#v7-界面速览) · [快速开始](#快速开始) · [tmux 常规操作](#tmux-常规操作) · [配置团队](#配置-agent-团队) · [安装更新](#安装和更新)
 
 </div>
 
 ---
 
-## 为什么 CCB
+## 为什么需要多 agents
+
+小任务用单 agent 就够了；一旦任务需要规划、并行实现、审查、测试和交接，多 agents 的价值就变成：把角色、上下文、模型和执行过程拆开管理。CCB 的重点是把多个真实 CLI agent 放进同一个可见终端工作台。
+
+| 价值 | 直观理解 |
+| :--- | :--- |
+| 角色分离 | `main` 负责任务拆分，`worker` 负责实现，`reviewer` 负责审查。 |
+| 并行推进 | 一个 agent 写代码时，另一个 agent 可以读文档、跑验证或审查风险。 |
+| 模型和上下文分层 | 不同 agent 可以用不同 provider、model、API、worktree 和记忆。 |
 
 <details>
-<summary><b>1. 一条命令，聚合所需 CLI 的所有操作和管理</b></summary>
+<summary><b>展开：单 agent 为什么会吃力？</b></summary>
 
-在一个终端工作台里启动、attach、恢复、监督并操作 Claude、Codex、Gemini、OpenCode 和 Droid。
-
-- 一个项目入口统一管理所有支持的 CLI agent
-- 一个地方处理启动、恢复、attach 和关闭
-- 一个连续的运行路径，避免每个工具各自处理
+- 角色混杂会影响上下文集中度：同一个会话既要做架构，又要写代码，还要自我审查，容易在长任务里丢掉重点。
+- 可执行复杂度有上限：任务越长，越需要拆分、交接、核对和回滚点。
+- 成本压力更高：如果所有步骤都依赖一个最强模型，简单任务也会变贵。
+- 工具和 skill 集中会变难管理：什么都给一个 agent，等于把权限、说明和工具复杂度全部堆在一起。
+- 串行等待效率低：一个 agent 在跑测试、读日志或长时间思考时，其他可并行工作无法自然展开。
 
 </details>
 
+## 多 agents 方案怎么选
+
+多 agents 不是一种固定形态。先用下面这张表判断大方向，细节可以展开看。
+
+| 方案 | 一句话 | 更适合你如果 |
+| :--- | :--- | :--- |
+| [Claude Code 原生 subagents](https://code.claude.com/docs/en/sub-agents) / [agent teams](https://code.claude.com/docs/en/agent-teams) | Claude Code 内部的原生分工。 | 你主要留在 Claude Code，并接受更多协调由 Claude lead 处理。 |
+| [Hive / OpenHive](https://github.com/aden-hive/hive) | 面向生产工作流的多 agent harness。 | 你要状态、恢复、观测、成本控制和图式工作流。 |
+| CCB | 可见、可控、混合 provider 的本地 CLI agent 工作台。 | 你要把 Codex、Claude、Gemini、OpenCode 等真实 CLI 放到一个项目终端里操作。 |
+
 <details>
-<summary><b>2. Agents 之间相互感知、相互通讯</b></summary>
+<summary><b>展开：模型、可控性、上下文和复杂工作流怎么区别？</b></summary>
 
-命名 agent 可通过 `/ask`、广播和定向委派彼此发现、同步状态和交接任务。
+| 关键问题 | Claude Code 原生 | Hive / OpenHive | CCB |
+| :--- | :--- | :--- | :--- |
+| 能否使用不同家的模型 | 可给 teammate / subagent 指定 Claude 模型；整体仍在 Claude Code 体系内。 | 通过 LiteLLM 路线支持大量 hosted / local provider。 | 按 agent 选择 Codex、Claude、Gemini、OpenCode、Droid 等，并可设置独立 model / key / url。 |
+| 过程是否可见 | in-process 或 split panes，取决于模式和终端。 | 强调 runtime observability 和控制台视角。 | 默认就是 tmux 可见 pane，用户能直接点击、输入、复制、观察每个 CLI。 |
+| 拓扑是否可控 | 可自然语言指定队友，但运行时协调较多交给 lead。 | 由目标生成图式拓扑，偏 harness。 | 配置文件显式定义 agent、窗口、pane、worktree 和 sidebar。 |
+| 上下文是否可管理 | subagent / teammate 有独立上下文；team 有任务和消息状态。 | 角色记忆、状态持久化、恢复能力是核心卖点。 | 每个 CLI 保留自己的 provider 会话；项目共享记忆和 per-agent 记忆可选。 |
+| 最适合的落点 | Claude Code 内部的快速委派和团队模式。 | 业务流程自动化、长期运行和生产可靠性。 | 本地开发、代码协作、跨 provider CLI agent 可视化工作台。 |
 
-- 通过命名 target 直接做 agent-to-agent 委派
-- 通过广播同步让所有存活 agent 获得同一上下文
-- 适合 builder、reviewer、QA 这类明确分工的工作流
+CCB 也支持复杂工作流，但它不是自动生成 DAG 的 harness；复杂度主要通过 `.ccb/ccb.config`、多 window、角色记忆、worktree、model/API 配置和 ask/callback 路由显式设计。
 
 </details>
 
-<details>
-<summary><b>3. 项目级专业 Agent 团队</b></summary>
+## CCB 是什么
 
-按项目管理角色、pane 布局、provider 状态、worktree 隔离和生命周期连续性。
+CCB 是一个项目级 agent CLI 工作台。它用 tmux 管理多个真实 CLI agent，把启动、恢复、通信、配置、窗口和运行态聚合在一个项目里。
 
-- 按项目组装角色明确的 agent 团队
-- provider 状态保存在项目级 runtime 下
-- 需要独立工作集时可启用 worktree 隔离
-- 在重启、恢复和 pane supervision 中保持连续性
+- **真实 CLI，不是模拟面板**：每个 agent pane 都运行对应 provider 的真实 CLI。
+- **可见协作**：sidebar 展示窗口、agent 状态和通信区；用户可以用鼠标直接切 pane。
+- **混合 provider**：一个项目里可以同时跑 Codex、Claude、Gemini、OpenCode、Droid。
+- **项目级配置**：`.ccb/ccb.config` 决定团队、布局、窗口、worktree、model、key、url。
+- **可恢复运行态**：CCB 后台守护 agent pane，支持 attach、恢复和项目级清理。
+- **显式协作通道**：agent 可以通过 `/ask`、`$ask`、callback 和 silence 进行委派与交接。
 
-</details>
+## v7 界面速览
 
-<div align="center">
+下面截图来自 `ccb_test2` 项目的真实深色终端会话。图片上的标注只解释区域，不代表必须记住所有快捷键。
 
-![Showcase](assets/show.png)
+<p align="center">
+  <img src="assets/readme_v7/ccb-test2-terminal-annotated.png" alt="CCB v7 终端工作台区域说明" width="960">
+</p>
 
-<details>
-<summary><b>演示动画</b></summary>
+| 区域 | 作用 |
+| :--- | :--- |
+| Sidebar | 显示当前 window、agent 列表、provider 标签、当前选中 agent 和状态提示。 |
+| Comms | 显示 ask/callback 等协作消息和通信状态。 |
+| Agent pane | 每个 pane 是一个真实 CLI 会话，例如 Codex 或 Claude。 |
+| 当前输入目标 | 状态栏和 pane 边框会提示当前输入会发给哪个 agent。 |
+| 状态栏 | 显示项目名、当前 agent、CCB 版本、日期和常用鼠标/键盘提示。 |
+| Window 分组 | v7 可用 `[windows]` 把 agent 按 main、work、review、research 等窗口分组。 |
 
-<img src="assets/readme_previews/video2.gif" alt="任意终端窗口协作演示" width="900">
+Sidebar 相关实现使用并借鉴了 [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) 的思路，在此表示感谢。
 
-<img src="assets/readme_previews/video1.gif" alt="融合vscode使用" width="900">
+## 快速开始
 
-</details>
+### 1. 安装或更新
 
-</div>
-
-## 最新亮点
-
-<details>
-<summary><b>最新版本亮点</b></summary>
-
-- **`ccb clear` 现在内置可用**：可以对全部或指定 mounted agent 发送 provider-native `/clear`，而不必重启项目 runtime。
-- **pane 鼠标 focus 已修复**：tmux pane 点击现在能正常切换 focus，不会再落到错误转义后的 `select-pane` 路径。
-- **`[windows]` overlay 语义更稳定**：`version = 2` `[windows]` 现在是 mounted agent 的权威集合，同名 `[agents.<name>]` 只做 overlay，未被 windows 引用的 stale agent table 会被忽略。
-- **clear 工作流已做成继承 skill**：Claude/Codex 安装会同步 `ccb-clear`，并给 Claude managed settings 加上 `Bash(ccb clear *)`。
-
-完整历史见 [新版本记录](#新版本记录)。
-
-</details>
-
-## 启动和退出
-
-### 常用命令
+新用户优先使用 release 包。到 [Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) 下载与你的平台匹配的包，解压后安装：
 
 ```bash
-ccb                    # 按 .ccb/ccb.config 启动默认 agent
-ccb -s                 # 安全启动：保留 agent 自身配置的权限策略
-ccb -n                 # 重建运行态，保留配置和同名 managed agent 历史
-ccb clear [agent...]   # 向全部或指定 managed agent pane 发送 /clear
-ccb kill               # 停止当前项目相关后台
-ccb kill -f            # 强制清理项目残留后再配合 ccb -n 使用
+tar -xzf ccb-*.tar.gz
+cd ccb-*
+./install.sh install
 ```
 
-tmux 复制粘贴：鼠标左键拖拽即可复制，`Ctrl+Shift+V` 粘贴。
-
-## 配置控制
-
-`ccb` 按三层解析配置：代码内置默认配置、用户配置 `~/.ccb/ccb.config`、项目配置 `.ccb/ccb.config`。项目配置优先级最高；如果项目配置不存在，CCB 会优先使用用户配置，再回退到代码内置默认配置，并且不会自动写入新的项目配置文件。
-
-`.ccb/ccb_memory.md` 是项目全局记忆文档。
-
-<details>
-<summary><b>配置设计 Skill</b></summary>
-
-当你希望 agent 帮你设计、迁移或更新 CCB 团队，而不是手写配置时，可以使用 `ccb-config`。它会被 Claude 和 Codex 安装继承，默认只修改当前生效的配置来源：
-
-- `.ccb/ccb.config`：团队、provider、pane layout 和 worktree 策略
-
-它也可以更新 `.ccb/ccb_memory.md` 和 `.ccb/agents/<agent>/memory.md`，但只在你明确要求设计共享工作流或 per-agent 角色记忆时才会这样做。
-
-在支持 skill 的 provider 里可以这样调用：
-
-```text
-$ccb-config 为一个 Python library 设计团队：一个 coordinator、两个 worktree 实现 agent、一个 reviewer。
-```
-
-这个 skill 会帮助选择 agent 名称、provider、`inplace` / `git-worktree`、compact layout 语法、是否需要迁移到多 window，以及 config-only 修改是否足够。对于旧 compact/hybrid 配置，它可以询问你希望拆成几个 window，提出分组方案，并迁移到当前 `version = 2` windows topology。它会验证当前生效的配置层，并在文件修改完成后提醒你重启 CCB。
-
-</details>
-
-<details>
-<summary><b>布局</b></summary>
-
-第一行使用紧凑格式定义 agent 团队和 pane 布局：
-
-```text
-cmd; writer:codex, reviewer:claude; qa:gemini(worktree)
-```
-
-这个布局表示：
-
-- `cmd` 是 shell pane
-- `writer`、`reviewer`、`qa` 是 agent 名字，也是 pane 标题
-- `codex`、`claude`、`gemini` 是 provider
-- `;` 表示左右分栏，`,` 表示上下堆叠
-- `qa` 使用独立 git worktree；没有写 `(worktree)` 的 agent 默认 `inplace` 运行
-
-</details>
-
-<details>
-<summary><b>每个 Agent 的 API Key 和 Model</b></summary>
-
-保留第一行 compact layout，然后只给需要独立 API、base URL 或 model 的 agent 增加 TOML 表：
-
-```toml
-cmd; builder:codex, reviewer:claude; research:gemini(worktree)
-
-[agents.builder]
-key = "sk-..."
-url = "https://api.example.com/v1"
-model = "gpt-5"
-
-[agents.reviewer]
-key = "sk-ant-..."
-url = "https://api.anthropic.com"
-model = "opus"
-
-[agents.research]
-key = "gemini-key"
-model = "gemini-pro"
-```
-
-说明：
-
-- `key` 和 `url` 是 agent 级快捷配置，支持 `codex`、`claude`、`gemini`。
-- `model` 是 agent 级模型快捷配置，支持 `codex`、`claude`、`gemini`、`opencode`。
-- 设置 `key` 或 `url` 后，该 agent 会使用显式 API 配置，不再继承全局 provider API 凭据。
-- 更高级的 provider 环境变量放到 `agents.<name>.provider_profile.env`；同一个 agent 里不要把 provider API env 和 `key` / `url` 混用。
-- 不要把真实 API key 提交到公开仓库。
-
-常用 compact 示例：
-
-```text
-writer:codex, reviewer:claude
-cmd; writer:codex, reviewer:claude; qa:gemini(worktree)
-cmd; fast:codex, deep:codex
-```
-
-同一个 provider 也可以给不同 agent 配不同 API key：
-
-```toml
-cmd; fast:codex, deep:codex
-
-[agents.fast]
-key = "sk-fast..."
-model = "gpt-5-mini"
-
-[agents.deep]
-key = "sk-deep..."
-url = "https://api.example.com/v1"
-model = "gpt-5"
-```
-
-</details>
-
-<details>
-<summary><b>后续更新</b></summary>
-
-CCB v6 目前在 Linux、macOS 和 WSL 支持 `ccb update`。major 升级会整体替换已安装 runtime；旧项目第一次执行 `ccb` 时，会保留 `.ccb/ccb.config`，清理其余旧 `.ccb` 状态后再原地重建。
-
-如果你是从 git checkout 里执行 `./install.sh install` 安装的，这种安装现在属于 source/dev 模式：
-
-- 全局 `ccb` 和 `ask` 会链接回该 checkout，而不是使用复制快照
-- CCB 自带 skills 和 helper scripts 也会跟随当前源码树
-- source 安装不参与启动时自动更新提示
-- 继续走源码开发路径时，用 `git pull` 或切换 commit 后重新运行 `./install.sh install`
-- 或直接运行 `ccb update`，安装最新稳定 release，并把全局 `ccb` 链接切到托管 release 安装
+如果你已经装过 CCB：
 
 ```bash
-ccb update              # 更新 ccb 到最新稳定版本
-ccb update 6            # 更新到 v6.x.x 最高版本
-ccb update 6.0          # 更新到 v6.0.x 最高版本
-ccb update 6.0.5        # 更新到指定版本
-ccb uninstall           # 卸载 ccb 并清理配置
-ccb reinstall           # 清理后重新安装
+ccb update
 ```
 
-</details>
-
-## 如何安装
-
-1. **Linux / macOS / WSL**<br>
-   当 `ccb` 和你的 agent CLI 运行在同一个类 Unix shell 里时，使用这条路径。
+<details>
+<summary><b>源码安装只建议开发或临时兜底使用</b></summary>
 
 ```bash
 git clone https://github.com/SeemSeam/claude_codex_bridge.git
@@ -233,1073 +123,321 @@ cd claude_codex_bridge
 ./install.sh install
 ```
 
-2. **Windows**<br>
-   当你的 agent CLI 原生运行在 Windows 时，使用这条路径。
-
-```powershell
-git clone https://github.com/SeemSeam/claude_codex_bridge.git
-cd claude_codex_bridge
-powershell -ExecutionPolicy Bypass -File .\install.ps1 install
-```
-
-<details>
-<summary><b>平台说明</b></summary>
-
-- Linux 和 macOS 共用 `install.sh`。
-- WSL 场景下，请让 `ccb` 和 agent CLI 都留在 WSL 内。
-- 在 WSL 挂载盘项目上，项目 authority 仍然留在 `.ccb`，但运行态 state 可以迁移到本机 Linux state root，以保证 socket 和 agent runtime 的稳定性。
-- 原生 Windows mux 仍在按 `psmux` 重构。
-- 更完整的 Windows bootstrap 脚本在 `scripts/bootstrap-windows-test-env.ps1`。
+源码安装会让全局 `ccb` / `ask` 链接回当前 checkout。普通用户更建议安装或更新到稳定 release。
 
 </details>
 
-安装说明：上面的命令目前是从 git checkout 安装。安装后运行 `ccb update`，CCB 会下载最新稳定 GitHub release 包，并自动完成托管 release 升级。
+### 2. 创建项目配置
 
-## 开发工具
+在项目根目录创建 `.ccb/ccb.config`。v7 推荐直接从多 window 拓扑理解配置：`[windows]` 定义窗口和 agent 分组，`agent:provider` 定义每个 agent 使用哪家 CLI，`(worktree)` 表示该 agent 使用独立 git worktree。
 
-维护者专用的 release 和仓库管理工具放在 `dev_tools/`。这些工具进入 git 管理，但不会打进官方 release 包。
+```toml
+version = 2
+entry_window = "main"
 
-## 如何使用
+[windows]
+main = "main:codex"
+work = "worker1:codex(worktree), worker2:claude(worktree)"
+review = "reviewer:claude, qa:gemini"
 
-CCB 现在是 agent-first。你可以显式使用 `/ask`、显式使用 `$ask`，也可以让当前 agent 自己决定何时调用其他 agent。
-
-| 模式 | 示例 |
-| :--- | :--- |
-| 显式 `/ask` | `/ask reviewer review the parser changes in src/parser.ts` |
-| 显式 `$ask` | `$ask reviewer review the parser changes in src/parser.ts` |
-| 隐式委派 | `让 reviewer 检查 parser 的边界情况，然后把问题汇总给我。` |
-
-想明确指定目标时，用 `/ask reviewer ...` 或 `$ask reviewer ...`。想让当前 agent 自行判断是否委派时，直接用自然语言描述任务。
-
-### 链式 Ask 调用
-
-普通 `ask` 是异步提交：提交后当前 agent 应立即停止。如果某个 agent 已经在处理 CCB task，并且必须拿到另一个 agent 的结果才能回复原始调用者，就要使用 callback 路由：
-
-```bash
-ccb ask --callback reviewer <<'EOF'
-Review this failing test and return the minimal blocker.
-EOF
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
 ```
 
-CCB 会记录 parent/child 关系，让当前 turn 结束，并在子任务完成后把结果作为新的 continuation task 交回父 agent。这支持 `agent2 -> agent4 -> agent1 -> agent3` 这类链式调用，不需要轮询，也不会阻塞当前 mailbox 队头。
+如果你不确定应该如何分组、要几个 worker、哪些 agent 用 worktree、哪些 agent 需要独立模型或 API，可以先让支持 skill 的 agent 使用 `ccb-config` 和你讨论并生成配置方案。
 
-active CCB task 外可以使用普通 `ask`。active CCB task 内，需要子任务结果时用 `--callback`；独立且成功结果不需要返回的工作用 `--silence`。
+验证配置：
 
-注意：如果要靠隐式使用，请先把 `ask` skill 的基本信息写进系统记忆；否则 Codex / Claude 这类 agent 可能会优先走自己内置的多 agent 方式，而不会主动调用 CCB 的 `ask`。
+```bash
+ccb config validate
+```
 
----
+启动工作台：
 
-## 编辑器集成
+```bash
+ccb
+```
 
-<img src="assets/nvim.png" alt="Neovim 集成多模型代码审查" width="900">
+### 3. 开始协作
 
-结合 **Neovim** 等编辑器编写代码，同时让多个 agent 在侧边并行审查和迭代。
+你可以直接在某个 agent pane 里输入，也可以让 agent 之间协作：
 
-## 环境要求
+```text
+/ask reviewer review the latest parser changes and list blocking issues.
+```
 
-- **Python 3.10+**
-- **终端软件：** `tmux`
+## 日常操作
 
-## 卸载
+| 目标 | 命令 |
+| :--- | :--- |
+| 启动或重新 attach 当前项目工作台 | `ccb` |
+| 安全启动，保留各 agent 配置的权限策略 | `ccb -s` |
+| 重建运行态，保留配置和同名 managed agent 历史 | `ccb -n` |
+| 停止当前项目后台 | `ccb kill` |
+| 强制清理当前项目残留后再重建 | `ccb kill -f` 后接 `ccb -n` |
+| 更新到最新稳定 release | `ccb update` |
+| 查看当前使用的配置层 | `ccb config validate` |
+
+## tmux 常规操作
+
+CCB 虽然基本全部可以使用鼠标操作，但是学会 tmux 命令可以显著增加便利性。下面列举了部分常用的键盘操作快捷键。
+
+本节只讲 tmux。下面的 `<prefix>` 默认为 `Ctrl-b`：**先按 `Ctrl-b`，松开，再按后面的功能键**。功能键建议在英文输入法下按，避免中文输入法拦截符号键。
+
+| 目标 | 功能键 | 说明 |
+| :--- | :--- | :--- |
+| 切换到相邻 pane | `方向键` | 选择上、下、左、右相邻 agent pane。 |
+| 切到下一个 pane | `o` | 不关心方向时快速轮转。 |
+| 放大 / 还原当前 pane | `z` | 看长输出、diff、日志时非常有用。 |
+| 打开 window / pane 列表 | `w` | 在多 window、多 pane 时选择目标。 |
+| 下一个 window | `n` | 切到下一个 tmux window。 |
+| 上一个 window | `p` | 切到上一个 tmux window。 |
+| 切到编号 window | `0` 到 `9` | 直接跳到对应编号的 window。 |
+| 进入复制/滚动模式 | `[` | 查看历史输出、滚动、选择文本。 |
+| 退出复制/滚动模式 | `q` 或 `Esc` | 回到正常输入。 |
+| 粘贴 tmux buffer | `]` | 粘贴 tmux 自己复制的内容。 |
+| 暂时 detach 会话 | `d` | 退出显示但不停止 CCB 后台，会话仍可重新 attach。 |
+
+复制粘贴建议：
+
+- **鼠标复制**：大多数终端里可以直接左键拖选复制；如果拖选被 tmux 接管，先进入复制/滚动模式再选择。
+- **绕过 tmux 拖选**：很多终端支持 `Shift + 鼠标拖选` 使用终端原生复制。
+- **系统粘贴**：Linux/Windows 终端通常是 `Ctrl+Shift+V`，macOS 终端通常是 `Cmd+V`。
+- **tmux 粘贴**：如果内容已经在 tmux buffer 里，用功能键 `]`。
+
+<details>
+<summary><b>更多常用 tmux 操作</b></summary>
+
+| 目标 | 功能键 | 说明 |
+| :--- | :--- | :--- |
+| 在复制/滚动模式中滚动 | `PageUp` / `PageDown` / `方向键` | 不同终端支持略有差异。 |
+| 在复制/滚动模式中搜索 | `Ctrl-s` / `Ctrl-r` | 分别常用于向前/向后搜索。 |
+| 新建 window | `c` | 只在你明确需要额外 shell 时使用。 |
+| 重命名 window | `,` | 多 window 工作流中更容易识别。 |
+| 显示快捷键帮助 | `?` | 忘记快捷键时查看 tmux 帮助。 |
+
+不建议新用户一开始就使用关闭 pane/window 的 tmux 快捷键。停止 CCB 项目请优先使用 CCB 的项目级退出命令，避免只杀掉某个可恢复 pane 造成误判。
+
+</details>
+
+## 配置 agent 团队
+
+CCB 配置有三层，优先级从低到高：
+
+1. 内置默认配置。
+2. 用户配置 `~/.ccb/ccb.config`。
+3. 项目配置 `.ccb/ccb.config`。
+
+更高层会整体替换低层，不做局部合并。当前项目的权威配置文件是 `.ccb/ccb.config`；旧路径 `.ccb_config/ccb.config` 只应作为迁移参考。
+
+`.ccb/ccb.config` 主要配置这些内容：
+
+| 配置内容 | 写法或位置 | 说明 |
+| :--- | :--- | :--- |
+| window 分组 | `[windows]` | 把 agent 分到 `main`、`work`、`review`、`research` 等 tmux window。 |
+| agent 名称和 provider | `main:codex`、`reviewer:claude` | 名称用于界面、ask 路由和记忆文件；provider 决定启动哪家 CLI。 |
+| 工作区隔离 | `worker1:codex(worktree)` | 给实现类 agent 独立 git worktree，降低互相覆盖的风险。 |
+| sidebar 行为 | `[ui.sidebar]` | 控制 sidebar 是否每个 window 都显示、宽度和 Comms 高度。 |
+| 单 agent 模型/API | `[agents.<name>]` | 可为不同 agent 配 `model`、`key`、`url` 等。 |
+| 角色说明 | `[agents.<name>] description = "..."` | 给 agent 一个简短职责说明；更长的工作流规则建议写到 memory。 |
+
+如果你想先讨论配置而不是手写，可以直接用 `ccb-config` skill 描述目标团队。它会先提出完整方案，确认后再修改 `.ccb/ccb.config`。
+
+<details>
+<summary><b>配置格式示例：单窗口、多 window、per-agent 模型/API</b></summary>
+
+### 单窗口紧凑配置
+
+```text
+cmd; main:codex, worker1:codex(worktree); reviewer:claude
+```
+
+含义：
+
+- `cmd` 是 shell pane，不是 agent。
+- `main`、`worker1`、`reviewer` 是 agent 名称。
+- `codex`、`claude` 是 provider。
+- `;` 表示左右分栏，`,` 表示上下堆叠。
+- `(worktree)` 表示该 agent 使用独立 git worktree。
+
+### 多 window 拓扑
+
+当你想把规划、实现、审查、研究分到不同 tmux window 时，使用 `version = 2` 和 `[windows]`：
+
+```toml
+version = 2
+entry_window = "main"
+
+[windows]
+main = "main:codex"
+work = "worker1:codex(worktree), worker2:claude(worktree)"
+review = "reviewer:claude, qa:gemini"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+```
+
+注意：`cmd` 只属于紧凑/混合单窗口布局；`[windows]` 拓扑里不要写 `cmd`。
+
+### 给 agent 单独配置模型、API key 或 base URL
+
+如果只需要布局，用紧凑格式即可；如果某些 agent 需要单独模型或 API 路由，在紧凑头后追加 TOML overlay：
+
+```toml
+cmd; fast:codex, deep:codex; reviewer:claude
+
+[agents.fast]
+model = "gpt-5-mini"
+
+[agents.deep]
+key = "sk-..."
+url = "https://api.example.com/v1"
+model = "gpt-5"
+
+[agents.reviewer]
+model = "sonnet"
+```
+
+不要把真实 API key 提交到公开仓库。`key` / `url` 是 agent 级快捷字段；更复杂的 provider 环境变量应放到 provider profile 或 agent env 中。
+
+</details>
+
+## 使用 ccb-config skill 配置
+
+如果你不想手写 `.ccb/ccb.config`，可以让支持 skill 的 agent 使用 `ccb-config` 帮你设计。推荐先用自然语言描述项目目标、并行程度、窗口分组、worktree 隔离、provider/model/API 偏好，让它和你讨论后提出完整配置方案。
+
+示例：
+
+```text
+$ccb-config 为一个 Python library 设计团队：main 负责任务拆分，三个 worker 使用 worktree 并行实现，一个 reviewer 做回归和风险审查。保留单窗口还是拆成 main/work/review 三个 window 由你建议。
+```
+
+<details>
+<summary><b>ccb-config 的写入流程和边界</b></summary>
+
+1. 你用自然语言描述项目和团队目标。
+2. `ccb-config` 读取当前配置权威层，判断是新建、修改还是迁移。
+3. 它先提出完整配置方案，不应直接改文件。
+4. 你确认后，它只修改 `.ccb/ccb.config`。
+5. 它运行配置校验，并提醒你重启 CCB 让配置生效。
+
+默认情况下，`ccb-config` 不会修改 `.ccb/ccb_memory.md` 或 `.ccb/agents/<agent>/memory.md`。只有当你明确要求“设计工作流记忆”或“写入角色记忆”时，才应该修改这些 memory 文件。
+
+</details>
+
+## Agent 之间如何协作
+
+普通 `ask` 是提交即返回：把任务交给目标 agent 后，当前 agent 不应该轮询等待。
+
+| 场景 | 推荐方式 |
+| :--- | :--- |
+| 人直接指定目标 agent | `/ask reviewer ...` 或 `$ask reviewer ...` |
+| 当前 agent 在 active CCB task 内，必须等子任务结果才能回复 | `ask --callback reviewer` |
+| 当前 agent 派发独立任务，成功结果不需要回来 | `ask --silence worker1` |
+| 调试队列、诊断状态 | `pend`、`watch`、`ping` 等只作为诊断工具使用 |
+
+<details>
+<summary><b>Callback 为什么重要</b></summary>
+
+如果 agent A 正在处理一个来自用户的 CCB task，又需要 agent B 的结果才能完成，就应该用 callback。CCB 会记录 parent/child 关系，让 A 当前 turn 结束；等 B 完成后，CCB 再把结果作为 continuation 交回 A。这样不会阻塞队列，也不会让 agent 靠轮询浪费上下文。
+
+</details>
+
+## 编辑器工作流
+
+<p align="center">
+  <img src="assets/nvim.png" alt="Neovim 集成多模型代码审查" width="860">
+</p>
+
+CCB 不要求你离开编辑器。常见方式是：编辑器负责写代码，CCB 终端负责多 agent 规划、实现、审查、测试和交接。
+
+## 安装和更新
+
+### 环境要求
+
+- Python 3.10+
+- `tmux`
+- 至少一个你要使用的 agent CLI，例如 Codex、Claude、Gemini、OpenCode 或 Droid
+- Linux、macOS 或 WSL
+
+当前 v7 / 新版本不声明原生 Windows 支持。原生 Windows 只支持到 v5 线；如果你在 Windows 上使用新版本，推荐使用 WSL，并让 `ccb` 与 agent CLI 都运行在 WSL 内。
+
+### Release 优先
+
+首次安装推荐使用 [GitHub Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) 的 release 包；已安装用户推荐：
+
+```bash
+ccb update
+```
+
+源码 checkout 安装只适合开发、验证修复或 release 包暂不可用时临时使用。
+
+### 卸载
 
 ```bash
 ccb uninstall
 ccb reinstall
 
-# 备用方式：
+# 备用方式：在安装包或源码目录内
 ./install.sh uninstall
 ```
 
----
+## 常见问题
 
-## 社区
+<details>
+<summary><b>启动后没有看到预期 agent</b></summary>
+
+先运行 `ccb config validate`，确认 `config_source_kind` 是你预期的层级。项目配置 `.ccb/ccb.config` 优先级最高；如果它不存在，CCB 才会使用 `~/.ccb/ccb.config` 或内置默认配置。
+
+</details>
+
+<details>
+<summary><b>复制粘贴不好用</b></summary>
+
+优先试鼠标拖选复制和 `Ctrl+Shift+V` / `Cmd+V` 粘贴。如果鼠标选择被 tmux 接管，使用 `<prefix>` 后的功能键 `[` 进入复制/滚动模式；如果只是想绕过 tmux，很多终端支持 `Shift + 鼠标拖选`。
+
+</details>
+
+<details>
+<summary><b>想把旧 compact 配置迁移到多 window</b></summary>
+
+使用 `ccb-config` 描述你想要的窗口分组，例如 main/work/review。迁移时应保留旧 agent 名称、provider、worktree 标记、model/key/url 等字段，确认后再写入 `[windows]`。
+
+</details>
+
+<details>
+<summary><b>sidebar helper 不可用</b></summary>
+
+优先使用 release 包，因为 release 包会携带或处理 sidebar helper。源码安装时如果缺少可用的预编译 helper，可能需要本机 Rust 工具链来构建。
+
+</details>
+
+## 社区和致谢
 
 📧 Email: `bfly123@126.com`
+
 💬 微信: `seemseam-com`
 
 感谢 [Linux.do 社区](https://linux.do) 在测试、反馈和讨论中的支持。
 
+感谢 [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) 提供的 sidebar 思路和启发。
+
 <div align="center">
-<img src="assets/weixin.jpg" alt="微信群" width="300">
+  <img src="assets/weixin.jpg" alt="微信群" width="300">
 </div>
 
----
+## 版本记录
 
+v7 线重点：
 
-## 新版本记录
+- 原生 CCB sidebar，支持 per-window 项目视图、agent 状态和鼠标切换。
+- Comms 从 agent 活动中拆分，通信状态和 provider pane 活动更清晰。
+- 新增 `version = 2` `[windows]` 拓扑，可按工作流分组多个 tmux window。
+- 保留 compact / hybrid 旧配置兼容，单窗口团队不需要强制迁移。
+- 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
-历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
-
-<details open>
-<summary><b>v7.0.8</b> - Clear Context And Config Overlay Release</summary>
-
-- 增加 `ccb clear [agent...]`，可向 mounted agent 发送 provider-native `/clear`，而不删除项目状态或重启 runtime。
-- 修复 tmux pane 鼠标 focus 切换，去掉默认 pane 点击动作里错误的 `select-pane` 转义。
-- 明确 `version = 2` `[windows]` 是 mounted agent 权威集合，同名 `[agents.<name>]` 作为 overlay，未被 windows 引用的 stale agent table 会被忽略。
-- 为 Claude/Codex 安装同步继承 `ccb-clear` skill，并给 Claude managed settings 增加 `Bash(ccb clear *)`。
-
-</details>
-
-<details>
-<summary><b>v7.0.7</b> - Sidebar Controls And Width Sync Release</summary>
-
-- 为 sidebar 标题栏增加全量刷新、原地重启项目 pane、退出等控制，并补齐对应的键盘与 tmux 鼠标路径。
-- 通过隐藏的 `ccb __sidebar-click` helper 把 sidebar 树点击恢复为经由 `ccbd` 的 window/agent focus。
-- 让 sidebar 宽度修改可跨 window 同步、支持整数列宽，并在 `window-resized` 时按保存宽度恢复，而不是把 tmux 临时压缩后的宽度当成新的用户设置。
-
-</details>
-
-<details>
-<summary><b>v7.0.6</b> - macOS Release Test Smoke Hotfix</summary>
-
-- 修复 macOS GitHub Tests 的 release-install smoke：在从源码 checkout 模拟 release install 前，先构建可在当前主机运行的 `bin/ccb-agent-sidebar`。
-- 保留 v7.0.5 的 Claude keychain service override、macOS update 二进制保留、sidebar rebuild 明确失败信息等修复。
-
-</details>
-
-<details>
-<summary><b>v7.0.5</b> - Claude Keychain And macOS Update Hotfix</summary>
-
-- 增加 `CCB_KEYCHAIN_SERVICE_OVERRIDE`，用于 managed Claude 的 macOS Keychain service 绑定，并在 control-plane 环境中保留该变量。
-- `ccb update` staging 不再对二进制文件做换行归一化，避免 macOS 上 packaged `bin/ccb-agent-sidebar` 被破坏。
-- 当 sidebar helper 需要本机重建但缺少 `cargo` 或 `rustc` 时，安装脚本会给出明确失败信息。
-
-</details>
-
-<details>
-<summary><b>v7.0.4</b> - Project View Refresh And Runtime Hardening Release</summary>
-
-- 优化 sidebar/project view 刷新：短 TTL response cache、bounded recent-job tail reads、单次构建内复用 tmux pane capture。
-- 为 job tail、message attempts/replies 和 JSONL tail reads 增加定向 runtime lookup helper，避免 comms 状态随 runtime 文件增长而变慢。
-- 加固 keeper/process 校验和 daemon/socket lifecycle，对 project-root ownership 和 stopping state 处理更严格。
-- 继承 config skill 统一改为 `ccb-config`，安装时清理旧 `ccb_config`，并刷新 useful tools 包。
-
-</details>
-
-<details>
-<summary><b>v7.0.3</b> - macOS Sidebar Universal Binary Hotfix</summary>
-
-- `ccb-macos-universal.tar.gz` 现在包含真正 universal 的 `bin/ccb-agent-sidebar`，同时构建 `x86_64-apple-darwin` 和 `aarch64-apple-darwin` 后用 `lipo` 合并。
-- Release CI 会用 `file` 检查 macOS helper，要求输出包含 `universal binary`，并在上传前执行 helper `--help` smoke。
-- macOS GitHub Tests 的 release preview packaging 现在会验证包内 sidebar helper，而不只是检查 tarball 是否存在。
-
-</details>
-
-<details>
-<summary><b>v7.0.2</b> - Codex Trust And Sidebar Compatibility Hotfix</summary>
-
-- 修复 managed Codex home 仍弹 directory trust 的问题：写入 project/workspace trusted 条目，并使用原生 auto-permission 参数。
-- Linux release/sidebar helper asset 改用 Ubuntu 22.04 构建，提升 glibc 兼容性。
-- 安装时验证并在必要时重建 `ccb-agent-sidebar`，避免坏的已有/预置 helper 被继续使用。
-- source sidebar wrapper 解析 symlink 后再定位 repo target binary。
-- 细化 sidebar activity 和 width 处理，覆盖 active job、callback wait、provider background work 和多 agent grid。
-
-</details>
-
-<details>
-<summary><b>v7.0.1</b> - Sidebar Release Packaging Hotfix</summary>
-
-- 修复 macOS 上 sidebar artifact checksum 生成：会依次使用 `sha256sum`、`shasum -a 256` 或 `python3`，恢复 v7 release line 的 GitHub Tests。
-
-</details>
-
-<details>
-<summary><b>v7.0.0</b> - Native Sidebar Control Release</summary>
-
-- 新增 Rust `ccb-agent-sidebar` 原生侧边栏 helper，支持每个 window 的 project view、固定灰色侧边栏身份、彩色 provider/runtime 活动状态，以及鼠标/键盘 focus 切换。
-- 拆分顶部 agent activity 和底部 Comms：顶部反映 provider pane/runtime 活动，Comms 继续对应 CCB ask/job 跟踪与恢复。
-- 新增 `version = 2` `[windows]` topology，可挂载多个命名 tmux window 和 sidebar；旧 compact/hybrid 配置仍是单业务窗口并保留 `cmd` 语义。
-- 更新 `ccb-config` docs/skills 的 windows topology 迁移说明，并保持显式多窗口挂载行为。
-- 加固 Ghostty/tmux `TERM` 兼容、tmux 环境/mouse 行为、source wrapper 处理、release sidebar 二进制打包，以及 Codex legacy root-only session 迁移。
-
-</details>
-
-<details>
-<summary><b>v6.2.9</b> - Callback Visibility And Diagnostics Release</summary>
-
-- 委派式 callback root job 在子链路运行期间显示 `callback_pending`，continuation 完成后 `ask get` 和 `watch` 会解析到最终 message-bureau reply。
-- 在继承 ask skills、CLI help、memory-facing wording 和测试中，将 `ask get`、`pend`、`watch`、`ping` 标记为 diagnostics-only。
-- 将超长 ask body、终态回复、notice 和 callback continuation 文本保存到 `.ccb/ccbd/artifacts/text/`，保留短预览并纳入诊断 bundle。
-- 强化 shutdown cleanup：remote kill 同时跟踪预先快照和当前发布的 control-plane pid，foreground tmux namespace 退出后会 best-effort stop backend。
-
-</details>
-
-<details>
-<summary><b>v6.2.8</b> - Config Source, Stop Cleanup, And Tmux Policy Release</summary>
-
-- 包含显式配置来源：内置默认、用户 `~/.ccb/ccb.config`、项目 `.ccb/ccb.config`，并保持项目配置优先级最高。
-- 继续将 project tmux namespace destroy 延后到 stop-all response finalizer 之后，让从 CCB pane 执行的 `ccb kill` / `ccb kill -f` 能完成后台清理。
-- 保持 managed tmux 配置隔离，同时在 project namespace 和 detached tmux 路径中显式启用 CCB-owned mouse/clipboard support。
-
-</details>
-
-<details>
-<summary><b>v6.2.7</b> - Config Source And Stop Cleanup Release</summary>
-
-- 显式报告配置来源：内置默认、用户 `~/.ccb/ccb.config`、项目 `.ccb/ccb.config`，并保持项目配置优先级最高。
-- 更新 `ccb config validate`、README/docs 和继承的 `ccb-config` skill 说明，统一描述当前生效的配置层。
-- 将 project tmux namespace destroy 延后到 stop-all response finalizer 之后，让从 CCB pane 执行的 `ccb kill` / `ccb kill -f` 能完成后台清理。
-
-</details>
-
-<details>
-<summary><b>v6.2.6</b> - Tmux Isolation And Startup Hardening Release</summary>
-
-- managed tmux 命令默认使用 `tmux -f /dev/null ...`，避免用户 tmux 配置、插件、hook 或 sidebar 改变 CCB-managed layout。
-- source/dev 安装路径增强：Python wrapper 入口、`CCB_PYTHON_BIN`、安装后 `ccb` 和 `ask` smoke test、Droid MCP 注册超时。
-- restore-fresh 和 Claude trust 写入更可靠，同时 Claude auto-permission 保持 `--permission-mode bypassPermissions`。
-- 当前 ask parser 继续不包含已移除的 wait-alias 特殊迁移提示。
-
-</details>
-
-<details>
-<summary><b>v6.2.5</b> - Claude Managed Memory De-Duplication Hotfix</summary>
-
-- 不再把项目级 `CLAUDE.md` 复制进 managed `.claude/CLAUDE.md`，让 Claude 只从工作目录读取一次。
-- managed Claude bundle 仍保留 provider user memory、CCB shared project memory 和 agent private memory。
-- `load_memory_sources` 增加 provider-native project memory 的 opt-out 开关，同时保留其他调用方默认包含的行为。
-
-</details>
-
-<details>
-<summary><b>v6.2.4</b> - Codex Managed Config TOML Hotfix</summary>
-
-- 将 dict value 渲染为 inline TOML table，避免继承含 inline table array 的 Codex config 时 managed-home projection 崩溃。
-- fallback copy 路径会原位更新已有 `[features]`，不再重复追加，并正确停在 `[table]` 和 `[[array_of_tables]]` 边界。
-- `install.sh` 与 `install.ps1` 在没有 TOML reader 时自动安装 `tomli>=2.0.0`，支持 `CCB_INSTALL_TOMLI=0` 跳过。
-- release 的 managed venv 会先安装 `tomli`，再安装可选 watchdog 依赖。
-
-</details>
-
-<details>
-<summary><b>v6.2.3</b> - Architecture Hotspot Optimization Release</summary>
-
-- 将 GitHub release checker 拆分为 local、Markdown、GitHub、workflow 和 asset 等职责明确的 helper module。
-- 将 provider memory projection 的 event、marker、signature 和 bundle materialization 迁入 provider-core 共享 helper。
-- 将 startup update 处理拆分为 state、refresh 和 flow 模块。
-- 抽出 provider-home storage cleanup 分类边界，并记录 architecture optimization plan。
-
-</details>
-
-<details>
-<summary><b>v6.2.2</b> - Codex Managed Home Migration Prompt Hotfix</summary>
-
-- 在 managed Codex home 内禁用 `[features].external_migration`，避免 pane 被交互式 migration prompt 卡住。
-- 保留继承的 Codex source-home config、model/API 设置和其他 feature flags。
-- 增加 parsed TOML 继承和 TOML parser 不可用时 fallback copy 行为的测试覆盖。
-
-</details>
-
-<details>
-<summary><b>v6.2.1</b> - Inherited CCB Config Skill Release</summary>
-
-- 新增继承式 Claude / Codex `ccb-config` skill，用于设计 `.ccb/ccb.config`、选择 agent 角色/provider/worktree layout，并更新共享和 per-agent memory。
-- 将 CCB 自带继承式 skill 统一放到 `inherit_skills/`，同时保持 `useful_tools/` 为用户按需安装的可选工具，不默认继承。
-- 缩短 ask reply guidance，不再在每个 ask body 注入 nested-routing 说明，注入源文本保持英文，并扩展显式完整输出识别。
-- 简化 project/runtime memory wording，并更新 `ccb-config` memory-routing 示例，强调直接 callback 交接和独立 root work package。
-
-</details>
-
-<details>
-<summary><b>v6.2.0</b> - Callback Ask Chain Release</summary>
-
-- 新增 `ccb ask --callback <agent>`，让 active agent 可委派子任务，并在之后以 continuation task 接收子任务结果。
-- active CCB task 内 accidental plain nested `ask` 会被拒绝；需要子任务结果用 `--callback`，独立且无需结果的工作用 `--silence`。
-- 持久化 callback edge，并可在 dispatcher 重启后修复漏提交的 continuation。
-- 更新 Claude、Codex、Droid ask skill 和生成的 project memory，补齐 callback-chain 指引。
-
-</details>
-
-<details>
-<summary><b>v6.1.21</b> - Kill And Restart Cleanup Hotfix</summary>
-
-- 即使命令 pane 在 socket response 写回前被关闭，`ccb kill -f` 仍会继续排队并执行 finalization。
-- 项目级 kill cleanup 会保留完整 tmux socket path，并读取 lifecycle owner/keeper pid authority。
-- process fallback 只匹配同一个 `--project` 的 CCB control-plane 命令，避免按 project root 过宽匹配。
-- ccbd startup 和 terminal/missing job 的 late update 会清理 stale provider execution 文件。
-
-</details>
-
-<details>
-<summary><b>v6.1.20</b> - Claude Active Version Cache Release</summary>
-
-- 识别 source home 下 `~/.local/bin/claude` 指向的 Claude Code active version，并优先用于 managed Claude 启动。
-- 将 source active version 复制进 CCB provider cache，再让 managed `.local/bin/claude` 指向缓存中的 active version。
-- source active-version 布局不可用时，保留原有 shared-cache fallback 行为。
-- 更新 provider workspace prepare 与 Claude binary-cache 契约，记录 source-home active-version 优先级。
-
-</details>
-
-<details>
-<summary><b>v6.1.19</b> - Managed Ask Skill Projection Release</summary>
-
-- Claude 继承的 `skills/` 和 `commands/` 改为通过 CCB projected assets 路由，不再 copy-sync，让系统 ask skill 可进入 managed Claude home。
-- Droid 增加 managed `FACTORY_HOME`，会投射系统 `~/.factory/skills`，并使用 session-scoped Droid sessions root。
-- Droid launch、execution polling 和 communicator session reader 现在会在重启或 session rotation 后继续跟随 managed session root。
-- `ccb ask` 默认注入简洁回复指导，并新增 `--compact` / `--silence` 提交模式。
-
-</details>
-
-<details>
-<summary><b>v6.1.18</b> - Heartbeat Timeout And Useful Tools Release</summary>
-
-- running-job heartbeat 观察会保持为内部状态，连续三轮无进展后才以 `heartbeat_timeout` 终态收尾，并建议先发小任务测试通讯。
-- provider completion 进展改为语义判断，cursor offset、polling timestamp、session snapshot bookkeeping 不再延长 completion deadline。
-- `reliability_*` runtime state 会随持久化保留，恢复后的 provider job 不会重置 timeout deadline。
-- 将 `useful_tools/useful_tools.zip` 纳入版本化可选工具，随 release artifacts 一起分发。
-
-</details>
-
-<details>
-<summary><b>v6.1.17</b> - Completion Binding And Codex Session Hotfix</summary>
-
-- Claude Stop hook completion artifact 现在绑定结构化外层 `CCB_REQ_ID`，转发文本或工具输出不会再把 completion 写到旧 job。
-- Codex session identity 不再依赖 memory projection freshness，`.ccb/ccb_memory.md` 更新只刷新记忆，不强制新开对话。
-- 合入 PR #205 mailbox 恢复：attempt 已终态时，可清理 stale terminal `task_request` queue head。
-- 增加 transcript 解析、provider finish hook、Codex resume 和 mailbox stale-head 清理的回归覆盖。
-
-</details>
-
-<details>
-<summary><b>v6.1.16</b> - Memory Handoff And Claude Route Hotfix</summary>
-
-- 生成的 managed-memory bundle 会加入 CCB 自己的 submit-only ask 协作规则，避免旧共享记忆文本重新引入 polling/waiting 行为。
-- 新建 `.ccb/ccb_memory.md` 模板同步使用 fire-and-forget handoff 表述。
-- managed Claude 启动会优先使用 ccswitch 更新后的 `~/.claude/settings.json` 路由配置，而不是旧 caller-shell `ANTHROPIC_BASE_URL`。
-- 补充 Claude 路由继承契约，并增加优先级回归测试。
-
-</details>
-
-<details>
-<summary><b>v6.1.15</b> - Kill Shutdown Reliability Hotfix</summary>
-
-- 远程 `ccb kill` 会等待记录下来的 `ccbd` 和 keeper pid 退出，不再只信任 lifecycle unmounted。
-- 写最终 shutdown report 前会把 lifecycle finalize 到 stopped/unmounted，让 `ccb cleanup` 可在 kill 后直接运行。
-- 增加 prepared pid 快照、远程 lifecycle finalize 和 shutdown intent 顺序的回归测试。
-
-</details>
-
-<details>
-<summary><b>v6.1.14</b> - macOS Claude Keychain Boundary Follow-up</summary>
-
-- 将 managed Claude `Library/Keychains` fallback 记录为 agent-local secret auth 兼容状态。
-- 明确 support bundle 不能跟随 fallback Keychains symlink，storage 诊断会把它分类为 secret auth 状态。
-
-</details>
-
-<details>
-<summary><b>v6.1.13</b> - macOS Claude Keychain Fallback</summary>
-
-- macOS 上如果 `com.apple.security.plist` 不存在，会把 `Library/Keychains` 链接进 managed Claude home，保留 Claude 登录查找能力。
-- 关闭 Claude auth 继承时会移除 fallback Keychains 链接。
-- Storage 诊断会把 fallback Keychains symlink 分类为 secret auth 状态。
-
-</details>
-
-<details>
-<summary><b>v6.1.12</b> - Claude Tmux Permission Release</summary>
-
-- 打包已合并的 Claude auto-permission pane 修复，避免 tmux 启动卡在 bypass permissions 确认框。
-- 继续包含 v6.1.11 的 WSL cleanup smoke 对齐和 Claude rollback-cache 保留修复。
-
-</details>
-
-<details>
-<summary><b>v6.1.11</b> - WSL Cleanup Smoke Alignment</summary>
-
-- WSL mounted-drive storage cleanup smoke 已对齐当前 relocated-runtime shared-cache 契约。
-- 包含 v6.1.10 的 Claude cleanup rollback 保留修复。
-
-</details>
-
-<details>
-<summary><b>v6.1.10</b> - Claude Cleanup Rollback Hotfix</summary>
-
-- `ccb cleanup` 现在会保留当前 Claude Code 版本和一个 rollback 版本。
-- 修复 macOS/WSL real-platform storage cleanup smoke 中的 Claude current/rollback 保留预期。
-
-</details>
-
-<details>
-<summary><b>v6.1.9</b> - 存储去重与关闭加固</summary>
-
-- 通过 Codex 投影资产 symlink/shared bundle，以及 Claude/Gemini 可重建 cache 路由和清理，减少 `.ccb` 体积增长。
-- `ccb cleanup` 现在会回收旧 Claude shared versions、Gemini shared cache、Claude 可重建 cache 和过期 pane crash log。
-- 加固 `ccb kill`：提前快照旧 `ccbd`/keeper pid，等待并兜底终止，同时避开新的 backend generation 竞态。
-- 修复 Claude tmux pane 中 bypass permissions 确认框无法交互导致的启动失败。
-
-</details>
-
-<details>
-<summary><b>v6.1.8</b> - macOS Claude Keychain Preference Hotfix</summary>
-
-- macOS managed Claude home 现在会继承 `Library/Preferences/com.apple.security.plist`，让 Claude 登录查找能解析预期的默认 Keychain。
-- 该 preference 投影仍绑定 auth 继承；关闭 Claude auth 继承时会删除。
-
-</details>
-
-<details>
-<summary><b>v6.1.7</b> - Codex 记忆刷新 Hotfix</summary>
-
-- `.ccb/ccb_memory.md` 变化后，Codex 会刷新共享项目记忆，不再继续 resume 旧 AGENTS 上下文。
-- Claude 和 Droid ask skill 改为 heredoc 提交，并在提交后立即结束。
-
-</details>
-
-<details>
-<summary><b>v6.1.6</b> - 启动与 Claude 认证 Hotfix</summary>
-
-- 修复首次启动时 ccbd start 与 heartbeat maintenance 的 pane 竞争。
-- `.ccb/ccb_memory.md` 是唯一的 CCB 共享记忆文档。
-- 增加 Claude macOS `Claude Code-credentials` Keychain 查找。
-
-</details>
-
-<details>
-<summary><b>v6.1.5</b> - Tmux 启动 Hotfix</summary>
-
-- 修复启动时可能出现的 `Cannot split: pane ... does not exist` 和 `respawn pane failed: can't find pane`。
-- Provider pane 仍保持原 managed respawn 启动路径。
-
-</details>
-
-<details>
-<summary><b>v6.1.4</b> - 项目共享记忆 V1</summary>
-
-- `.ccb/ccb_memory.md` 是项目全局记忆文档。
-
-</details>
-
-<details>
-<summary><b>v6.1.2</b> - Provider 存储边界加固</summary>
-
-- **存储分类显式化**：`ccb doctor storage` 现在区分 authority、session state、secret、workspace、user content、projected config、rebuildable cache 和 startup authority bundle。
-- **安全清理入口落地**：`ccb cleanup` 会在 `ccbd` 或 ask job 活跃时拒绝执行，只清理安全的可重建 provider cache，并保留 session、auth 和当前 Claude binary。
-- **Shared Cache 护栏补齐**：未来 provider shared-cache 路径统一落在 effective runtime-state root 下，并加入 WSL drvfs 安全检查和 manifest 创建。
-
-</details>
-
-<details>
-<summary><b>v6.1.1</b> - Ask Skill 和记忆注入清理</summary>
-
-- **只安装 Ask Skill**：Claude、Codex 和 Droid/Factory 安装现在只发布 `ask` skill，并清理 `ping`、`pend`、`all-plan`、`file-op` 等旧 CCB helper skill。
-- **移除全局记忆注入**：安装器不再向全局 `CLAUDE.md`、安装目录 `AGENTS.md` 或 `.clinerules` 写入 CCB 协作块；已存在的 CCB 标记块会在安装时清理。
-- **删除旧 Skill 源模板**：仓库内的 skill 模板现在只保留各 provider 的 `ask` skill 资产。
-
-</details>
-
-<details>
-<summary><b>v6.1.0</b> - CCBD Ask 稳定化和 Observer 收敛</summary>
-
-- **Ask Submit Fastpath 稳定化**：`ccb ask` 不再等待 provider readiness、mailbox history projection 或长 maintenance tick，提交回执保持有界
-- **Lifecycle / Shutdown Race 收口**：stop-all、shutdown、restart 和后台 supervision 不再通过 stale work 复活 stopped runtime 或回退 terminal job
-- **Provider Completion Recovery 加固**：Codex polling 会跟随 restart 后的新 session binding，从当前 managed session log 读取回复并推进 job 终态
-- **Mailbox Summary Read Model 落地**：日常 `queue`、`inbox`、`pend` 路径优先读取维护好的 summary，summary 缺失或损坏时显式 degraded
-- **Observer Surface 明确弱化**：`pend`、`watch`、`queue`、`inbox` 都是非权威快照；需要 lineage 细节时使用 `ccb trace <id>`
-- **真实平台验证补齐**：GitHub Actions 新增 macOS 和 WSL ccbd/ask smoke、通讯矩阵、短 soak、fastpath stress
-
-</details>
-
-<details>
-<summary><b>v6.0.29</b> - WSL Runtime State 迁移</summary>
-
-- **运行态移出挂载盘**：在 `/mnt/<drive>/...` 下的 WSL 项目中，项目 authority 仍留在 `.ccb`，`ccbd/` 和 agent runtime state 会迁移到本机 Linux state root，并写入显式 marker
-- **诊断和 Bundle 映射更新**：doctor 输出和 support bundle 现在会暴露 project anchor、runtime-state root、迁移原因，并把 relocated runtime 文件映射回逻辑 `.ccb` archive 路径
-- **Provider Lookup 和 Ask Routing 保持稳定**：relocated runtime 目录仍能回溯到 project anchor，用于 session discovery 和 ask sender attribution，Linux/macOS 默认布局不变
-- **Runtime marker 会校验**：relocated runtime marker 和 ref 现在会拒绝格式错误或归属不匹配的 payload，避免旧残留悄悄把一个项目映射到另一个项目
-- **WSL Smoke 与最终合同一致**：发布 smoke 现在检查 relocation 的最终 runtime-root 路径，而不是把第一阶段的迁移结果当成 socket fallback 终点
-
-</details>
-
-<details>
-<summary><b>v6.0.28</b> - WSL Control Plane Socket 加固</summary>
-
-- **加固 WSL Control Plane 启动**：keeper 和 daemon readiness probe 现在共用配置化 control-plane RPC timeout，不再使用更短的硬编码预算，避免把挂载盘上的慢启动误判为 config drift
-- **解耦 Socket Server Accept 路径**：ccbd 现在把 accept 连接和串行 worker lane 分开，一个慢请求或不完整请求不会再阻塞新的 control-plane probe 或 heartbeat
-- **增加短暂 Connect Retry**：Unix socket client 只会在现有 timeout 预算内重试短暂 connect race，不会重试已经发送的 RPC 或 mutating operation
-- **刷新 README**：公开 README 已按当前 agent CLI hub / agent team 工作流重新组织，并更新 release 指引
-
-</details>
-
-<details>
-<summary><b>v6.0.27</b> - macOS Foreground Attach Timeout 加固</summary>
-
-- **拆分 Foreground Attach Timeout**：交互式 `ccb` 启动现在使用 foreground attach 专属 RPC 和 target-ready 预算，不再复用很短的 daemon probe timeout
-- **降低 macOS Attach Race**：foreground attach 现在能容忍 daemon 启动成功后稍慢的 `ccbd` ping、tmux namespace/window 可见性延迟，不再把这类延迟当成 daemon 启动失败
-- **Attach 失败信息更清晰**：错误现在区分 control-plane ping 无响应，以及 daemon 已响应但 project namespace 尚不可 attach 两类情况
-
-</details>
-
-<details>
-<summary><b>v6.0.26</b> - macOS 安装与 Claude Ask 清理</summary>
-
-- **修复 macOS Release 安装**：release 安装生成的 CLI wrapper 现在会绑定 managed `.venv` Python，避免安装 `watchdog` 等可选依赖后运行环境漂移
-- **修复 WSL 安装测试**：watchdog 安装回归测试会显式确认 WSL 非交互安装模式，让 CI 覆盖预期的可选依赖路径
-- **精简 Claude Ask Prompt**：managed Claude `ask` 不再把本地 ask skill runtime 文本注入 prompt body，agent 间消息只保留 request anchor 和用户原始消息
-
-</details>
-
-<details>
-<summary><b>v6.0.25</b> - Gemini Managed Home 对齐</summary>
-
-- **修复 Gemini 登录继承**：managed Gemini pane 现在会把 `GEMINI_CLI_HOME` 设置为隔离 home 根目录，让 Gemini CLI 从同一个 managed 边界读取投影后的 `.gemini/.env`、settings 与登录状态
-- **补充回归覆盖**：launcher 测试锁定 `HOME`、`GEMINI_CLI_HOME` 与 `GEMINI_ROOT` 的对齐契约，并防止 settings 再写入嵌套 `.gemini/.gemini`
-- **精简社区联系方式**：移除独立的 Linux.do 联系入口，保留联系区块后面的 Linux.do 社区致谢
-
-</details>
-
-<details>
-<summary><b>v6.0.24</b> - WSL 官方登录传输环境</summary>
-
-- **继承 WSL Provider 传输环境**：managed provider pane 现在会保留官方登录与 Codex Apps/MCP 联网路径所需的用户会话 proxy、CA、browser 与 WSL interop 环境
-- **保持 Managed 隔离边界**：传输环境继承集中在共性层，不允许调用者全局 `CODEX_HOME`、`GEMINI_ROOT`、`CLAUDE_PROJECTS_ROOT` 或 `CCB_CALLER_*` runtime authority 覆盖 agent 级 managed state
-- **扩展 Gemini 登录投影**：managed Gemini home 现在会投影 allowlist 后的 `.gemini/.env` API 凭据、`google_accounts.json` 与 `GEMINI_CLI_HOME`，诊断包仍会排除复制的 auth artifacts
-- **加固 Opencode Session 检测**：opencode 现在只有在 provider 专属 runtime env 存在时才进入 env-session 模式，避免 stale 通用 `CCB_SESSION_ID` 污染
-- **刷新社区入口**：README 已更新微信群二维码，并加入 Linux.do 社区致谢，方便用户从公开项目页找到当前交流渠道
-
-</details>
-
-<details>
-<summary><b>v6.0.23</b> - CI 矩阵稳定化</summary>
-
-- **Release CI 已转绿**：最新 release 现在指向完整 GitHub Actions 测试通过的提交，覆盖 Ubuntu、macOS、WSL 与安装 smoke
-- **Provider 黑盒覆盖聚焦**：重型 pane-backed provider restart / rotate / settle 测试改为在专门的 Ubuntu provider-blackbox job 中运行，不再重复进入每个 OS 与 Python 矩阵单元
-- **修复 macOS socket 测试 race**：ccbd socket 测试现在会等 daemon socket 能响应 ping 后再发 RPC，避免 macOS runner 上的 readiness 竞态
-
-</details>
-
-<details>
-<summary><b>v6.0.22</b> - Claude macOS 登录继承</summary>
-
-- **继承 macOS Keychain 登录态**：managed Claude 启动现在会从 macOS Keychain 读取 Claude Code 官方登录凭据，并在隔离 Claude home 内物化等价的项目级 `.claude/.credentials.json`
-- **刷新 Claude 账号元数据**：继承的 `.claude.json` 账号元数据现在会从 source home 刷新，同时保留 managed workspace trust，并排除 source workspace trust 与 API key secret
-- **修复默认配置启动**：keeper 现在会把缺失 `.ccb/ccb.config` 视为使用代码内置默认项目配置，而不是在 `ccbd` mount 前提前退出
-- **扩展回归覆盖**：新增测试锁定 Keychain 投影、账号元数据刷新以及关闭 auth 继承后的清理路径
-
-</details>
-
-<details>
-<summary><b>v6.0.21</b> - Claude Hook 资产投影</summary>
-
-- **继承 CodeIsland Hook 资产**：managed Claude 启动现在会在继承的 Claude hooks 调用 `$HOME/.codeisland/...` 时复制源 home 中对应的 `.codeisland/`，避免隔离 Claude home 内缺少 hook 脚本
-- **保持配置边界**：第三方 hook 资产只会在开启 Claude config 继承、且继承的 hook payload 明确引用对应 home-relative 路径时复制
-- **诊断脱敏扩展**：诊断包现在会排除复制到 provider-state 下的 `.codeisland/` 资产，同时继续包含普通 managed Claude settings 以便排障
-
-</details>
-
-<details>
-<summary><b>v6.0.20</b> - Claude 官方登录 source home 修复</summary>
-
-- **Claude 官方登录 source home 修复**：managed Claude 启动现在会把 `.ccb/agents/*/provider-state/*/home` 识别为隔离运行时 home，而不是用户源 home，因此官方浏览器登录凭据会从真实账号 home 复制
-- **Claude 凭据路径覆盖**：managed Claude home 现在会投影 Claude Code 官方登录使用的 `.claude/.credentials.json`，并继续兼容 `.config/claude-code/auth.json`
-- **回归覆盖补充**：新增测试锁定 source-home 回退、launcher 投影、诊断脱敏以及 workspace 准备阶段的 Claude 官方登录继承
-
-</details>
-
-<details>
-<summary><b>v6.0.19</b> - Claude 官方登录继承</summary>
-
-- **Claude 官方登录凭据投影**：managed Claude home 现在会把 Claude Code 官方登录使用的 `.claude/.credentials.json` 投影到隔离运行时中，使浏览器登录态也能被 CCB 继承，而不再只有 API token / settings 这一路生效
-- **Managed 登录态保留**：当全局 Claude 登录凭据消失、但 managed Claude 已经持有有效项目级登录态时，启动现在会保留这份 managed 登录凭据，不再在重启时被静默丢掉
-- **鉴权清理与回归覆盖**：关闭 auth 继承时会清理陈旧的 Claude 登录凭据副本，并新增针对投影、清理和 launcher 启动路径的回归测试
-
-</details>
-
-<details>
-<summary><b>v6.0.18</b> - Gemini Hook 空回复保护</summary>
-
-- **Gemini 空 Hook 回复不再误烧掉任务**：managed Gemini 的 `AfterAgent` hook 如果在空回复下触发，现在会降级成 `incomplete`，不再被当作错误的 exact completion 直接终结任务
-- **Exact Hook 轮询更保守**：Gemini exact-hook 轮询现在会忽略没有回复文本的 `completed` hook artifact，让 observed session-stability 或 timeout reliability 路径继续收口，而不是接受空白终态
-- **补齐回归覆盖**：新增针对 finish-hook artifact 写入层与 Gemini execution-service 轮询层的空回复保护测试，锁住这条回归路径
-
-</details>
-
-<details>
-<summary><b>v6.0.17</b> - Gemini 自定义端点环境变量透传修复</summary>
-
-- **Gemini 端点覆盖恢复**：managed Gemini 启动现在会端到端保留 `GOOGLE_GEMINI_BASE_URL`，使走自定义 endpoint 或代理的 Gemini CLI 不再悄悄回退到 Google 默认生产 API 地址
-- **Gemini 模型环境变量放行**：control-plane 与 provider-profile 的环境变量过滤现在会保留 `GEMINI_MODEL`，隔离 Gemini agent 启动时不再吞掉显式模型选择
-- **配置快捷项对齐 CLI 语义**：Gemini 的 `key` / `url` 快捷配置现在会物化为当前 Gemini CLI 实际读取的环境变量，避免 `ccb.config` 路由与 shell 直跑行为不一致
-
-</details>
-
-<details>
-<summary><b>v6.0.16</b> - Codex 插件投影与 cmd shell 兼容性修复</summary>
-
-- **Codex 插件投影修复**：managed Codex home 现在会把 `.tmp/plugins/` 与 `.tmp/plugins.sha` 作为插件 authority 一起投影，使隔离 agent 不再出现“配置声明启用了插件，但实际 marketplace / 插件资产缺失”的不一致状态
-- **插件刷新语义收紧**：启动现在把 managed 插件投影作为一个完整 authority 单元刷新；当 source 投影消失时会清理旧的 managed 残留，而当 source `plugins.sha` 未变化时又不会重复全量拷贝
-- **cmd Shell / 会话环境加固**：`cmd` pane 现在会直接 `exec` 解析后的用户 shell，并保留 `DISPLAY`、`WAYLAND_DISPLAY`、`DBUS_SESSION_BUS_ADDRESS`、`XAUTHORITY`、`SSH_AUTH_SOCK` 等普通用户会话环境变量，提升 fish/zsh 与 GUI 命令兼容性
-
-</details>
-
-<details>
-<summary><b>v6.0.15</b> - Codex 路由权威与前台 attach 打磨</summary>
-
-- **Codex 显式路由权威**：managed Codex home 现在会把 agent 私有 `config.toml` 与 `auth.json` 物化为显式 `key` / `url` 路由的唯一权威，使 agent 级 API 覆盖真正替代系统级 provider 路由，而不是漂回全局配置
-- **Codex 会话命名空间轮换**：managed Codex 启动现在会为显式路由生成 authority 指纹，把可复用 session 绑定也打上该 authority；当绑定路由与当前路由不一致时，会在启动前轮换旧 `sessions/` 命名空间
-- **前台 attach 体验加固**：交互式 `ccb` 启动现在会用真实终端视口初始化 tmux namespace，并在 attach 后做一次 best-effort client refresh，避免首次显示依赖手工刷新
-
-</details>
-
-<details>
-<summary><b>v6.0.14</b> - Claude logout 恢复加固</summary>
-
-- **managed Claude 登录态保留**：当全局 Claude home 已执行 logout 时，managed Claude home 现在会保留 agent 私有的本地登录态，避免项目内重新登录后重启再次掉回浏览器链接循环
-- **auth 投影语义收紧**：当 source home 仍有 auth 时，启动继续按 source 刷新；当 source auth 缺失时，不再把它解释为“必须清空 managed auth”，而 `inherit_auth = false` 仍会清理旧的复制鉴权
-- **启动链路回归覆盖补齐**：新增回归测试覆盖 projection 层、provider workspace 准备以及 Claude launcher 启动路径，锁住这条 logout 后恢复语义
-
-</details>
-
-<details>
-<summary><b>v6.0.13</b> - macOS release 路径与预览打包修复</summary>
-
-- **macOS release 路径补齐**：共享 release 产物命名和 updater 解析现在同时覆盖 macOS universal 包以及 Linux/WSL release 资产
-- **source dev 安装模式**：从 git checkout 执行安装后会继续链接到实时源码树，不参与启动自动更新提示，但仍可通过 `ccb update` 切换到托管 release 安装
-- **Agent API / Model 简写**：`.ccb/ccb.config` 现在支持 agent 级扁平 `key`、`url`、`model` 字段，让常见 provider 覆盖保持简洁
-- **预览打包加固**：preview release 导出现在会排除仓库内构建过程生成的输出路径，修复 `dist-macos-smoke` 这类目录上的递归自拷贝失败
-
-</details>
-
-<details>
-<summary><b>v6.0.12</b> - 非阻塞启动更新提示</summary>
-
-- **缓存化启动提示**：交互式前台 `ccb` 启动现在会读取安装级缓存的 release 元数据，只有本地已知存在更高稳定版时才提示升级
-- **后台刷新**：缓存缺失或过期时会用短网络预算在后台刷新，不再阻塞项目启动路径
-- **升级 / 延后 / 静默**：启动提示支持立即升级、对当前版本延后提醒，或静默当前版本
-- **启动边界保持干净**：release 更新检查仍是 advisory 逻辑，不进入项目生命周期启动事务
-
-</details>
-
-<details>
-<summary><b>v6.0.11</b> - 项目启动热修复</summary>
-
-- **冷启动 namespace 修复**：项目 tmux namespace 冷启动时，`no server running on <project socket>` 现在会被判定为“namespace 缺失，需要创建”，不再被错误打成通用 tmux inspect 失败
-- **release 回归覆盖补齐**：新增针对 namespace backend/state 的回归测试，锁住这条冷启动路径，覆盖 `ccb -> ping -> kill` 生命周期闭环
-- **契约语义补全**：startup supervision contract 现在明确把 project-socket 上的 `no server running` 定义为重建信号，而不是致命 inspect 失败
-
-</details>
-
-<details>
-<summary><b>v6.0.10</b> - 启动预算加固与 Gemini 登录继承</summary>
-
-- **Gemini 登录继承**：managed Gemini home 现在会为 `oauth-personal` 投影登录鉴权选择与 `oauth_creds.json`，并在关闭 auth 继承时清理旧的复制凭据
-- **统一 tmux 就绪预算**：项目自有 pane 的 `respawn-pane` 现在与 namespace create/reflow 共用同一套 tmux ready-retry 预算，降低启动与后台 supervision 中瞬时 `no server running` 失败
-- **后台启动兼容性加固**：后台 lifecycle 启动继续保持 supervision 兼容，同时把 readiness probe 超时与业务 RPC budget 解耦
-- **诊断包凭据脱敏**：diagnostic bundle 现在会像其他 provider 凭据一样排除 Gemini `oauth_creds.json`
-
-</details>
-
-<details>
-<summary><b>v6.0.9</b> - 跨平台生命周期与 watch 稳定性增强</summary>
-
-- **WSL 兼容性修复**：项目 runtime 现在会避开不支持 Unix socket 的 WSL 挂载盘路径，同时加固 installer staging 与 tmux namespace readiness
-- **macOS 生命周期加固**：启动、恢复与项目身份识别路径已收紧，macOS 现在按与 Linux 一致的 lifecycle authority 模型收口，不再间歇性漂移
-- **Respawn 重试边界收口**：tmux respawn 期间的瞬时 fork、server exit、readiness 失败现在在 runtime supervision 边界内重试，不再向上冒泡成伪生命周期故障
-- **Watch 重连恢复**：observer recovery 在 daemon 短暂失联后可以从持久化状态恢复，同时继续严格遵守内部截止时间
-- **跨平台 CI 覆盖扩展**：GitHub Actions 现在同时覆盖 macOS install smoke、WSL 兼容路径与既有 Linux 测试矩阵
-
-</details>
-
-<details>
-<summary><b>v6.0.7</b> - 生命周期 authority 与停机稳定性增强</summary>
-
-- **Keeper 持有生命周期 authority**：keeper 现在通过权威 `lifecycle.json`、generation fence 和 namespace epoch 跟踪来推进项目生命周期
-- **Mounted 状态读路径修复**：`ping ccbd` 与 `ping agent` 现在从当前 authority 读取 mounted/runtime 状态，不再在恢复后漂移到旧的失败视图
-- **Shutdown 事务加固**：`ccb kill` 和 `ccb kill -f` 现在会在停机事务里终结所有非终态 job，重启后不会再通过 restore 或 auto-retry 复活旧执行
-- **真实黑盒复现已收口**：真实 `ask -> kill -f -> restart` 路径现在会稳定收口为 `project_shutdown`，不再残留活动执行
-
-</details>
-
-<details>
-<summary><b>v6.0.6</b> - Agent 隔离稳定性增强与 kill 生命周期修复</summary>
-
-- **Agent 隔离稳定性增强**：Codex、Claude、Gemini 的 managed agent 会把会话状态稳定保存在项目级 `.ccb/agents/<agent>/provider-state/...` 下
-- **重启继承更安全**：重启只恢复对应 managed agent 自己的历史，不再因为工作目录相同而吸收手工运行 provider 的对话
-- **项目 Provider Dotfile 保护**：managed 启动不再改写项目级 `.claude`、`.gemini` 或 `.codex` provider dotfiles
-- **Kill 生命周期修复**：`ccb kill` 主动销毁当前项目 tmux session 后，交互式 `ccb` 不再误报前台 attach 失败
-
-</details>
-
-<details>
-<summary><b>v6.0.5</b> - Agent 隔离稳定性增强</summary>
-
-- **Agent 隔离稳定性增强**：Codex、Claude、Gemini 的 managed agent 会把会话状态稳定保存在项目级 `.ccb/agents/<agent>/provider-state/...` 下
-- **重启继承更安全**：重启只恢复对应 managed agent 自己的历史，不再因为工作目录相同而吸收手工运行 provider 的对话
-- **项目 Provider Dotfile 保护**：managed 启动不再改写项目级 `.claude`、`.gemini` 或 `.codex` provider dotfiles
-
-</details>
-
-<details>
-<summary><b>v6.0.4</b> - 旧版升级兼容热修复</summary>
-
-- **向后兼容的 Release 资产**：Linux release tarball 现在会额外带一个兼容别名，旧版 6.x updater 即使误把资产名当作解压目录，也仍然能找到安装器
-- **旧客户端升级链路恢复**：现有 `v6.0.1` 和 `v6.0.2` 安装现在可以直接升级到最新稳定版，不需要先拥有修过的本地 updater
-- **新 updater 仍保持正确**：当前 runtime 继续按正确的解压目录工作，不依赖这个兼容别名
-
-</details>
-
-<details>
-<summary><b>v6.0.3</b> - 自升级 tarball 热修复</summary>
-
-- **Release 升级修复**：`ccb update` 现在会正确定位解压后的 release 目录，不再把 `.tar.gz` 资产名当成目录
-- **安装器接力恢复**：自升级现在能正确找到 release 包里的 `install.sh` 并走完整替换流程
-- **Release 构建卫生**：Linux release 打包现在会忽略本地 `.ccb-requests/` 残留，正式构建不再被运行时垃圾阻塞
-
-</details>
-
-<details>
-<summary><b>v6.0.2</b> - caller 归因修复、邮箱路由稳定化与 macOS 安装提醒</summary>
-
-- **Caller 身份归因修复**：`ccb ask` 现在会保留真实发起 agent 身份，reply 不再误记成 `user`
-- **Reply 路由更稳定**：异步委派任务的回复现在会回到正确邮箱链路，包括 `cmd` 锚点场景
-- **Mixed-Case Agent 恢复修复**：配置里使用大小写混合的 agent 名称时，布局恢复与启动不再漂移
-- **macOS Homebrew 提醒**：`install.sh` 现在会在缺少 Homebrew 时先给出明确警告，再继续 tmux 等依赖安装说明
-
-</details>
-
-<details>
-<summary><b>v6.0.1</b> - Release 归档清理与更安全的升级解压</summary>
-
-- **源码归档清理**：移除误提交的 pytest 临时产物，GitHub 源码归档重新保持干净
-- **更严格的 tar 校验**：升级解压前会先拒绝不安全的 symlink 目标
-- **失败提示更直白**：遇到不安全归档时，会明确提示使用 release 资产或干净源码包
-- **回归测试补齐**：新增测试阻止临时测试产物再次被跟踪进仓库
-
-</details>
-
-<details>
-<summary><b>v6.0.0</b> - 原生多 Agent Runtime、稳定原生通信、仅 Linux/WSL 自动升级</summary>
-
-**🚀 全新运行时方向：**
-- **无限并发 agent 基础**：CCB v6 被定义为几乎无限量 agent 互调与编排的运行时底座
-- **Agent 身份独立**：每个 agent 都可以拥有不同的角色、任务归属、skill 库和人格
-- **公开命令面收口**：面向用户的公开工作流继续聚焦 `ccb`、`ccb -s`、`ccb -n`、`ccb kill`、`ccb kill -f`
-
-**🧱 项目重建语义：**
-- **保留配置清理旧态**：首次在 pre-6 项目中执行 `ccb` 时，会保留 `.ccb/ccb.config`，清除其余旧 `.ccb` 运行时状态，然后在本地重建
-- **运行时标记**：现代项目会写入 `.ccb/project-runtime.json`，避免把当前 runtime 误判为旧状态
-- **Worktree 安全护栏**：CCB 管理的 git worktree 若存在脏改动或未合并分支，仍会阻断破坏性清理并要求用户先处理
-
-**🔄 升级策略：**
-- **仅 Linux/WSL**：`ccb update` 在 6.x 线目前只对 Linux/WSL 开放
-- **仅使用 Release 资产升级**：每个版本仍会一起发布源码 tag，但 `ccb update` 在 6.x 线只安装 GitHub release 资产，不再使用源码压缩包
-- **稳定发布升级**：默认升级目标改为最新稳定 release，而不是漂移的 `main`
-- **Major 升级确认**：升级到 `6.0.0` 时会先要求明确确认，再替换已安装 runtime
-
-**🤖 Provider 稳定性：**
-- **Gemini 多轮稳定性**：Gemini 完成判定现在会持续跟踪 tool activity，不会在第一句稳定规划文本上提前结束
-
-</details>
-
-<details>
-<summary><b>v5.3.0</b> - CLI 收口、显式 worktree 模式、Gemini 完成判定修复</summary>
-
-**🚀 面向用户的 CLI 收口：**
-- **主入口更清晰**：公开工作流收敛为 `ccb`、`ccb -s`、`ccb -n`、`ccb kill`、`ccb kill -f`
-- **模型控制面保留**：`ask`、`ping`、`pend`、`watch` 继续保留给 agent 侧编排使用，但不再挤占主帮助入口
-
-**🧱 工作区语义显式化：**
-- **默认 inplace**：compact `ccb.config` 现在默认展开为 `workspace_mode='inplace'`
-- **显式隔离**：只有写成 `agent:provider(worktree)` 时，agent 才会进入独立 git worktree
-- **Agent 变更更稳**：新增 agent 不再影响已有 worktree；删除或改名 worktree agent 时，干净分支会自动退休，脏分支或未合并分支会阻断并提醒
-
-**🛠 重建与恢复加固：**
-- **保留历史重建**：`ccb -n` 会重建项目运行时状态，但保留 `.ccb/ccb.config`、项目记忆和同名 managed agent 历史
-- **陈旧注册清理**：启动与重建前会先清理已注册但路径丢失的 git worktree
-- **Kill 提醒**：`ccb kill` 在发现 worktree agent 仍有未合并或脏状态时会显著提醒用户
-
-**🤖 Gemini 完成判定修复：**
-- **不再首轮提前结束**：Gemini 轮询完成检测现在会跟踪 tool call 活动，不会再把第一轮稳定的“我先开始分析/搜索”文本误判成最终回复
-
-</details>
-
-<details>
-<summary><b>v5.2.6</b> - 异步通信修复 & Gemini 0.29 兼容</summary>
-
-**🔧 Gemini CLI 0.29.0 适配：**
-- **双哈希策略**：会话路径发现同时支持 basename 和 SHA-256 格式
-- **自动启动**：`ccb-ping` 和 `ccb-mounted` 新增 `--autostart` 标志，可自动拉起离线 provider
-- **清理路径**：僵尸会话清理现已统一收敛到 `ccb kill -f`
-
-**🔗 异步通信修复：**
-- **OpenCode 死锁**：修复会话 ID 固定导致第二次异步调用必定失败的问题
-- **旧兼容完成检测**：旧文本型 provider 在降级模式下仍可容忍不完全匹配的 `CCB_DONE`
-- **req_id 正则**：`opencode_comm.py` 同时匹配旧 hex 和新时间戳格式
-- **Gemini 空闲超时**：Gemini 漏写 `CCB_DONE` 时自动检测回复完成（默认 15s，可通过 `CCB_GEMINI_IDLE_TIMEOUT` 调整）
-- **Gemini Prompt 加固**：强化指令格式，降低 `CCB_DONE` 遗漏率
-
-**🛠 其他修复：**
-- **lpend**：registry 过期时优先使用更新鲜的 Claude 会话路径
-
-</details>
-
-<details>
-<summary><b>v5.2.5</b> - 异步护栏加固</summary>
-
-**🔧 异步轮次停止修复：**
-- **全局护栏**：在 `claude-md-ccb.md` 中添加强制 `Async Guardrail` 规则，同时覆盖 `/ask` 技能和直接 `Bash(ask ...)` 调用
-- **标记一致性**：`bin/ask` 现在输出 `[CCB_ASYNC_SUBMITTED provider=xxx]`，与其他 provider 脚本格式统一
-- **技能精简**：Ask 技能规则引用全局护栏并保留本地兜底，单一权威源
-
-此修复防止 Claude 在提交异步任务后继续轮询/休眠。
-
-</details>
-
-<details>
-<summary><b>v5.2.3</b> - 项目内历史记录 & 旧目录兼容</summary>
-
-**📂 项目内历史记录：**
-- **本地存储**：自动导出改为写入 `./.ccb/history/`
-- **范围收敛**：仅对当前工作目录触发自动迁移/导出
-- **Claude /continue**：新增技能，直接 `@` 最新历史文件
-
-**🧩 旧目录兼容：**
-- **自动迁移**：检测到 `.ccb_config` 时自动升级为 `.ccb`
-- **兼容查找**：过渡期仍可解析旧目录内的会话
-
-这些更新让交接文件只留在项目内，升级路径更平滑。
-
-</details>
-
-<details>
-<summary><b>v5.2.2</b> - 会话切换跟踪 & 自动提取</summary>
-
-**🔁 会话切换跟踪：**
-- **上一条会话字段**：`.claude-session` 记录 `old_claude_session_id` / `old_claude_session_path` 与 `old_updated_at`
-- **自动导出**：切换会话时自动生成 `./.ccb/history/claude-<timestamp>-<old_id>.md`
-- **内容去噪**：过滤协议标记/护栏，保留工具调用摘要
-
-这些更新让会话交接更可靠、更易追踪。
-
-</details>
-
-<details>
-<summary><b>v5.2.0</b> - 历史 mail bridge 版本</summary>
-
-这个版本引入了旧的邮件网关路径。该路径现在已不再属于受支持的 agent-first CLI 表面，仅作为清理过渡期遗留代码保留。
-
-</details>
-
-<details>
-<summary><b>v5.1.2</b> - Daemon 与 Hook 稳定性</summary>
-
-**🔧 修复与改进：**
-- **Claude Completion Hook**：统一 askd 为 Claude 触发完成回调
-- **askd 生命周期**：askd 绑定 CCB 生命周期，避免残留守护进程
-- **挂载检测**：`ccb-mounted` 统一使用 ping 检测（兼容统一 askd）
-- **状态文件查找**：`askd_client` 兜底使用 `CCB_RUN_DIR` 查找状态文件
-
-详见 [CHANGELOG.md](CHANGELOG.md)。
-
-</details>
-
-<details>
-<summary><b>v5.1.1</b> - 统一 Daemon + Bug 修复</summary>
-
-**🔧 Bug 修复与改进：**
-- **统一 Daemon**：所有 provider 现在使用统一的 askd daemon 架构
-- **安装/卸载**：修复安装和卸载相关 bug
-- **进程管理**：修复 kill/终止问题
-
-详见 [CHANGELOG.md](CHANGELOG.md)。
-
-</details>
-
-<details>
-<summary><b>v5.1.0</b> - 统一命令系统 + 历史原生 Windows 实验</summary>
-
-**🚀 统一命令** - 用 agent-first 工作流替代各 provider 独立命令：
-
-| 旧命令 | 新统一命令 |
-|--------|-----------|
-| `cask`, `gask`, `oask`, `dask`, `lask` | `ccb ask <agent> [from <sender>] <message>` |
-| `cping`, `gping`, `oping`, `dping`, `lping` | `ccb ping <agent\|all>` |
-| `cpend`, `gpend`, `opend`, `dpend`, `lpend` | `ccb pend <agent\|job_id> [N]` |
-
-**支持的 provider:** `gemini`, `codex`, `opencode`, `droid`, `claude`
-
-**🪟 历史原生 Windows 实验：**
-- 早期版本曾探索原生 Windows 分屏运行路径
-- 后台执行使用 PowerShell + `DETACHED_PROCESS`
-- 大消息通过 stdin 方式传递
-- 该后端现已移除；未来原生 Windows mux 路线将围绕 `psmux` 重建
-
-**📦 新技能：**
-- `/ask <agent> <message>` - 向命名 agent 提交任务
-- `/ping <agent|all>` - 检查挂载状态
-- `/pend <agent|job_id> [N]` - 查看最新回复
-
-详见 [CHANGELOG.md](CHANGELOG.md)。
-
-</details>
-
-<details>
-<summary><b>v5.0.5</b> - Droid 调度工具与安装</summary>
-
-- **Droid**：新增调度工具（`ccb_ask_*` 以及 `cask/gask/lask/oask` 别名）。
-- **安装**：新增 `ccb droid setup-delegation` 用于 MCP 注册。
-- **安装器**：检测到 `droid` 时自动注册（可通过环境变量关闭）。
-
-<details>
-<summary><b>详情与用法</b></summary>
-
-用法：
-```
-/all-plan <需求>
-```
-
-示例：
-```
-/all-plan 设计一个基于 Redis 的 API 缓存层
-```
-
-亮点：
-- Socratic Ladder + Superpowers Lenses + Anti-pattern 分析
-- 只分发给已挂载的 CLI
-- 两轮 reviewer 反馈合并设计
-
-</details>
-</details>
-
-<details>
-<summary><b>v5.0.0</b> - 任意 AI 可主控</summary>
-
-- **解除依赖**：无需先启动 Claude，Codex 可成为主控入口
-- **统一控制**：单一入口控制 CC/OC/GE
-- **启动更简单**：去掉 `ccb up`，直接 `ccb ...` 或使用默认 `ccb.config`
-- **挂载更自由**：更灵活的 pane 挂载与会话绑定
-- **默认配置**：缺失时自动创建默认 `ccb.config`
-- **项目 askd 自启**：项目 askd 与 provider runtime 会在项目 tmux namespace 中按需启动
-- **会话更稳**：PID 存活校验避免旧会话干扰
-
-</details>
-
-<details>
-<summary><b>v4.0</b> - tmux 优先重构</summary>
-
-- **全部重构**：结构更清晰，稳定性更强，也更易扩展。
-- **终端运行时收口**：运行时逐步收敛为单一 tmux pane/control 模型，不再并行维护双终端后端。
-- **tmux 完美体验**：稳定布局 + 窗格标题/边框 + 会话级主题（CCB 运行期间启用，退出自动恢复）。
-- **支持任何终端**：只要能运行 tmux，就能获得完整多模型分屏体验。
-
-</details>
-
-<details>
-<summary><b>v3.0</b> - 智能守护进程</summary>
-
-- **真·并行**：Codex/Gemini/OpenCode 多任务安全排队执行。
-- **跨 AI 编排**：Claude 与 Codex 可同时驱动 OpenCode。
-- **坚如磐石**：守护进程自动启动，空闲自动退出。
-- **链式调用**：Codex 可委派 OpenCode 做多步流程。
-- **智能打断**：Gemini 任务支持中断处理。
-
-<details>
-<summary><b>详情</b></summary>
-
-<h3 align="center">✨ 核心特性</h3>
-
-- **🔄 真·并行**: 同时提交多个任务给 Codex、Gemini 或 OpenCode。provider runtime 会自动排队并串行执行，确保上下文不被污染。
-- **🤝 跨 AI 编排**: Claude 和 Codex 现在可以同时驱动 OpenCode Agent。所有请求都由项目 askd 层统一仲裁。
-- **🛡️ 坚如磐石**: 运行时层自我管理，首个请求自动启动，空闲后自动关闭以节省资源。
-- **⚡ 链式调用**: 支持高级工作流！Codex 可以自主调用 `oask` 将子任务委派给 OpenCode 模型。
-- **🛑 智能打断**: Gemini 任务支持智能打断检测，自动处理停止信号并确保工作流连续性。
-
-<h3 align="center">🧩 功能支持矩阵</h3>
-
-| 特性 | Codex | Gemini | OpenCode |
-| :--- | :---: | :---: | :---: |
-| **并行队列** | ✅ | ✅ | ✅ |
-| **打断感知** | ✅ | ✅ | - |
-| **响应隔离** | ✅ | ✅ | ✅ |
-
-<details>
-<summary><strong>📊 查看真实压力测试结果</strong></summary>
-
-<br>
-
-**场景 1: Claude & Codex 同时访问 OpenCode**
-*两个 Agent 同时发送请求，由守护进程完美协调。*
-
-| 来源 | 任务 | 结果 | 状态 |
-| :--- | :--- | :--- | :---: |
-| 🤖 Claude | `CLAUDE-A` | **CLAUDE-A** | 🟢 |
-| 🤖 Claude | `CLAUDE-B` | **CLAUDE-B** | 🟢 |
-| 💻 Codex | `CODEX-A` | **CODEX-A** | 🟢 |
-| 💻 Codex | `CODEX-B` | **CODEX-B** | 🟢 |
-
-**场景 2: 递归/链式调用**
-*Codex 自主驱动 OpenCode 执行 5 步工作流。*
-
-| 请求 | 退出码 | 响应 |
-| :--- | :---: | :--- |
-| **ONE** | `0` | `CODEX-ONE` |
-| **TWO** | `0` | `CODEX-TWO` |
-| **THREE** | `0` | `CODEX-THREE` |
-| **FOUR** | `0` | `CODEX-FOUR` |
-| **FIVE** | `0` | `CODEX-FIVE` |
-
-</details>
-</details>
-</details>
-
-
-<details>
-<summary><b>旧版本历史</b></summary>
-
-### v5.0.5
-- **Droid**：新增调度工具（`ccb_ask_*` 与 `cask/gask/lask/oask`），并提供 `ccb droid setup-delegation` 安装命令
-
-### v5.0.4
-- **OpenCode**：修复 `-r` 恢复在多项目切换后失效的问题
-
-### v5.0.3
-- **守护进程**：全新的稳定守护进程设计
-
-### v5.0.1
-- **技能更新**：新增 `/all-plan`（Superpowers 头脑风暴 + 可用性分发）；Codex 侧新增 `lping/lpend`；`gask` 在 `CCB_DONE` 场景保留简要执行摘要。
-- **状态栏**：从 `.autoflow/roles.json` 读取角色名（支持 `_meta.name`），并按路径缓存。
-- **安装器**：安装技能时复制子目录（如 `references/`）。
-- **CLI**：新增 `ccb uninstall` / `ccb reinstall`，并清理 Claude 配置。
-- **路由**：项目/会话解析更严格（优先 `.ccb`，避免跨项目 Claude 会话）。
-
-### v5.0.0
-- **解除依赖**：无需先启动 Claude，Codex 也可以作为主 CLI
-- **统一控制**：单一入口控制 Claude/OpenCode/Gemini
-- **启动简化**：移除 `ccb up`，缺失 `.ccb/ccb.config` 时使用代码内置默认配置
-- **挂载更自由**：更灵活的 pane 挂载与会话绑定
-- **项目 askd 自启**：项目 askd 与 provider runtime 会在项目 tmux namespace 中按需启动
-- **会话更稳**：PID 存活校验避免旧会话干扰
-
-### v4.1.3
-- **Codex 配置修复**: 自动迁移过期的 `sandbox_mode = "full-auto"` 为 `"danger-full-access"`，修复 Codex 无法启动的问题
-- **稳定性**: 修复了快速退出的命令可能在设置 `remain-on-exit` 之前关闭 pane 的竞态条件
-- **Tmux**: 更稳健的 pane 检测机制 (优先使用稳定的 `$TMUX_PANE` 环境变量)，并增强了分屏目标失效时的回退处理
-
-### v4.1.2
-- **性能优化**: 为 tmux 状态栏 (git 分支 & ccb 状态) 增加缓存，大幅降低系统负载
-- **严格模式**: 明确要求在 `tmux` 内运行; 移除不稳定的自动 attach 逻辑，避免环境混乱
-- **CLI**: 新增 `--print-version` 参数用于快速版本检查
-
-### v4.1.1
-- **CLI 修复**: 修复 `ccb` 在 tmux 中重启时参数丢失 (如 `-a`) 的问题
-- **体验优化**: 非交互式环境下提供更清晰的错误提示
-- **安装**: 强制更新 skills 以确保应用最新版本
-
-### v4.1.0
-- **异步护栏**: `cask/gask/oask` 执行后输出护栏提示，防止 Claude 继续轮询
-- **同步模式**: 添加 `--sync` 参数，Codex 调用时跳过护栏提示
-- **Codex Skills 更新**: `oask/gask` 使用 `--sync` 静默等待
-
-### v4.0
-- **全部重构**：整体架构重写，更清晰、更稳定
-- **tmux 完美支持**：分屏/标题/边框/状态栏一体化体验
-- **支持任何终端**：除 Windows 原生环境外，强烈建议统一迁移到 tmux 下使用
-
-### v3.0.0
-- **智能运行队列**: 项目 askd 提供 60 秒空闲超时与 provider 队列能力
-- **跨 AI 协作**: 支持多个 Agent (Claude/Codex) 同时调用同一个 Agent (OpenCode)
-- **打断检测**: Gemini 现在支持智能打断处理
-- **链式执行**: Codex 可以调用 `oask` 驱动 OpenCode
-- **稳定性**: 健壮的队列管理和锁文件机制
-
-</details>
+完整历史请看 [CHANGELOG.md](CHANGELOG.md)。

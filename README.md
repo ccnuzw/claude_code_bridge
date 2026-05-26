@@ -1,245 +1,121 @@
 <div align="center">
 
-# CCB - Agent CLI Hub and Teams
+# CCB - Visible, Controllable Multi-Agent CLI Workspace
 
 <p>
-  <img src="https://img.shields.io/badge/Every_Interaction_Visible-096DD9?style=for-the-badge" alt="Every Interaction Visible">
-  <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
+  <img src="https://img.shields.io/badge/v7-multi--agent--workspace-0B7285?style=for-the-badge" alt="v7 multi-agent workspace">
+  <img src="https://img.shields.io/badge/terminal-tmux-2F9E44?style=for-the-badge" alt="tmux">
+  <img src="https://img.shields.io/badge/providers-Codex%20%7C%20Claude%20%7C%20Gemini%20%7C%20OpenCode-CF1322?style=for-the-badge" alt="providers">
 </p>
 
-[![Version](https://img.shields.io/badge/version-7.0.8-orange.svg)]()
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
+[![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
-**English** | [Chinese](README_zh.md)
+**English** | [中文](README_zh.md)
 
-[Why CCB](#why-ccb) · [What's New](#whats-new) · [Start and Stop](#start-and-stop) · [Configuration](#config-control) · [How to Use](#how-to-use) · [How to Install](#how-to-install) · [Release Notes](#release-notes)
+[Why Multi Agents](#why-multi-agents) · [Comparison](#which-multi-agent-approach-should-you-use) · [v7 UI](#v7-ui-tour) · [Quick Start](#quick-start) · [tmux Basics](#tmux-basics) · [Configure Agents](#configure-your-agent-team) · [Install](#install-and-update)
 
 </div>
 
 ---
 
-## Why CCB
+## Why Multi Agents
+
+A single agent is enough for small tasks. Once work needs planning, parallel edits, review, testing, and handoff, multi agents help separate roles, context, models, and execution. CCB focuses on putting multiple real CLI agents into one visible terminal workspace.
+
+| Value | Plain meaning |
+| :--- | :--- |
+| Role separation | `main` plans, `worker` implements, `reviewer` checks risk. |
+| Parallel progress | One agent can edit while another reads docs, validates, or reviews. |
+| Model and context layering | Different agents can use different providers, models, APIs, worktrees, and memory. |
 
 <details>
-<summary><b>1. One command for all required CLI operations and management</b></summary>
+<summary><b>Why one agent starts to struggle</b></summary>
 
-Start, attach, recover, supervise, and operate Claude, Codex, Gemini, OpenCode, and Droid from one terminal workspace.
-
-- one project entry point for all supported CLI agents
-- one place to manage startup, restore, attach, and shutdown
-- one consistent runtime flow instead of per-tool ad hoc handling
+- Mixed roles reduce context focus: one conversation tries to architect, edit, test, and review itself.
+- Complex task execution has a ceiling: long work needs split points, handoffs, checks, and rollback boundaries.
+- Cost pressure is higher: if every step needs the strongest model, even simple sub-tasks become expensive.
+- Tool and skill management becomes harder: a "does everything" agent also accumulates too much authority and instruction load.
+- Serial waiting is inefficient: when one agent is reading logs or running tests, other independent work cannot naturally continue.
 
 </details>
 
+## Which Multi-Agent Approach Should You Use?
+
+Multi-agent systems are not one fixed shape. Use the short table first; expand the details only if you are comparing tradeoffs.
+
+| Approach | One-line summary | Best fit |
+| :--- | :--- | :--- |
+| [Claude Code native subagents](https://code.claude.com/docs/en/sub-agents) / [agent teams](https://code.claude.com/docs/en/agent-teams) | Native delegation inside Claude Code. | You mostly stay in Claude Code and want more coordination handled by a Claude lead. |
+| [Hive / OpenHive](https://github.com/aden-hive/hive) | Production-oriented multi-agent workflow harness. | You need state, recovery, observability, cost controls, and graph workflows. |
+| CCB | Visible, controllable local CLI-agent workspace with mixed providers. | You want Codex, Claude, Gemini, OpenCode, and other real CLIs in one project terminal. |
+
 <details>
-<summary><b>2. Agents can sense and communicate with each other</b></summary>
+<summary><b>Details: model choice, control, context, and complex workflows</b></summary>
 
-Named agents can discover each other, use `/ask`, broadcast updates, and delegate work without copy/paste.
+| Question | Claude Code native | Hive / OpenHive | CCB |
+| :--- | :--- | :--- | :--- |
+| Different model vendors? | Can choose Claude models for teammates/subagents; overall path is still Claude Code. | LiteLLM route covers many hosted and local providers. | Choose Codex, Claude, Gemini, OpenCode, Droid, and per-agent model/key/url. |
+| Is the process visible? | In-process or split panes depending on mode. | Runtime observability and dashboard-style control. | Real tmux panes by default; users can click, type, copy, and inspect each CLI. |
+| Is topology controllable? | Natural-language teammate setup, with much coordination handled by the lead. | Goal-generated graph-like topology, harness oriented. | Config explicitly defines agents, windows, panes, worktrees, and sidebar behavior. |
+| Is context manageable? | Subagents/teammates have separate contexts; teams have task and message state. | Role memory, durable state, and recovery are core design points. | Each CLI keeps its provider session; shared project memory and per-agent memory are optional. |
+| Best landing zone | Fast delegation inside Claude Code. | Business automation, long-running workflows, production reliability. | Local development with visible cross-provider CLI agents. |
 
-- direct agent-to-agent delegation with named targets
-- broadcast sync for all live agents when the whole team needs the same context
-- explicit handoff patterns for builder, reviewer, and QA style workflows
+CCB also supports complex workflows, but it is not an automatic DAG generator. You design complexity explicitly through `.ccb/ccb.config`, windows, role memory, worktrees, model/API settings, and ask/callback routes.
 
 </details>
 
-<details>
-<summary><b>3. Project-level professional agent teams</b></summary>
+## What Is CCB?
 
-Build project-local teams with roles, pane layout, provider state, worktree isolation, and lifecycle continuity.
+CCB is a project-level agent CLI workspace. It uses tmux to manage multiple real CLI agents and unifies startup, restore, communication, configuration, windows, and runtime state for one project.
 
-- role-based team composition per project
-- isolated provider state under the project runtime
-- optional worktrees for agents that need separate working sets
-- continuity across restart, recovery, and pane supervision
+- **Real CLI sessions, not fake panels**: every agent pane runs the actual provider CLI.
+- **Visible collaboration**: the sidebar shows windows, agents, status, and communication; users can switch panes by mouse.
+- **Mixed providers**: one project can run Codex, Claude, Gemini, OpenCode, and Droid together.
+- **Project config**: `.ccb/ccb.config` defines the team, layout, windows, worktrees, model, key, and url.
+- **Recoverable runtime**: CCB supervises agent panes and supports attach, restore, and project-scoped cleanup.
+- **Explicit collaboration channel**: agents can delegate through `/ask`, `$ask`, callback, and silence routes.
 
-</details>
+## v7 UI Tour
 
-<div align="center">
+This screenshot is a real dark terminal session from the `ccb_test2` project. The labels explain the regions; you do not need to memorize every shortcut first.
 
-![Showcase](assets/show.png)
+<p align="center">
+  <img src="assets/readme_v7/ccb-test2-terminal-annotated-en.png" alt="CCB v7 terminal workspace region guide" width="960">
+</p>
 
-<details>
-<summary><b>Demo animations</b></summary>
+| Region | Purpose |
+| :--- | :--- |
+| Sidebar | Shows the current window, agent list, provider labels, selected agent, and status hints. |
+| Comms | Shows ask/callback communication and collaboration status. |
+| Agent pane | Each pane is a real CLI session, such as Codex or Claude. |
+| Current input target | The status bar and pane border show where your input goes. |
+| Status bar | Shows project name, current agent, CCB version, date, and mouse/keyboard hints. |
+| Window grouping | v7 `[windows]` can group agents into main, work, review, research, or other workflow windows. |
 
-<img src="assets/readme_previews/video2.gif" alt="Any-terminal collaboration demo" width="900">
+The sidebar implementation uses ideas from [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar). Thanks to that project.
 
-<img src="assets/readme_previews/video1.gif" alt="VS Code integration demo" width="900">
+## Quick Start
 
-</details>
+### 1. Install or update
 
-</div>
-
-## What's New
-
-<details>
-<summary><b>Latest release highlights</b></summary>
-
-- **`ccb clear` is now built in**: you can send provider-native `/clear` to all mounted agents or only named agents without restarting the project runtime.
-- **Pane mouse focus is fixed**: tmux pane clicks now switch focus cleanly again instead of tripping the broken `select-pane` escape path.
-- **Windows overlays behave predictably**: `version = 2` `[windows]` is now the mounted-agent authority, while matching `[agents.<name>]` tables work as overlays and stale unreferenced tables are ignored.
-- **Clear workflows are installable skills**: inherited Claude and Codex installs now project `ccb-clear`, and Claude managed settings allow `Bash(ccb clear *)`.
-
-See [Release Notes](#release-notes) for the full history.
-
-</details>
-
-## Start and Stop
-
-### Common Commands
+New users should start from a release package. Download the matching package from [Releases](https://github.com/SeemSeam/claude_codex_bridge/releases), then install it:
 
 ```bash
-ccb                              # Start default agents from .ccb/ccb.config
-ccb -s                           # Safe start: keep configured/manual permission behavior
-ccb -n                           # Rebuild runtime state; keep config and managed agent history
-ccb clear [agent...]             # Send /clear to all or selected managed agent panes
-ccb kill                         # Stop this project's background runtime
-ccb kill -f                      # Force cleanup before rebuilding state
+tar -xzf ccb-*.tar.gz
+cd ccb-*
+./install.sh install
 ```
 
-Tmux copy/paste: drag with the left mouse button to copy, and use `Ctrl+Shift+V` to paste.
-
-## Config Control
-
-`ccb` resolves config in three layers: built-in default, user config at `~/.ccb/ccb.config`, then project config at `.ccb/ccb.config`. Project config has highest priority; if it is missing, CCB uses the user config when present, then the built-in default, without writing a new project config file.
-
-`.ccb/ccb_memory.md` is the project-wide shared memory document.
-
-<details>
-<summary><b>Config Design Skill</b></summary>
-
-Use `ccb-config` when you want an agent to design, migrate, or update the CCB team instead of editing config by hand. It is inherited by Claude and Codex installs and defaults to changing only the active config authority:
-
-- `.ccb/ccb.config` for the team, provider choices, pane layout, and worktree policy
-
-It can also update `.ccb/ccb_memory.md` and `.ccb/agents/<agent>/memory.md` for shared workflow or per-agent role guidance, but only when you explicitly ask for memory design.
-
-Invoke it from a supported provider skill surface, for example:
-
-```text
-$ccb-config Design a team for a Python library with one coordinator, two worktree implementation agents, and one reviewer.
-```
-
-The skill helps choose agent names, providers, `inplace` versus `git-worktree`, compact layout syntax, optional `[windows]` migration for multi-window teams, and whether a config-only change is enough. For old compact or hybrid configs, it can ask how many windows you want, propose the grouping, and migrate to the current `version = 2` windows topology. It validates which config layer is active and tells you to restart CCB after file changes are complete.
-
-</details>
-
-<details>
-<summary><b>Layout</b></summary>
-
-Use the first compact line to define the team and pane layout:
-
-```text
-cmd; writer:codex, reviewer:claude; qa:gemini(worktree)
-```
-
-That layout means:
-
-- `cmd` is the shell pane
-- `writer`, `reviewer`, and `qa` are agent names and pane titles
-- `codex`, `claude`, and `gemini` are providers
-- `;` splits panes left-to-right; `,` stacks panes top-to-bottom
-- `qa` runs in an isolated git worktree; agents without `(worktree)` run `inplace`
-
-</details>
-
-<details>
-<summary><b>Per-Agent API And Model</b></summary>
-
-Keep the compact layout first, then add TOML tables only for agents that need their own API route, key, or model:
-
-```toml
-cmd; builder:codex, reviewer:claude; research:gemini(worktree)
-
-[agents.builder]
-key = "sk-..."
-url = "https://api.example.com/v1"
-model = "gpt-5"
-
-[agents.reviewer]
-key = "sk-ant-..."
-url = "https://api.anthropic.com"
-model = "opus"
-
-[agents.research]
-key = "gemini-key"
-model = "gemini-pro"
-```
-
-Notes:
-
-- `key` and `url` are agent-local shortcuts for `codex`, `claude`, and `gemini`.
-- `model` is an agent-local shortcut for `codex`, `claude`, `gemini`, and `opencode`.
-- Setting `key` or `url` makes that agent use the explicit API authority instead of inheriting a global provider API credential.
-- For advanced provider env, use `agents.<name>.provider_profile.env`; do not mix provider API env keys with `key` / `url` on the same agent.
-- Do not commit real API keys in a public repo.
-
-Common compact examples:
-
-```text
-writer:codex, reviewer:claude
-cmd; writer:codex, reviewer:claude; qa:gemini(worktree)
-cmd; fast:codex, deep:codex
-```
-
-Compact and hybrid configs without `[windows]` remain legacy-compatible single-window layouts.
-
-Use explicit windows topology when you want named tmux windows or per-window native sidebars:
-
-```toml
-version = 2
-entry_window = "main"
-
-[windows]
-main = "main:codex"
-work = "worker1:codex(worktree), worker2:codex(worktree), worker3:claude(worktree)"
-review = "reviewer:claude, discuss:codex"
-```
-
-Same provider, separate API keys:
-
-```toml
-cmd; fast:codex, deep:codex
-
-[agents.fast]
-key = "sk-fast..."
-model = "gpt-5-mini"
-
-[agents.deep]
-key = "sk-deep..."
-url = "https://api.example.com/v1"
-model = "gpt-5"
-```
-
-</details>
-
-<details>
-<summary><b>Update</b></summary>
-
-CCB v6 currently supports `ccb update` on Linux, macOS, and WSL. A major upgrade fully replaces the installed runtime. On the first `ccb` inside an older project, CCB preserves `.ccb/ccb.config`, clears the rest of the old `.ccb` state, and rebuilds locally.
-
-If you installed from a git checkout with `./install.sh install`, that install now runs in source dev mode:
-
-- Global `ccb` and `ask` link back to the checkout instead of using a copied snapshot
-- CCB-owned inherited skills under `inherit_skills/` and helper scripts also follow the live source tree
-- Source installs do not participate in startup auto-update prompts
-- Stay on the source/dev track with `git pull` or by switching commits, then rerun `./install.sh install`
-- Or run `ccb update` to install the latest stable release and repoint global `ccb` links to the managed release install
+If CCB is already installed:
 
 ```bash
-ccb update              # Update to the latest stable release
-ccb update 6            # Update to the highest v6.x.x version
-ccb update 6.0          # Update to the highest v6.0.x version
-ccb update 6.0.5        # Update to a specific version
-ccb uninstall           # Uninstall ccb and clean configs
-ccb reinstall           # Clean then reinstall ccb
+ccb update
 ```
 
-</details>
-
-## How to Install
-
-1. **Unix-like (Linux, macOS, WSL)**<br>
-   Use this path when `ccb` and your agent CLIs run in the same Unix-like shell.
+<details>
+<summary><b>Source install is for development or fallback use</b></summary>
 
 ```bash
 git clone https://github.com/SeemSeam/claude_codex_bridge.git
@@ -247,1194 +123,321 @@ cd claude_codex_bridge
 ./install.sh install
 ```
 
-2. **Windows**<br>
-   Use this path when your agent CLIs run natively on Windows.
-
-```powershell
-git clone https://github.com/SeemSeam/claude_codex_bridge.git
-cd claude_codex_bridge
-powershell -ExecutionPolicy Bypass -File .\install.ps1 install
-```
-
-<details>
-<summary><b>Platform notes</b></summary>
-
-- macOS and Linux share the same `install.sh` path.
-- For WSL, keep both `ccb` and the agent CLIs inside WSL.
-- On WSL mounted-drive projects, project authority stays under `.ccb` while runtime state may relocate to a local Linux state root for socket and agent runtime durability.
-- Native Windows mux is still being rebuilt around `psmux`.
-- The fuller Windows bootstrap helper lives at `scripts/bootstrap-windows-test-env.ps1`.
+Source installs link global `ccb` / `ask` back to the checkout. Regular users should prefer a stable release install or update.
 
 </details>
 
-Install note: the commands above install from a git checkout today. After that, run `ccb update` to download the latest stable GitHub release asset and complete the managed release upgrade automatically.
+### 2. Create project config
 
-## Development Tools
+Create `.ccb/ccb.config` in your project root. For v7, it is better to understand config from multi-window topology first: `[windows]` defines tmux windows and agent groups, `agent:provider` defines which CLI each agent uses, and `(worktree)` gives an agent its own git worktree.
 
-Maintainer-only release and repository tools live under `dev_tools/`. They are versioned in git but excluded from official release artifacts.
+```toml
+version = 2
+entry_window = "main"
 
-## Useful Tools
+[windows]
+main = "main:codex"
+work = "worker1:codex(worktree), worker2:claude(worktree)"
+review = "reviewer:claude, qa:gemini"
 
-Optional user-facing tools live under `useful_tools/`. They are versioned in git
-and included in release artifacts, but they are not installed by default. Copy
-the tools you want into a global provider home or a specific managed agent home;
-see `useful_tools/README.md`.
-
-## How to Use
-
-CCB is agent-first. You can use explicit `/ask`, explicit `$ask`, or let one agent decide to call another on its own.
-
-| Mode | Example |
-| :--- | :--- |
-| Explicit `/ask` | `/ask reviewer review the parser changes in src/parser.ts` |
-| Explicit `$ask` | `$ask reviewer review the parser changes in src/parser.ts` |
-| Implicit delegation | `Ask reviewer to check the parser edge cases, then summarize the issues back to me.` |
-
-Use explicit routing when you want a specific target. Use natural language when you want the current agent to decide whether to delegate.
-
-### Chained Ask Calls
-
-Normal `ask` is asynchronous: submit the handoff, then stop. When an agent is already handling a CCB task and needs another agent's result before it can finish, it must use callback routing:
-
-```bash
-ccb ask --callback reviewer <<'EOF'
-Review this failing test and return the minimal blocker.
-EOF
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
 ```
 
-CCB records the parent/child link, lets the current turn end, and later delivers the child result back to the parent agent as a new continuation task. This supports chains such as `agent2 -> agent4 -> agent1 -> agent3` without polling or blocking the active mailbox head.
+If you are not sure how to group windows, how many workers you need, which agents should use worktrees, or which agents need separate models or API routes, ask an agent with the `ccb-config` skill to discuss and generate the config proposal with you.
 
-Use plain `ask` only outside an active task. Inside an active CCB task, use `--callback` when the child result is required, or `--silence` for independent work whose successful result does not need to return.
+Validate the config:
 
-Note: for implicit use, add the `ask` skill basics to your system memory first; otherwise Codex/Claude may fall back to their own built-in multi-agent behavior instead of calling CCB `ask`.
+```bash
+ccb config validate
+```
 
----
+Start the workspace:
 
-## Editor Integration
+```bash
+ccb
+```
 
-<img src="assets/nvim.png" alt="Neovim integration with multi-AI code review" width="900">
+### 3. Collaborate
 
-Write in editors like **Neovim** while agents review and iterate in parallel.
+Type directly in an agent pane, or route work between agents:
 
----
+```text
+/ask reviewer review the latest parser changes and list blocking issues.
+```
 
-## Requirements
+## Daily Operation
 
-- **Python 3.10+**
-- **Terminal:** `tmux`
+| Goal | Command |
+| :--- | :--- |
+| Start or reattach the current project workspace | `ccb` |
+| Safe start, keeping configured/manual permission behavior | `ccb -s` |
+| Rebuild runtime state while keeping config and same-name managed agent history | `ccb -n` |
+| Stop this project's background runtime | `ccb kill` |
+| Force cleanup before rebuilding | `ccb kill -f` then `ccb -n` |
+| Update to the latest stable release | `ccb update` |
+| Inspect the active config layer | `ccb config validate` |
 
-## Uninstall
+## tmux Basics
+
+CCB can be used mostly with the mouse, but learning a few tmux shortcuts makes daily work much faster. This section lists only common tmux keyboard operations.
+
+In this section, `<prefix>` means `Ctrl-b`: **press `Ctrl-b`, release it, then press the function key**. Use an English input method for the function key so punctuation keys are not intercepted by another IME.
+
+| Goal | Function key | Notes |
+| :--- | :--- | :--- |
+| Move to an adjacent pane | `Arrow keys` | Select the pane above, below, left, or right. |
+| Move to the next pane | `o` | Fast rotation when direction does not matter. |
+| Zoom / unzoom current pane | `z` | Useful for long output, diffs, and logs. |
+| Open window / pane list | `w` | Pick a target in larger layouts. |
+| Next window | `n` | Switch to the next tmux window. |
+| Previous window | `p` | Switch to the previous tmux window. |
+| Jump to numbered window | `0` to `9` | Jump directly by tmux window number. |
+| Enter copy / scroll mode | `[` | Review history, scroll, and select text. |
+| Exit copy / scroll mode | `q` or `Esc` | Return to normal input. |
+| Paste tmux buffer | `]` | Paste content copied into tmux's own buffer. |
+| Detach session | `d` | Leave the display without stopping CCB; you can reattach later. |
+
+Copy and paste tips:
+
+- **Mouse copy**: in most terminals, drag with the left mouse button to copy; if tmux captures the drag, enter copy / scroll mode first.
+- **Bypass tmux selection**: many terminals support `Shift + mouse drag` for native terminal selection.
+- **System paste**: Linux/Windows terminals usually use `Ctrl+Shift+V`; macOS terminals usually use `Cmd+V`.
+- **tmux paste**: if the content is in the tmux buffer, use function key `]`.
+
+<details>
+<summary><b>More common tmux operations</b></summary>
+
+| Goal | Function key | Notes |
+| :--- | :--- | :--- |
+| Scroll in copy / scroll mode | `PageUp` / `PageDown` / `Arrow keys` | Terminal support can vary. |
+| Search in copy / scroll mode | `Ctrl-s` / `Ctrl-r` | Commonly forward / backward search. |
+| Create a window | `c` | Use only when you intentionally need another shell. |
+| Rename a window | `,` | Helps identify multi-window workflows. |
+| Show tmux key help | `?` | Useful when you forget a shortcut. |
+
+New users should avoid pane/window killing shortcuts at first. To stop a CCB project, prefer CCB's project-level shutdown command instead of killing one recoverable pane by accident.
+
+</details>
+
+## Configure Your Agent Team
+
+CCB resolves config in three layers, from lowest to highest priority:
+
+1. Built-in default config.
+2. User config at `~/.ccb/ccb.config`.
+3. Project config at `.ccb/ccb.config`.
+
+Higher layers replace lower layers as a whole; they are not merged. The project authority file is `.ccb/ccb.config`. The old `.ccb_config/ccb.config` path is legacy migration evidence only.
+
+`.ccb/ccb.config` mainly controls:
+
+| Config area | Syntax or location | Notes |
+| :--- | :--- | :--- |
+| Window grouping | `[windows]` | Group agents into tmux windows such as `main`, `work`, `review`, or `research`. |
+| Agent name and provider | `main:codex`, `reviewer:claude` | Names are used by the UI, ask routing, and memory files; provider decides which CLI starts. |
+| Workspace isolation | `worker1:codex(worktree)` | Gives implementation agents isolated git worktrees to reduce accidental overlap. |
+| Sidebar behavior | `[ui.sidebar]` | Controls whether the sidebar appears in every window, plus width and Comms height. |
+| Per-agent model/API | `[agents.<name>]` | Configure `model`, `key`, `url`, and related agent-local overrides. |
+| Role description | `[agents.<name>] description = "..."` | Give an agent a short responsibility note; longer workflow rules belong in memory. |
+
+If you want to discuss the configuration before writing it by hand, use the `ccb-config` skill and describe the target team. It proposes a complete config first, then writes `.ccb/ccb.config` only after confirmation.
+
+<details>
+<summary><b>Config format examples: single window, multi-window, per-agent model/API</b></summary>
+
+### Single-window compact config
+
+```text
+cmd; main:codex, worker1:codex(worktree); reviewer:claude
+```
+
+Meaning:
+
+- `cmd` is a shell pane, not an agent.
+- `main`, `worker1`, and `reviewer` are agent names.
+- `codex` and `claude` are providers.
+- `;` splits left-to-right; `,` stacks top-to-bottom.
+- `(worktree)` means that agent uses an isolated git worktree.
+
+### Multi-window topology
+
+When you want planning, implementation, review, and research in different tmux windows, use `version = 2` and `[windows]`:
+
+```toml
+version = 2
+entry_window = "main"
+
+[windows]
+main = "main:codex"
+work = "worker1:codex(worktree), worker2:claude(worktree)"
+review = "reviewer:claude, qa:gemini"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+```
+
+Note: `cmd` belongs to compact/hybrid single-window layouts. Do not put `cmd` inside `[windows]`.
+
+### Per-agent model, API key, or base URL
+
+Use compact format when layout is enough. If some agents need separate models or API routes, keep the compact header and add TOML overlays:
+
+```toml
+cmd; fast:codex, deep:codex; reviewer:claude
+
+[agents.fast]
+model = "gpt-5-mini"
+
+[agents.deep]
+key = "sk-..."
+url = "https://api.example.com/v1"
+model = "gpt-5"
+
+[agents.reviewer]
+model = "sonnet"
+```
+
+Do not commit real API keys to a public repository. `key` / `url` are agent-local shortcuts; advanced provider environment variables belong in provider profile or agent env fields.
+
+</details>
+
+## Use the ccb-config Skill
+
+If you do not want to hand-write `.ccb/ccb.config`, ask an agent that supports skills to use `ccb-config`. Describe your project goal, parallelism, window grouping, worktree isolation, provider/model/API preferences, then let it discuss the shape with you and propose a complete config.
+
+Example:
+
+```text
+$ccb-config Design a team for a Python library: main coordinates work, three workers implement in worktrees, and one reviewer checks regressions and risks. You can recommend whether this should stay single-window or become main/work/review windows.
+```
+
+<details>
+<summary><b>ccb-config write flow and boundaries</b></summary>
+
+1. Describe the project and team goal in natural language.
+2. `ccb-config` reads the current config authority and decides whether this is a new config, an edit, or a migration.
+3. It proposes one complete config before writing.
+4. You confirm the proposal, then it edits only `.ccb/ccb.config`.
+5. It validates the config and tells you to restart CCB for the change to take effect.
+
+By default, `ccb-config` does not edit `.ccb/ccb_memory.md` or `.ccb/agents/<agent>/memory.md`. It should touch those memory files only when you explicitly ask for workflow memory or role memory design.
+
+</details>
+
+## Agent Collaboration
+
+Normal `ask` is submit-and-return: after handing work to the target agent, the current agent should not poll and wait.
+
+| Scenario | Recommended route |
+| :--- | :--- |
+| Human directly targets an agent | `/ask reviewer ...` or `$ask reviewer ...` |
+| Current agent is inside an active CCB task and needs a child result before replying | `ask --callback reviewer` |
+| Current agent sends independent work whose successful result does not need to return | `ask --silence worker1` |
+| Queue or status diagnostics | `pend`, `watch`, `ping`, and similar commands are diagnostics only |
+
+<details>
+<summary><b>Why callback matters</b></summary>
+
+If agent A is handling a user-originated CCB task and needs agent B's result to finish, A should use callback. CCB records the parent/child relationship, lets A's current turn end, and later delivers B's result back to A as a continuation. That avoids polling, queue blocking, and wasted context.
+
+</details>
+
+## Editor Workflow
+
+<p align="center">
+  <img src="assets/nvim.png" alt="Neovim integration with multi-model code review" width="860">
+</p>
+
+CCB does not require leaving your editor. A common setup is: editor for code, CCB terminal for multi-agent planning, implementation, review, testing, and handoff.
+
+## Install And Update
+
+### Requirements
+
+- Python 3.10+
+- `tmux`
+- At least one agent CLI you plan to use, such as Codex, Claude, Gemini, OpenCode, or Droid
+- Linux, macOS, or WSL
+
+Current v7 / newer versions do not claim native Windows support. Native Windows support only applies to the v5 line. If you are on Windows and want current versions, use WSL and keep both `ccb` and agent CLIs inside WSL.
+
+### Release first
+
+For first install, prefer a package from [GitHub Releases](https://github.com/SeemSeam/claude_codex_bridge/releases). For existing installs:
+
+```bash
+ccb update
+```
+
+Source checkout install is for development, fix validation, or temporary fallback when a release package is not available.
+
+### Uninstall
 
 ```bash
 ccb uninstall
 ccb reinstall
 
-# Fallback:
+# Fallback from the package or source directory:
 ./install.sh uninstall
 ```
 
----
+## FAQ
 
-## Community
+<details>
+<summary><b>The expected agents did not appear</b></summary>
 
-📧 Email: `bfly123@126.com`
-💬 WeChat: `seemseam-com`
+Run `ccb config validate` and check that `config_source_kind` is the layer you expected. Project config `.ccb/ccb.config` has highest priority; if it is missing, CCB uses `~/.ccb/ccb.config` or the built-in default.
 
-Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and discussion support.
+</details>
+
+<details>
+<summary><b>Copy/paste is awkward</b></summary>
+
+First try mouse-drag copy and `Ctrl+Shift+V` / `Cmd+V` paste. If tmux captures the drag, use function key `[` after `<prefix>` to enter copy / scroll mode. If you only want native terminal selection, many terminals support `Shift + mouse drag`.
+
+</details>
+
+<details>
+<summary><b>I want to migrate an old compact config to multi-window</b></summary>
+
+Use `ccb-config` and describe your target window groups, such as main/work/review. Migration should preserve old agent names, providers, worktree markers, model/key/url fields, and write `[windows]` only after confirmation.
+
+</details>
+
+<details>
+<summary><b>The sidebar helper is unavailable</b></summary>
+
+Prefer a release package because it carries or handles the sidebar helper. Source installs may need a local Rust toolchain if no compatible prebuilt helper is available.
+
+</details>
+
+## Community And Credits
+
+Email: `bfly123@126.com`
+
+WeChat: `seemseam-com`
+
+Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and discussion.
+
+Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) for the sidebar ideas and inspiration.
 
 <div align="center">
-<img src="assets/weixin.jpg" alt="WeChat Group" width="300">
+  <img src="assets/weixin.jpg" alt="WeChat group" width="300">
 </div>
 
----
+## Release History
 
+v7 highlights:
 
-## Release Notes
+- Native CCB sidebar with per-window project view, agent status, and mouse switching.
+- Comms split from agent activity, making communication status and provider pane activity clearer.
+- `version = 2` `[windows]` topology for workflow-oriented tmux window grouping.
+- Compact / hybrid config compatibility, so single-window teams do not need forced migration.
+- Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
-Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
-
-<details open>
-<summary><b>v7.0.8</b> - Clear Context And Config Overlay Release</summary>
-
-- Adds `ccb clear [agent...]` so mounted agents can receive provider-native `/clear` without deleting project state or restarting runtimes.
-- Fixes tmux pane mouse focus switching by removing the bad `select-pane` escaping from the default pane click action.
-- Makes `version = 2` `[windows]` topology authoritative for mounted agents, treats same-name `[agents.<name>]` tables as overlays, and ignores stale unreferenced agent tables.
-- Ships inherited `ccb-clear` skills for Claude and Codex installs and grants Claude managed settings `Bash(ccb clear *)`.
-
-</details>
-
-<details>
-<summary><b>v7.0.7</b> - Sidebar Controls And Width Sync Release</summary>
-
-- Adds full refresh, in-place project pane restart, and exit controls to the sidebar title bar, with matching keyboard and tmux mouse paths.
-- Routes sidebar tree clicks through hidden `ccb __sidebar-click` helpers so window and agent focus recovery goes back through `ccbd`.
-- Synchronizes sidebar width changes across windows, supports integer cell widths, and reapplies stored widths on `window-resized` instead of treating tmux's temporary squeeze as a new user preference.
-
-</details>
-
-<details>
-<summary><b>v7.0.6</b> - macOS Release Test Smoke Hotfix</summary>
-
-- Fixes the macOS GitHub Tests release-install smoke by prebuilding a host-runnable `bin/ccb-agent-sidebar` before simulating a release install from a source checkout.
-- Preserves the v7.0.5 fixes for Claude keychain service override, macOS update binary preservation, and explicit sidebar rebuild requirements.
-
-</details>
-
-<details>
-<summary><b>v7.0.5</b> - Claude Keychain And macOS Update Hotfix</summary>
-
-- Adds `CCB_KEYCHAIN_SERVICE_OVERRIDE` for managed Claude macOS Keychain binding and preserves it in control-plane environments.
-- Prevents `ccb update` staging from line-ending-normalizing binary files, keeping the packaged `bin/ccb-agent-sidebar` intact on macOS.
-- Makes sidebar local rebuild requirements explicit when `cargo` or `rustc` is missing.
-
-</details>
-
-<details>
-<summary><b>v7.0.4</b> - Project View Refresh And Runtime Hardening Release</summary>
-
-- Optimizes sidebar/project view refresh with short-lived response caching, bounded recent-job tail reads, and per-build tmux pane capture reuse.
-- Adds targeted runtime lookup helpers for job tails, message attempts/replies, and JSONL tail reads to keep comms state responsive as runtime files grow.
-- Hardens keeper/process validation and daemon/socket lifecycle paths around project-root ownership and stopping state.
-- Renames inherited config skills to canonical `ccb-config`, removes legacy `ccb_config` during install, and refreshes useful tool packages.
-
-</details>
-
-<details>
-<summary><b>v7.0.3</b> - macOS Sidebar Universal Binary Hotfix</summary>
-
-- Ships `ccb-macos-universal.tar.gz` with a true universal `bin/ccb-agent-sidebar` built for both `x86_64-apple-darwin` and `aarch64-apple-darwin`.
-- Adds release CI checks that inspect the macOS helper with `file`, require `universal binary`, and run a helper `--help` smoke before upload.
-- Extends macOS GitHub Tests so release preview packaging verifies the packaged sidebar helper, not only the archive presence.
-
-</details>
-
-<details>
-<summary><b>v7.0.2</b> - Codex Trust And Sidebar Compatibility Hotfix</summary>
-
-- Fixes Codex managed home directory-trust prompts by writing trusted project/workspace entries and using native auto-permission flags.
-- Builds Linux release/sidebar helper assets on Ubuntu 22.04 for broader glibc compatibility.
-- Verifies and rebuilds `ccb-agent-sidebar` during install when an existing or prebuilt helper cannot run on the host.
-- Resolves source sidebar wrapper symlinks before locating the repo target binary.
-- Refines sidebar activity and width handling for active jobs, callback waits, provider background work, and multi-agent grids.
-
-</details>
-
-<details>
-<summary><b>v7.0.1</b> - Sidebar Release Packaging Hotfix</summary>
-
-- Fixes sidebar artifact checksum generation on macOS by using `sha256sum`, `shasum -a 256`, or `python3`, restoring GitHub Tests for the v7 release line.
-
-</details>
-
-<details>
-<summary><b>v7.0.0</b> - Native Sidebar Control Release</summary>
-
-- Adds the native Rust `ccb-agent-sidebar` helper with per-window project view, fixed gray sidebar identity, colored provider/runtime activity status, and mouse/keyboard focus switching.
-- Splits top agent activity from bottom Comms: top rows reflect provider pane/runtime activity, while Comms stays tied to CCB ask/job tracking and recovery.
-- Adds `version = 2` `[windows]` topology support for multiple named tmux windows with sidebars, while legacy compact/hybrid configs remain one business window and keep `cmd` semantics.
-- Updates `ccb-config` docs/skills for windows topology migration and preserves explicit multi-window mounting behavior.
-- Hardens Ghostty/tmux `TERM` compatibility, tmux environment/mouse behavior, source-wrapper handling, release sidebar binary packaging, and Codex legacy root-only session migration.
-
-</details>
-
-<details>
-<summary><b>v6.2.9</b> - Callback Visibility And Diagnostics Release</summary>
-
-- Shows `callback_pending` for delegated callback root jobs while the child chain is still running, then resolves `ask get` and `watch` to the final message-bureau reply after continuation.
-- Marks `ask get`, `pend`, `watch`, and `ping` as diagnostics-only across inherited ask skills, CLI help, memory-facing wording, and tests.
-- Stores oversized ask bodies, terminal replies, notices, and callback continuation text under `.ccb/ccbd/artifacts/text/` with short previews and diagnostic bundle inclusion.
-- Hardens shutdown cleanup by tracking prepared and current control-plane pids during remote kill and best-effort stopping the backend after foreground tmux namespace exit.
-
-</details>
-
-<details>
-<summary><b>v6.2.8</b> - Config Source, Stop Cleanup, And Tmux Policy Release</summary>
-
-- Includes explicit config source kinds for built-in defaults, user `~/.ccb/ccb.config`, and project `.ccb/ccb.config`, with project config taking highest priority.
-- Keeps project tmux namespace destruction deferred until after the stop-all response finalizer so `ccb kill` / `ccb kill -f` can complete cleanup from inside a CCB pane.
-- Keeps managed tmux config isolated while explicitly enabling CCB-owned mouse and clipboard support in project namespaces and detached tmux paths.
-
-</details>
-
-<details>
-<summary><b>v6.2.7</b> - Config Source And Stop Cleanup Release</summary>
-
-- Reports explicit config source kinds for built-in defaults, user `~/.ccb/ccb.config`, and project `.ccb/ccb.config`, with project config taking highest priority.
-- Updates `ccb config validate`, README/docs, and inherited `ccb-config` skill guidance to describe the active config layer.
-- Defers project tmux namespace destruction until after the stop-all response finalizer so `ccb kill` / `ccb kill -f` can complete cleanup from inside a CCB pane.
-
-</details>
-
-<details>
-<summary><b>v6.2.6</b> - Tmux Isolation And Startup Hardening Release</summary>
-
-- Runs managed tmux commands with `tmux -f /dev/null ...` by default so user tmux config, plugins, hooks, and sidebars cannot reshape CCB-managed layouts.
-- Adds source/dev install hardening: Python wrapper entrypoint, `CCB_PYTHON_BIN`, post-install `ccb` and `ask` smoke checks, and bounded Droid MCP registration.
-- Keeps restore-fresh and Claude trust setup reliable while preserving Claude auto-permission as `--permission-mode bypassPermissions`.
-- Keeps removed wait-alias parser hints out of the current ask surface.
-
-</details>
-
-<details>
-<summary><b>v6.2.5</b> - Claude Managed Memory De-Duplication Hotfix</summary>
-
-- Stops copying project-level `CLAUDE.md` into managed `.claude/CLAUDE.md`, so Claude reads it once from the working directory.
-- Keeps provider user memory, CCB shared project memory, and per-agent private memory in the managed Claude bundle.
-- Adds an opt-out flag for provider-native project memory in `load_memory_sources` while preserving default behavior for other callers.
-
-</details>
-
-<details>
-<summary><b>v6.2.4</b> - Codex Managed Config TOML Hotfix</summary>
-
-- Renders dict values as inline TOML tables so inherited Codex configs with inline table arrays no longer crash during managed-home projection.
-- Updates fallback copied Codex configs in-place without duplicating `[features]`, and respects `[table]` plus `[[array_of_tables]]` section boundaries.
-- Auto-installs `tomli>=2.0.0` from `install.sh` and `install.ps1` when no TOML reader is available, with `CCB_INSTALL_TOMLI=0` skip support.
-- Installs `tomli` inside managed venv release installs before optional watchdog dependency setup.
-
-</details>
-
-<details>
-<summary><b>v6.2.3</b> - Architecture Hotspot Optimization Release</summary>
-
-- Splits the GitHub release checker into focused local, Markdown, GitHub, workflow, and asset helper modules.
-- Moves shared provider memory projection events, markers, signatures, and bundle materialization into provider-core helpers.
-- Splits startup update handling into state, refresh, and flow modules.
-- Extracts provider-home storage cleanup classification and records the architecture optimization plan.
-
-</details>
-
-<details>
-<summary><b>v6.2.2</b> - Codex Managed Home Migration Prompt Hotfix</summary>
-
-- Disables `[features].external_migration` inside managed Codex homes so panes do not block on an interactive migration prompt.
-- Preserves inherited Codex source-home config, model/API settings, and other feature flags.
-- Adds coverage for parsed TOML inheritance and fallback copy behavior when TOML parsing is unavailable.
-
-</details>
-
-<details>
-<summary><b>v6.2.1</b> - Inherited CCB Config Skill Release</summary>
-
-- Adds inherited Claude and Codex `ccb-config` skills for designing `.ccb/ccb.config`, choosing agent roles/providers/worktree layout, and updating shared plus per-agent memory.
-- Moves CCB-owned inherited skills under `inherit_skills/` while keeping optional `useful_tools/` user-installable rather than inherited.
-- Shortens injected ask reply guidance, removes nested-routing text from every ask body, keeps injected source text English-only, and expands explicit-output detection.
-- Simplifies project/runtime memory wording and updates `ccb-config` memory-routing examples for direct callback handoffs and separate root work packages.
-
-</details>
-
-<details>
-<summary><b>v6.2.0</b> - Callback Ask Chain Release</summary>
-
-- Adds `ccb ask --callback <agent>` so active agents can delegate work and receive the child result later as a continuation task.
-- Rejects accidental plain nested `ask` from active CCB tasks; `--callback` is for required child results and `--silence` is for independent no-result-needed work.
-- Persists callback edges and repairs missed continuation submissions across dispatcher restarts.
-- Updates Claude, Codex, and Droid ask skills plus generated project memory with callback-chain guidance.
-
-</details>
-
-<details>
-<summary><b>v6.1.21</b> - Kill And Restart Cleanup Hotfix</summary>
-
-- Keeps `ccb kill -f` finalization queued even if the client pane is destroyed before the daemon can write the socket response.
-- Preserves full tmux socket paths and lifecycle owner/keeper pid authority during project-scoped kill cleanup.
-- Narrows process fallback matching to CCB control-plane commands for the same `--project`, avoiding broad project-root matches.
-- Clears stale provider execution files at ccbd startup and when late updates arrive for terminal or missing jobs.
-
-</details>
-
-<details>
-<summary><b>v6.1.20</b> - Claude Active Version Cache Release</summary>
-
-- Detects the source home's active Claude Code symlink under `~/.local/bin/claude` and prefers that version for managed Claude startup.
-- Copies the active source-home Claude version into the CCB provider cache, then points managed `.local/bin/claude` at the cached active version.
-- Preserves previous shared-cache fallback behavior when the source active-version layout is unavailable.
-- Updates provider workspace preparation and the Claude binary-cache contract to document the source-home active-version preference.
-
-</details>
-
-<details>
-<summary><b>v6.1.19</b> - Managed Ask Skill Projection Release</summary>
-
-- Routes inherited Claude `skills/` and `commands/` through CCB projected assets instead of copy-sync, so system-installed ask skills reach managed Claude agents without duplicating provider homes.
-- Adds managed Droid `FACTORY_HOME` support with projected system `~/.factory/skills` and a session-scoped Droid sessions root.
-- Updates Droid launch, execution polling, and communicator session readers to follow the managed session root after restart or session rotation.
-- Adds concise default ask reply guidance plus `--compact` and `--silence` submission modes.
-
-</details>
-
-<details>
-<summary><b>v6.1.18</b> - Heartbeat Timeout And Useful Tools Release</summary>
-
-- Keeps running-job heartbeat observations internal until three no-progress intervals, then terminalizes once with `heartbeat_timeout` and a small communication-test recommendation.
-- Treats provider completion progress semantically, so cursor offsets, polling timestamps, and session snapshot bookkeeping no longer extend completion deadlines.
-- Preserves `reliability_*` runtime state through persistence so restored provider jobs do not reset timeout deadlines.
-- Adds `useful_tools/useful_tools.zip` to the versioned optional tools shipped in release artifacts.
-
-</details>
-
-<details>
-<summary><b>v6.1.17</b> - Completion Binding And Codex Session Hotfix</summary>
-
-- Binds Claude Stop-hook completion artifacts to the structured outer `CCB_REQ_ID`, so forwarded text or tool output cannot redirect completion events to an older job.
-- Keeps Codex session identity independent from memory projection freshness, allowing `.ccb/ccb_memory.md` updates to refresh memory without forcing a fresh conversation.
-- Includes PR #205 mailbox recovery for stale terminal `task_request` queue heads whose attempts are already terminal.
-- Adds regression coverage across transcript parsing, provider finish hooks, Codex resume behavior, and mailbox stale-head cleanup.
-
-</details>
-
-<details>
-<summary><b>v6.1.16</b> - Memory Handoff And Claude Route Hotfix</summary>
-
-- Adds CCB-owned submit-only ask coordination rules to generated managed-memory bundles, preventing stale shared memory text from reintroducing polling/waiting behavior.
-- Updates new `.ccb/ccb_memory.md` templates with the same fire-and-forget handoff guidance.
-- Makes managed Claude startup prefer ccswitch-updated `~/.claude/settings.json` route settings over stale caller-shell `ANTHROPIC_BASE_URL`.
-- Documents the Claude route inheritance contract and adds regression coverage for the new priority order.
-
-</details>
-
-<details>
-<summary><b>v6.1.15</b> - Kill Shutdown Reliability Hotfix</summary>
-
-- Waits for recorded `ccbd` and keeper pids to exit during remote `ccb kill` instead of trusting lifecycle unmounted alone.
-- Finalizes lifecycle to stopped/unmounted before writing the final shutdown report, allowing `ccb cleanup` to run immediately after kill.
-- Adds regression coverage for prepared pid snapshots, remote lifecycle finalization, and shutdown intent ordering.
-
-</details>
-
-<details>
-<summary><b>v6.1.14</b> - macOS Claude Keychain Boundary Follow-up</summary>
-
-- Documents the managed Claude `Library/Keychains` fallback as agent-local secret auth compatibility state.
-- Clarifies that support bundles must not follow the fallback Keychains symlink and storage diagnostics classify it as secret auth state.
-
-</details>
-
-<details>
-<summary><b>v6.1.13</b> - macOS Claude Keychain Fallback</summary>
-
-- Links `Library/Keychains` into managed Claude homes on macOS when `com.apple.security.plist` is absent, preserving Claude login lookup on newer setups.
-- Removes the fallback link when Claude auth inheritance is disabled.
-- Classifies the fallback Keychains symlink as secret auth state in storage diagnostics.
-
-</details>
-
-<details>
-<summary><b>v6.1.12</b> - Claude Tmux Permission Release</summary>
-
-- Packages the merged Claude auto-permission pane fix so tmux launches do not block on the bypass permissions confirmation prompt.
-- Carries forward the v6.1.11 WSL cleanup smoke alignment and Claude rollback-cache preservation fixes.
-
-</details>
-
-<details>
-<summary><b>v6.1.11</b> - WSL Cleanup Smoke Alignment</summary>
-
-- Aligns WSL mounted-drive storage cleanup smoke with the current relocated-runtime shared-cache contract.
-- Includes the Claude cleanup rollback preservation fix from v6.1.10.
-
-</details>
-
-<details>
-<summary><b>v6.1.10</b> - Claude Cleanup Rollback Hotfix</summary>
-
-- Keeps the active Claude Code version plus one rollback version during `ccb cleanup`.
-- Restores the real-platform storage cleanup smoke expectation across macOS and WSL.
-
-</details>
-
-<details>
-<summary><b>v6.1.9</b> - Storage Dedup And Shutdown Hardening</summary>
-
-- Reduces `.ccb` growth by routing Codex projected assets through symlink/shared bundle paths and by moving/pruning rebuildable Claude and Gemini cache content.
-- Extends `ccb cleanup` to reclaim old Claude shared versions, Gemini shared cache data, rebuildable Claude caches, and stale pane crash logs.
-- Hardens `ccb kill` so old `ccbd`/keeper pids are snapshotted, waited on, and terminated without racing a newer backend generation.
-- Prevents Claude tmux panes from blocking on the bypass permissions confirmation prompt.
-
-</details>
-
-<details>
-<summary><b>v6.1.8</b> - macOS Claude Keychain Preference Hotfix</summary>
-
-- Managed Claude homes on macOS now inherit `Library/Preferences/com.apple.security.plist` so Claude login lookup can resolve the expected default Keychain.
-- The preference projection stays tied to auth inheritance and is removed when Claude auth inheritance is disabled.
-
-</details>
-
-<details>
-<summary><b>v6.1.7</b> - Codex Memory Freshness Hotfix</summary>
-
-- Codex now refreshes shared project memory instead of resuming stale AGENTS context after `.ccb/ccb_memory.md` changes.
-- Claude and Droid ask skills now submit through heredoc and stop immediately after submit.
-
-</details>
-
-<details>
-<summary><b>v6.1.6</b> - Startup And Claude Auth Hotfix</summary>
-
-- Fixes a first-start race between ccbd start and heartbeat maintenance.
-- `.ccb/ccb_memory.md` is the only shared CCB memory anchor.
-- Adds Claude macOS `Claude Code-credentials` Keychain lookup.
-
-</details>
-
-<details>
-<summary><b>v6.1.5</b> - Tmux Startup Hotfix</summary>
-
-- Fixes startup races that could show `Cannot split: pane ... does not exist` or `respawn pane failed: can't find pane`.
-- Provider panes still use the managed respawn path.
-
-</details>
-
-<details>
-<summary><b>v6.1.4</b> - Shared Project Memory V1</summary>
-
-- `.ccb/ccb_memory.md` is the project-wide shared memory document.
-
-</details>
-
-<details>
-<summary><b>v6.1.2</b> - Provider Storage Boundary Hardening</summary>
-
-- **Storage Classes Made Explicit**: `ccb doctor storage` now separates authority, session state, secrets, workspaces, user content, projected config, rebuildable cache, and startup authority bundles.
-- **Safe Cleanup Added**: `ccb cleanup` refuses to run while `ccbd` or ask jobs are active, prunes only safe rebuildable provider caches, and preserves sessions, auth, and current Claude binaries.
-- **Shared Cache Guardrails Added**: future provider shared-cache paths now resolve under the effective runtime-state root with WSL drvfs safety checks and manifest creation.
-
-</details>
-
-<details>
-<summary><b>v6.1.1</b> - Ask Skill and Memory Injection Cleanup</summary>
-
-- **Ask Skill Kept as the Only Installed Skill**: Claude, Codex, and Droid/Factory installs now publish only the `ask` skill and remove older CCB helper skills such as `ping`, `pend`, `all-plan`, and `file-op`.
-- **Global Memory Injection Removed**: installers no longer append CCB collaboration blocks into global `CLAUDE.md`, installed `AGENTS.md`, or `.clinerules`; existing CCB-marked blocks are cleaned during install.
-- **Legacy Skill Sources Removed**: repository skill templates now keep only the provider-specific `ask` skill assets.
-
-</details>
-
-<details>
-<summary><b>v6.1.0</b> - CCBD Ask Stability and Observer Convergence</summary>
-
-- **Ask Submit Fastpath Stabilized**: `ccb ask` returns bounded receipts without waiting on provider readiness, mailbox history projection, or long maintenance ticks
-- **Lifecycle and Shutdown Races Closed**: stop-all, shutdown, restart, and background supervision now keep stopped runtimes and terminal jobs from being revived by stale work
-- **Provider Completion Recovery Hardened**: Codex polling follows rebound session bindings after restart so jobs complete from the current managed session log
-- **Mailbox Summary Read Model Landed**: routine `queue`, `inbox`, and `pend` paths prefer maintained summaries and explicitly degrade when summaries are missing or corrupt
-- **Observer Surfaces Weakened**: `pend`, `watch`, `queue`, and `inbox` are non-authoritative snapshots; use `ccb trace <id>` when lineage details are needed
-- **Real Platform Validation Added**: GitHub Actions now runs macOS and WSL ccbd/ask smoke, communication matrix, short soak, and fastpath stress jobs
-
-</details>
-
-<details>
-<summary><b>v6.0.29</b> - WSL Runtime State Relocation</summary>
-
-- **Runtime State Moved Off Mounted Drives**: on WSL projects rooted under `/mnt/<drive>/...`, project authority remains in `.ccb` while `ccbd/` and agent runtime state relocate to a local Linux state root with explicit marker files
-- **Diagnostics and Bundle Mapping Updated**: doctor output and support bundles now expose the project anchor, runtime-state root, relocation reason, and logical `.ccb` archive paths for relocated runtime files
-- **Provider Lookup and Ask Routing Kept Stable**: relocated runtime directories still resolve back to the project anchor for session discovery and ask sender attribution without changing Linux or macOS default layout behavior
-- **Runtime Markers Are Validated**: relocated runtime markers and refs now reject malformed or mismatched payloads, so stale relocation residue cannot silently remap one project to another
-- **WSL Smoke Matches the Final Contract**: the release smoke now expects the runtime-root relocation path that the relocated project actually writes, instead of treating the first relocation step as the final socket fallback
-
-</details>
-
-<details>
-<summary><b>v6.0.28</b> - WSL Control Plane Socket Hardening</summary>
-
-- **WSL Control Plane Startup Hardened**: keeper and daemon readiness probes now share the configured control-plane RPC timeout instead of using shorter hardcoded budgets that could misread a slow mounted-drive startup as config drift
-- **Socket Server Accept Path Decoupled**: ccbd now accepts connections separately from a serialized worker lane, so one slow or incomplete client request no longer blocks new control-plane probes or heartbeats
-- **Transient Connect Retry Added**: Unix socket clients retry only short-lived connect races within the existing timeout budget, without retrying already-sent RPC requests or mutating operations
-- **README Refreshed**: the public README was reorganized around the current agent CLI hub/team workflow and updated release guidance
-
-</details>
-
-<details>
-<summary><b>v6.0.27</b> - macOS Foreground Attach Timeout Hardening</summary>
-
-- **Foreground Attach Timeout Split**: interactive `ccb` startup now uses foreground-attach-specific RPC and target-ready budgets instead of reusing the short daemon probe timeout
-- **macOS Attach Race Reduced**: foreground attach now tolerates slower post-start `ccbd` ping and tmux namespace/window visibility on macOS without redefining daemon startup success
-- **Clearer Attach Failures**: attach errors now distinguish between an unresponsive control-plane ping and a responsive daemon whose project namespace is not yet attachable
-
-</details>
-
-<details>
-<summary><b>v6.0.26</b> - macOS Install And Claude Ask Cleanup</summary>
-
-- **macOS Release Install Fixed**: release installs keep generated CLI wrappers bound to the managed `.venv` Python, avoiding environment drift when optional dependencies such as `watchdog` are installed
-- **WSL Install Tests Unblocked**: watchdog install regression tests explicitly confirm WSL non-interactive install mode so CI covers the intended optional-dependency path
-- **Claude Ask Prompt Slimmed Down**: managed Claude `ask` no longer injects local ask skill runtime text into the prompt body, keeping agent-to-agent asks limited to the request anchor and the user's original message
-
-</details>
-
-<details>
-<summary><b>v6.0.25</b> - Gemini Managed Home Alignment</summary>
-
-- **Gemini Login Inheritance Fixed**: managed Gemini panes now set `GEMINI_CLI_HOME` to the isolated home root so Gemini CLI reads the projected `.gemini/.env`, settings, and login state from the same managed boundary
-- **Regression Coverage Added**: launcher tests now lock the aligned `HOME`, `GEMINI_CLI_HOME`, and `GEMINI_ROOT` contract and guard against writing settings under nested `.gemini/.gemini`
-- **Community Contact Trimmed**: the standalone Linux.do contact entry was removed while keeping the Linux.do community acknowledgement below the contact block
-
-</details>
-
-<details>
-<summary><b>v6.0.24</b> - WSL Official Login Transport</summary>
-
-- **WSL Provider Transport Inherited**: managed provider panes now preserve user-session proxy, CA, browser, and WSL interop environment needed by official-login and Codex Apps/MCP networking paths
-- **Managed Isolation Preserved**: transport inheritance is centralized and does not allow caller-global `CODEX_HOME`, `GEMINI_ROOT`, `CLAUDE_PROJECTS_ROOT`, or `CCB_CALLER_*` runtime authority to override agent-scoped managed state
-- **Gemini Login Projection Extended**: managed Gemini homes now project allowlisted `.gemini/.env` API credentials, `google_accounts.json`, and `GEMINI_CLI_HOME` while diagnostics continue excluding copied auth artifacts
-- **Opencode Session Detection Hardened**: opencode now treats env-session mode as active only when its provider-specific runtime env is present, avoiding stale generic `CCB_SESSION_ID` contamination
-- **Community Entry Refreshed**: README now includes the refreshed WeChat group QR image and Linux.do community acknowledgement so users can find the current support channels from the public project page
-
-</details>
-
-<details>
-<summary><b>v6.0.23</b> - CI Matrix Stabilization</summary>
-
-- **Release CI Greened**: latest release validation now points at a commit whose full GitHub Actions test workflow passes across Ubuntu, macOS, WSL, and install smoke jobs
-- **Provider Blackbox Coverage Focused**: heavy pane-backed provider restart / rotate / settle tests now run in a dedicated Ubuntu provider-blackbox job instead of being repeated across every OS and Python matrix cell
-- **macOS Socket Test Race Fixed**: ccbd socket tests now wait for the daemon socket to answer ping requests before issuing RPCs, avoiding macOS runner readiness races
-
-</details>
-
-<details>
-<summary><b>v6.0.22</b> - Claude macOS Login Inheritance</summary>
-
-- **macOS Keychain Login Inherited**: managed Claude startup now reads official Claude Code login credentials from macOS Keychain and materializes an equivalent project-scoped `.claude/.credentials.json` inside isolated Claude homes
-- **Claude Account Metadata Refreshed**: inherited `.claude.json` account metadata now refreshes from the source home while preserving managed workspace trust and excluding source workspace trust or API key secrets
-- **Default Config Startup Fixed**: keeper startup now treats a missing `.ccb/ccb.config` as a request to use the built-in default project config instead of exiting before `ccbd` can mount
-- **Regression Coverage Expanded**: tests now lock Keychain projection, metadata refresh, and disabled-auth cleanup paths for managed Claude login inheritance
-
-</details>
-
-<details>
-<summary><b>v6.0.21</b> - Claude Hook Asset Projection</summary>
-
-- **CodeIsland Hook Assets Inherited**: managed Claude startup now copies referenced source-home hook assets such as `.codeisland/` when inherited Claude hooks call `$HOME/.codeisland/...`, preventing missing-hook failures inside isolated Claude homes
-- **Config Boundary Preserved**: third-party hook assets are copied only when Claude config inheritance is enabled and the inherited hook payload actually references that home-relative asset path
-- **Diagnostics Redaction Extended**: diagnostic bundles now exclude copied `.codeisland/` provider-state assets while still including ordinary managed Claude settings for support
-
-</details>
-
-<details>
-<summary><b>v6.0.20</b> - Claude Official Login Source Home Fix</summary>
-
-- **Claude Official Login Source Home Fixed**: managed Claude startup now treats `.ccb/agents/*/provider-state/*/home` as an isolated runtime home, not the user's source home, so official browser-login credentials are copied from the real account home
-- **Claude Credential Path Coverage**: managed Claude homes now project Claude Code official-login credentials from `.claude/.credentials.json` while retaining compatibility with `.config/claude-code/auth.json`
-- **Regression Coverage Added**: tests now lock source-home fallback, launcher projection, diagnostics redaction, and workspace preparation for official Claude login inheritance
-
-</details>
-
-<details>
-<summary><b>v6.0.19</b> - Claude Official Login Inheritance</summary>
-
-- **Claude Official Login Projection**: managed Claude homes now project Claude Code official login credentials from `.claude/.credentials.json`, so browser-login-backed auth can be inherited into isolated CCB runtimes instead of only API-token-based settings auth
-- **Managed Login Auth Retention**: when global Claude auth artifacts disappear but managed Claude state already holds a valid project-scoped login, startup now preserves that managed login auth across restart instead of silently dropping it
-- **Auth Cleanup And Regression Coverage**: disabling auth inheritance now clears stale copied Claude login credentials, and targeted tests now lock the projection, cleanup, and launcher startup paths
-
-</details>
-
-<details>
-<summary><b>v6.0.18</b> - Gemini Hook Empty-Reply Guard</summary>
-
-- **Empty Gemini Hook Replies No Longer Burn Jobs**: managed Gemini `AfterAgent` hooks that fire with an empty reply now downgrade to `incomplete` instead of terminalizing as a false exact completion
-- **Exact Hook Polling Becomes Safer**: Gemini exact-hook polling now ignores `completed` hook artifacts with no reply text, allowing observed session-stability or timeout reliability paths to converge the request instead of accepting a blank terminal result
-- **Regression Coverage Added**: targeted tests now lock the empty-reply guard at both the finish-hook artifact writer and Gemini execution-service polling layers
-
-</details>
-
-<details>
-<summary><b>v6.0.17</b> - Gemini Custom Endpoint Env Propagation</summary>
-
-- **Gemini Endpoint Override Restored**: managed Gemini startup now preserves `GOOGLE_GEMINI_BASE_URL` end to end, so custom endpoint and proxy-backed Gemini CLI setups no longer fall back to Google's default production API host
-- **Gemini Model Env Allowlisted**: control-plane and provider-profile env filtering now preserve `GEMINI_MODEL`, allowing isolated Gemini agents to keep explicit model selection instead of silently dropping it at startup
-- **Config Shortcut Alignment**: Gemini `key` / `url` shortcuts now materialize the same environment variables the current Gemini CLI actually reads, keeping explicit config-based routes aligned with shell-level env behavior
-
-</details>
-
-<details>
-<summary><b>v6.0.16</b> - Codex Plugin Projection & Cmd Shell Compatibility</summary>
-
-- **Codex Plugin Projection Fixed**: managed Codex homes now project plugin-bundle authority under `.tmp/plugins/` and `.tmp/plugins.sha`, so isolated agents inherit the marketplace catalog and installed plugin assets they actually need instead of starting with plugin-enabled config but missing bundles
-- **Plugin Refresh Semantics Tightened**: startup now refreshes managed plugin projections as one authority unit, removes stale managed plugin residue when the source projection disappears, and keeps a cheap no-recopy fast path when the source plugin freshness marker is unchanged
-- **Cmd Shell / Session Env Hardening**: the `cmd` pane now directly `exec`s the resolved user shell and preserves ordinary user-session transport variables such as `DISPLAY`, `WAYLAND_DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`, `XAUTHORITY`, and `SSH_AUTH_SOCK`, improving fish/zsh and GUI-command compatibility
-
-</details>
-
-<details>
-<summary><b>v6.0.15</b> - Codex Route Authority & Foreground Attach Polish</summary>
-
-- **Codex Explicit Route Authority**: managed Codex homes now materialize agent-local `config.toml` and `auth.json` as the sole authority for explicit `key` / `url` routes, so agent-scoped API overrides replace inherited global provider routes instead of drifting back to system config
-- **Codex Session Namespace Rotation**: managed Codex startup now fingerprints explicit route authority, stamps reusable session bindings with that authority, and rotates stale `sessions/` namespaces before launch when the bound route no longer matches
-- **Foreground Attach UX Hardening**: interactive `ccb` startup now seeds tmux namespace creation from the real terminal viewport and issues a best-effort client refresh after attach so first paint matches the current terminal size without manual redraw
-
-</details>
-
-<details>
-<summary><b>v6.0.14</b> - Claude Logout Recovery Hardening</summary>
-
-- **Managed Claude Auth Preservation**: managed Claude homes now preserve agent-local login auth when the global Claude home has been logged out, so a project-scoped re-login survives restart instead of re-entering a browser-link loop
-- **Auth Projection Semantics Tightened**: Claude startup still refreshes source auth when it exists, but no longer treats missing source auth as an instruction to blank managed auth; disabled auth inheritance still clears stale copied auth state
-- **Startup Regression Coverage Expanded**: targeted regressions now lock this behavior at the projection layer, provider workspace preparation, and Claude launcher startup path
-
-</details>
-
-<details>
-<summary><b>v6.0.13</b> - macOS Release Path & Preview Packaging Fix</summary>
-
-- **macOS Release Path**: shared release artifact naming and updater resolution now cover the macOS universal bundle alongside Linux/WSL release assets
-- **Source Dev Install Mode**: installs from a git checkout now stay linked to the live source tree, skip startup auto-update prompts, and can switch to a managed release install through `ccb update`
-- **Agent API / Model Shortcuts**: `.ccb/ccb.config` now accepts flat per-agent `key`, `url`, and `model` shortcuts so common provider overrides stay concise
-- **Preview Packaging Hardening**: preview release exports now exclude generated output paths inside the repo, fixing recursive self-copy failures such as `dist-macos-smoke`
-
-</details>
-
-<details>
-<summary><b>v6.0.12</b> - Non-Blocking Startup Update Prompt</summary>
-
-- **Cached Startup Prompt**: interactive foreground `ccb` start now reads install-scoped cached release metadata and only prompts when a newer stable release is already known locally
-- **Background Refresh**: missing or stale update cache now refreshes in the background with short network budgets instead of delaying the project startup path
-- **Upgrade / Defer / Silence**: startup prompt supports upgrade now, defer for the current version, or silence that exact version
-- **Startup Boundary Preserved**: release-update checks remain advisory and outside the project lifecycle startup transaction
-
-</details>
-
-<details>
-<summary><b>v6.0.11</b> - Project Startup Hotfix</summary>
-
-- **Cold Start Namespace Fix**: project tmux namespace startup now treats `no server running on <project socket>` as an absent namespace that must be created, instead of failing startup as a generic tmux inspect error
-- **Release Regression Coverage**: targeted namespace backend/state regression tests now lock this cold-start path so `ccb -> ping -> kill` blackbox lifecycle stays covered
-- **Contract Clarification**: the startup supervision contract now explicitly defines project-socket `no server running` as a recreate signal rather than a fatal inspect failure
-
-</details>
-
-<details>
-<summary><b>v6.0.10</b> - Startup Budget Hardening & Gemini Login Inheritance</summary>
-
-- **Gemini Login Inheritance**: managed Gemini homes now project login-auth selection and `oauth_creds.json` for `oauth-personal` reuse, and remove stale copied credentials when auth inheritance is disabled
-- **Shared Tmux Ready Budget**: project-owned `respawn-pane` now uses the same tmux ready-retry budget as namespace create/reflow, reducing transient `no server running` failures during startup and supervision
-- **Background Startup Compatibility**: background lifecycle startup keeps supervision compatibility while separating readiness-probe timeouts from operational RPC budgets
-- **Diagnostics Secret Redaction**: diagnostic bundles now exclude Gemini `oauth_creds.json` alongside other provider credential artifacts
-
-</details>
-
-<details>
-<summary><b>v6.0.9</b> - Cross-Platform Lifecycle & Watch Stability</summary>
-
-- **WSL Compatibility Fixed**: project runtime now avoids binding Unix sockets onto unsupported WSL mounted-drive filesystems and hardens installer staging plus tmux namespace readiness
-- **macOS Lifecycle Hardening**: startup, restore, and project identity paths were tightened so macOS follows the same lifecycle authority model as Linux without intermittent startup drift
-- **Respawn Retry Boundary**: transient tmux respawn fork, server-exit, and readiness failures are retried inside runtime supervision instead of leaking outward as false lifecycle failures
-- **Watch Reconnect Recovery**: observer recovery can resume from persisted state after short daemon interruptions, while reconnect loops still honor their internal deadlines
-- **Cross-Platform CI Coverage**: GitHub Actions now exercises macOS install smoke and WSL compatibility paths alongside the existing Linux matrix
-
-</details>
-
-<details>
-<summary><b>v6.0.7</b> - Lifecycle Authority & Shutdown Stability</summary>
-
-- **Keeper-Owned Lifecycle Authority**: keeper now owns lifecycle progression through authoritative `lifecycle.json`, generation fencing, and namespace epoch tracking
-- **Mounted-State Read Fixes**: `ping ccbd` and `ping agent` now report current mounted state from live authority instead of stale failure residue after recovery
-- **Shutdown Transaction Hardening**: `ccb kill` and `ccb kill -f` now terminate non-terminal jobs during shutdown so restart cannot resurrect old executions via restore or auto-retry
-- **Real Blackbox Repro Closed**: the real `ask -> kill -f -> restart` lifecycle repro now converges cleanly to `project_shutdown` without lingering active execution
-
-</details>
-
-<details>
-<summary><b>v6.0.6</b> - Agent Isolation Stability & Kill Lifecycle Fix</summary>
-
-- **Agent Isolation Stability**: Codex, Claude, and Gemini managed agents keep their session state under project-scoped `.ccb/agents/<agent>/provider-state/...`
-- **Restart Inheritance Safety**: restarts restore only the matching managed agent history instead of adopting manual provider conversations from the same working directory
-- **Project Dotfile Protection**: managed startup no longer rewrites project-level `.claude`, `.gemini`, or `.codex` provider dotfiles
-- **Kill Lifecycle Fix**: interactive `ccb` no longer reports a false attach failure after `ccb kill` intentionally tears down the current project tmux session
-
-</details>
-
-<details>
-<summary><b>v6.0.5</b> - Agent Isolation Stability</summary>
-
-- **Agent Isolation Stability**: Codex, Claude, and Gemini managed agents keep their session state under project-scoped `.ccb/agents/<agent>/provider-state/...`
-- **Restart Inheritance Safety**: restarts restore only the matching managed agent history instead of adopting manual provider conversations from the same working directory
-- **Project Dotfile Protection**: managed startup no longer rewrites project-level `.claude`, `.gemini`, or `.codex` provider dotfiles
-
-</details>
-
-<details>
-<summary><b>v6.0.4</b> - Legacy Update Compatibility Hotfix</summary>
-
-- **Backward-Compatible Release Assets**: Linux release tarballs now include a compatibility alias so older 6.x updaters can still find the extracted installer path
-- **Old Clients Can Upgrade Again**: existing `v6.0.1` and `v6.0.2` installs can now update to the latest stable release without needing a patched local updater first
-- **Modern Updater Still Clean**: current runtime keeps the correct extracted-directory resolution and does not depend on the legacy alias
-
-</details>
-
-<details>
-<summary><b>v6.0.3</b> - Self-Update Tarball Hotfix</summary>
-
-- **Release Upgrade Fixed**: `ccb update` now resolves the extracted release directory correctly instead of treating the `.tar.gz` asset name as a folder
-- **Installer Handoff Restored**: self-update now finds `install.sh` inside extracted release assets and completes end to end
-- **Release Build Hygiene**: Linux release packaging now ignores local `.ccb-requests/` residue so official builds are reproducible
-
-</details>
-
-<details>
-<summary><b>v6.0.2</b> - Caller Attribution, Mailbox Routing, and macOS Install Warning</summary>
-
-- **Correct Caller Identity**: `ccb ask` now preserves the real originating agent so replies return to the right mailbox instead of being attributed as `user`
-- **Stable Reply Routing**: async replies for delegated jobs now land back in the expected mailbox chain, including `cmd`-anchored flows
-- **Mixed-Case Agent Recovery**: config layout recovery no longer drifts when configured agent names use mixed case
-- **macOS Homebrew Warning**: `install.sh` now warns clearly when Homebrew is missing before users try to install tmux and other dependencies
-
-</details>
-
-<details>
-<summary><b>v6.0.1</b> - Release Archive Hygiene & Safer Upgrade Extraction</summary>
-
-- **Source Archive Cleanup**: Removed accidentally tracked pytest temp artifacts so GitHub source archives are clean again
-- **Safer Tar Validation**: Upgrade extraction now rejects unsafe symlink targets before unpacking
-- **Clearer Failure Mode**: Unsafe archive extraction errors now point users toward release assets or clean source archives
-- **Regression Coverage**: Added tests to block ephemeral repo artifacts from being tracked again
-
-</details>
-
-<details>
-<summary><b>v6.0.0</b> - Native Multi-Agent Runtime, Stable Native Communication, and Linux-Only Auto Upgrade</summary>
-
-**🚀 New Runtime Direction:**
-- **Infinite Parallel Agent Foundation**: CCB v6 is built as the runtime base for effectively unbounded agent-to-agent delegation and orchestration
-- **Independent Agent Identity**: agents can carry different roles, task ownership, skill libraries, and personalities
-- **Focused User Command Surface**: the public user workflow stays centered on `ccb`, `ccb -s`, `ccb -n`, `ccb kill`, and `ccb kill -f`
-
-**🧱 Project Rebuild Semantics:**
-- **Config-Preserving Legacy Cleanup**: On first `ccb` inside a pre-6 project, CCB preserves `.ccb/ccb.config`, removes the rest of the old `.ccb` runtime state, and rebuilds locally
-- **Runtime Marker**: Modern projects now record `.ccb/project-runtime.json` so current runtime state is distinguished from legacy state
-- **Worktree Safety Guard**: Dirty or unmerged CCB-managed worktrees still block destructive rebuilds until the user resolves them
-
-**🔄 Upgrade Policy:**
-- **Linux/macOS/WSL**: `ccb update` is available on Linux, macOS, and WSL for the 6.x line
-- **Release-Only Upgrades**: Source tags are still published with each version, but `ccb update` for 6.x installs the GitHub release asset, not the source archive
-- **Stable Release Targeting**: Default upgrades now resolve to the latest stable release instead of the moving `main` branch
-- **Major Upgrade Confirmation**: Upgrading into `6.0.0` requires explicit confirmation before replacing the installed runtime
-
-**🤖 Provider Reliability:**
-- **Gemini Multi-Round Stability**: Gemini completion polling now waits through tool activity and no longer exits on the first stable planning sentence
-
-</details>
-
-<details>
-<summary><b>v5.3.0</b> - Simplified CLI, Explicit Worktree Mode, and Gemini Completion Stability</summary>
-
-**🚀 User-Facing CLI Simplification:**
-- **Narrowed Main Surface**: Public startup flow is now `ccb`, `ccb -s`, `ccb -n`, `ccb kill`, and `ccb kill -f`
-- **Model Control Plane Still Available**: `ask`, `ping`, `pend`, and `watch` remain for agent-to-agent orchestration without cluttering primary help
-
-**🧱 Workspace Semantics Made Explicit:**
-- **Default Inplace Mode**: Compact `ccb.config` entries now expand to `workspace_mode='inplace'`
-- **Opt-In Isolation**: Use `agent:provider(worktree)` when an agent must run in its own git worktree
-- **Safe Agent Churn**: Adding agents no longer disturbs existing worktrees; removing or renaming worktree agents retires clean branches and blocks on dirty or unmerged ones
-
-**🛠 Recovery & Reset Hardening:**
-- **History-Preserving Reset**: `ccb -n` rebuilds project runtime state while keeping `.ccb/ccb.config`, project memory, and same-name managed agent history
-- **Stale Registration Cleanup**: Start and reset now prune missing registered git worktrees before rematerialization
-- **Kill Warnings**: `ccb kill` warns clearly when a worktree agent still has unmerged or dirty state
-
-**🤖 Gemini Completion Fix:**
-- **No Early Stop on Planning Text**: Gemini completion polling now tracks tool-call activity and waits for the real final reply instead of finishing on the first stable “I will ...” message
-
-</details>
-
-<details>
-<summary><b>v5.2.6</b> - Async Communication & Gemini 0.29 Compatibility</summary>
-
-**🔧 Gemini CLI 0.29.0 Support:**
-- **Dual Hash Strategy**: Session path discovery now supports both basename and SHA-256 formats
-- **Autostart**: `ccb-ping` and `ccb-mounted` gain `--autostart` flag to launch offline provider daemons
-- **Cleanup Path**: zombie-session cleanup is now handled by `ccb kill -f`
-
-**🔗 Async Communication Fixes:**
-- **OpenCode Deadlock**: Fixed session ID pinning that caused second async call to always fail
-- **Legacy Completion Compatibility**: Legacy text-based providers still tolerate mismatched `CCB_DONE` lines in degraded mode
-- **req_id Regex**: `opencode_comm.py` now matches both old hex and new timestamp-based formats
-- **Gemini Idle Timeout**: Auto-detect reply completion when Gemini omits `CCB_DONE` marker (15s idle, configurable via `CCB_GEMINI_IDLE_TIMEOUT`)
-- **Gemini Prompt Hardening**: Stronger instructions to reduce `CCB_DONE` omission rate
-
-**🛠 Other Fixes:**
-- **lpend**: Prefers fresh Claude session path when registry is stale
-
-</details>
-
-<details>
-<summary><b>v5.2.5</b> - Async Guardrail Hardening</summary>
-
-**🔧 Async Turn-Stop Fix:**
-- **Global Guardrail**: Added mandatory `Async Guardrail` rule to `claude-md-ccb.md` — covers both `/ask` skill and direct `Bash(ask ...)` calls
-- **Marker Consistency**: `bin/ask` now emits `[CCB_ASYNC_SUBMITTED provider=xxx]` matching all other provider scripts
-- **DRY Skills**: Ask skill rules reference global guardrail with local fallback, single source of truth
-
-This fix prevents Claude from polling/sleeping after submitting async tasks.
-
-</details>
-
-<details>
-<summary><b>v5.2.3</b> - Project-Local History & Legacy Compatibility</summary>
-
-**📂 Project-Local History:**
-- **Local Storage**: Auto context exports now save to `./.ccb/history/` per project
-- **Safe Scope**: Auto transfer runs only for the current working directory
-- **Claude /continue**: New skill to attach the latest history file via `@`
-
-**🧩 Legacy Compatibility:**
-- **Auto Migration**: `.ccb_config` is detected and upgraded to `.ccb` when possible
-- **Fallback Lookup**: Legacy sessions still resolve cleanly during transition
-
-These changes keep handoff artifacts scoped to the project and make upgrades smoother.
-
-</details>
-
-<details>
-<summary><b>v5.2.2</b> - Session Switch Capture & Context Transfer</summary>
-
-**🔁 Session Switch Tracking:**
-- **Old Session Fields**: `.claude-session` now records `old_claude_session_id` / `old_claude_session_path` with `old_updated_at`
-- **Auto Context Export**: Previous Claude session is automatically extracted to `./.ccb/history/claude-<timestamp>-<old_id>.md`
-- **Cleaner Transfers**: Noise filtering removes protocol markers and guardrails while keeping tool-only actions
-
-These updates make session handoff more reliable and easier to audit.
-
-</details>
-
-<details>
-<summary><b>v5.2.1</b> - Enhanced Ask Command Stability</summary>
-
-**🔧 Stability Improvements:**
-- **Watchdog File Monitoring**: Real-time session updates with efficient file watching
-- **Mandatory Caller Field**: Improved request tracking and routing reliability
-- **Unified Execution Model**: Simplified ask skill execution across all platforms
-- **Auto-Dependency Installation**: Watchdog library installed automatically during setup
-- **Session Registry**: Enhanced Claude adapter with automatic session monitoring
-
-These improvements significantly enhance the reliability of cross-AI communication and reduce session binding failures.
-
-</details>
-
-<details>
-<summary><b>v5.2.0</b> - Historical mail bridge release</summary>
-
-This release introduced the old mail gateway path. That flow is now removed from the supported agent-first surface and remains legacy code only during cleanup.
-
-</details>
-
-<details>
-<summary><b>v5.1.3</b> - Tmux Claude Ask Stability</summary>
-
-**🔧 Fixes & Improvements:**
-- **tmux Claude ask**: read replies from pane output with automatic pipe-pane logging for more reliable completion
-
-See [CHANGELOG.md](CHANGELOG.md) for full details.
-
-</details>
-
-<details>
-<summary><b>v5.1.2</b> - Daemon & Hooks Reliability</summary>
-
-**🔧 Fixes & Improvements:**
-- **Claude Completion Hook**: Unified askd now triggers completion hook for Claude
-- **askd Lifecycle**: askd is bound to CCB lifecycle to avoid stale daemons
-- **Mounted Detection**: `ccb-mounted` uses ping-based detection across all platforms
-- **State File Lookup**: `askd_client` falls back to `CCB_RUN_DIR` for daemon state files
-
-See [CHANGELOG.md](CHANGELOG.md) for full details.
-
-</details>
-
-<details>
-<summary><b>v5.1.1</b> - Unified Daemon + Bug Fixes</summary>
-
-**🔧 Bug Fixes & Improvements:**
-- **Unified Daemon**: All providers now use unified askd daemon architecture
-- **Install/Uninstall**: Fixed installation and uninstallation bugs
-- **Process Management**: Fixed kill/termination issues
-
-See [CHANGELOG.md](CHANGELOG.md) for full details.
-
-</details>
-
-<details>
-<summary><b>v5.1.0</b> - Unified Command System + Historical Native Windows Experiment</summary>
-
-**🚀 Unified Commands** - Replace provider-specific commands with agent-first workflows:
-
-| Old Commands | New Unified Command |
-|--------------|---------------------|
-| `cask`, `gask`, `oask`, `dask`, `lask` | `ccb ask <agent> [from <sender>] <message>` |
-| `cping`, `gping`, `oping`, `dping`, `lping` | `ccb ping <agent\|all>` |
-| `cpend`, `gpend`, `opend`, `dpend`, `lpend` | `ccb pend <agent\|job_id> [N]` |
-
-**Supported providers:** `gemini`, `codex`, `opencode`, `droid`, `claude`
-
-**🪟 Historical native Windows experiment:**
-- Earlier releases explored a native Windows split-pane path
-- Background execution used PowerShell + `DETACHED_PROCESS`
-- Large payload delivery used stdin-based handoff
-- That backend has since been removed; future native Windows mux support is being redesigned around `psmux`
-
-**📦 New Skills:**
-- `/ask <agent> <message>` - Send work to a named agent
-- `/ping <agent|all>` - Check mounted agent health
-- `/pend <agent|job_id> [N]` - View latest agent reply
-
-See [CHANGELOG.md](CHANGELOG.md) for full details.
-
-</details>
-
-<details>
-<summary><b>v5.0.6</b> - Zombie session cleanup + mounted skill optimization</summary>
-
-- **Zombie Cleanup**: `ccb kill -f` now cleans up orphaned tmux sessions globally (sessions whose parent process has exited)
-- **Mounted Skill**: Optimized to use `pgrep` for daemon detection (~4x faster), extracted to standalone `ccb-mounted` script
-- **Droid Skills**: Added full skill set (cask/gask/lask/oask + ping/pend variants) to the provider skill assets
-- **Install**: Added `install_droid_skills()` to install Droid skills to `~/.droid/skills/`
-
-</details>
-
-<details>
-<summary><b>v5.0.5</b> - Droid delegation tools + setup</summary>
-
-- **Droid**: Adds delegation tools (`ccb_ask_*` plus `cask/gask/lask/oask` aliases).
-- **Setup**: New `ccb droid setup-delegation` command for MCP registration.
-- **Installer**: Auto-registers Droid delegation when `droid` is detected (opt-out via env).
-
-<details>
-<summary><b>Details & usage</b></summary>
-
-Usage:
-```
-/all-plan <requirement>
-```
-
-Example:
-```
-/all-plan Design a caching layer for the API with Redis
-```
-
-Highlights:
-- Socratic Ladder + Superpowers Lenses + Anti-pattern analysis.
-- Availability-gated dispatch (use only mounted CLIs).
-- Two-round reviewer refinement with merged design.
-
-</details>
-</details>
-
-<details>
-<summary><b>v5.0.0</b> - Any AI as primary driver</summary>
-
-- **Claude Independence**: No need to start Claude first; Codex can act as the primary CLI.
-- **Unified Control**: Single entry point controls Claude/OpenCode/Gemini.
-- **Simplified Launch**: Dropped `ccb up`; use `ccb ...` or the default `ccb.config`.
-- **Flexible Mounting**: More flexible pane mounting and session binding.
-- **Default Config**: Uses a built-in default when `.ccb/ccb.config` is missing; CCB no longer creates that file automatically.
-- **Project askd Autostart**: project askd and provider runtimes auto-start in the project tmux namespace when needed.
-- **Session Robustness**: PID liveness checks prevent stale sessions.
-
-</details>
-
-<details>
-<summary><b>v4.0</b> - tmux-first refactor</summary>
-
-- **Full Refactor**: Cleaner structure, better stability, and easier extension.
-- **Terminal Runtime Cleanup**: The runtime moved toward a single tmux-oriented pane/control model instead of parallel terminal backends.
-- **Perfect tmux Experience**: Stable layouts + pane titles/borders + session-scoped theming.
-- **Works in Any Terminal**: If your terminal can run tmux, CCB can provide the full multi-model split experience.
-
-</details>
-
-<details>
-<summary><b>v3.0</b> - Smart daemons</summary>
-
-- **True Parallelism**: Submit multiple tasks to Codex, Gemini, or OpenCode simultaneously.
-- **Cross-AI Orchestration**: Claude and Codex can now drive OpenCode agents together.
-- **Bulletproof Stability**: Daemons auto-start on first request and stop after idle.
-- **Chained Execution**: Codex can delegate to OpenCode for multi-step workflows.
-- **Smart Interruption**: Gemini tasks handle interruption safely.
-
-<details>
-<summary><b>Details</b></summary>
-
-<div align="center">
-
-![Parallel](https://img.shields.io/badge/Strategy-Parallel_Queue-blue?style=flat-square)
-![Stability](https://img.shields.io/badge/Daemon-Auto_Managed-green?style=flat-square)
-![Interruption](https://img.shields.io/badge/Gemini-Interruption_Aware-orange?style=flat-square)
-
-</div>
-
-<h3 align="center">✨ Key Features</h3>
-
-- **🔄 True Parallelism**: Submit multiple tasks to Codex, Gemini, or OpenCode simultaneously. Provider runtimes queue and execute them serially, ensuring no context pollution.
-- **🤝 Cross-AI Orchestration**: Claude and Codex can now simultaneously drive OpenCode agents. All requests are arbitrated by the project askd layer.
-- **🛡️ Bulletproof Stability**: The runtime layer is self-managing. It starts on first use and shuts down after idleness to save resources.
-- **⚡ Chained Execution**: Advanced workflows supported! Codex can autonomously call `oask` to delegate sub-tasks to OpenCode models.
-- **🛑 Smart Interruption**: Gemini tasks now support intelligent interruption detection, automatically handling stops and ensuring workflow continuity.
-
-<h3 align="center">🧩 Feature Support Matrix</h3>
-
-| Feature | Codex | Gemini | OpenCode |
-| :--- | :---: | :---: | :---: |
-| **Parallel Queue** | ✅ | ✅ | ✅ |
-| **Interruption Awareness** | ✅ | ✅ | - |
-| **Response Isolation** | ✅ | ✅ | ✅ |
-
-<details>
-<summary><strong>📊 View Real-world Stress Test Results</strong></summary>
-
-<br>
-
-**Scenario 1: Claude & Codex Concurrent Access to OpenCode**
-*Both agents firing requests simultaneously, perfectly coordinated by the daemon.*
-
-| Source | Task | Result | Status |
-| :--- | :--- | :--- | :---: |
-| 🤖 Claude | `CLAUDE-A` | **CLAUDE-A** | 🟢 |
-| 🤖 Claude | `CLAUDE-B` | **CLAUDE-B** | 🟢 |
-| 💻 Codex | `CODEX-A` | **CODEX-A** | 🟢 |
-| 💻 Codex | `CODEX-B` | **CODEX-B** | 🟢 |
-
-**Scenario 2: Recursive/Chained Calls**
-*Codex autonomously driving OpenCode for a 5-step workflow.*
-
-| Request | Exit Code | Response |
-| :--- | :---: | :--- |
-| **ONE** | `0` | `CODEX-ONE` |
-| **TWO** | `0` | `CODEX-TWO` |
-| **THREE** | `0` | `CODEX-THREE` |
-| **FOUR** | `0` | `CODEX-FOUR` |
-| **FIVE** | `0` | `CODEX-FIVE` |
-
-</details>
-</details>
-</details>
-
-
-<details>
-<summary><b>Older Version History</b></summary>
-
-### v5.0.6
-- **Zombie Cleanup**: `ccb kill -f` cleans up orphaned tmux sessions globally
-- **Mounted Skill**: Optimized with `pgrep`, extracted to `ccb-mounted` script
-- **Droid Skills**: Full skill set added to the provider skill assets
-
-### v5.0.5
-- **Droid**: Add delegation tools (`ccb_ask_*` and `cask/gask/lask/oask`) plus `ccb droid setup-delegation` for MCP install
-
-### v5.0.4
-- **OpenCode**: 修复 `-r` 恢复在多项目切换后失效的问题
-
-### v5.0.3
-- **Daemons**: 全新的稳定守护进程设计
-
-### v5.0.1
-- **Skills**: New `/all-plan` with Superpowers brainstorming + availability gating; Codex `lping/lpend` added; `gask` keeps brief summaries with `CCB_DONE`.
-- **Status Bar**: Role label now reads role name from `.autoflow/roles.json` (supports `_meta.name`) and caches per path.
-- **Installer**: Copy skill subdirectories (e.g., `references/`) for Claude/Codex installs.
-- **CLI**: Added `ccb uninstall` / `ccb reinstall` with Claude config cleanup.
-- **Routing**: Tighter project/session resolution (prefer `.ccb` anchor; avoid cross-project Claude session mismatches).
-
-### v5.0.0
-- **Claude Independence**: No need to start Claude first; Codex (or any agent) can be the primary CLI
-- **Unified Control**: Single entry point controls Claude/OpenCode/Gemini equally
-- **Simplified Launch**: Removed `ccb up`; a built-in default is used when `.ccb/ccb.config` is missing
-- **Flexible Mounting**: More flexible pane mounting and session binding
-- **Project askd Autostart**: project askd and provider runtimes auto-start in the project tmux namespace when needed
-- **Session Robustness**: PID liveness checks prevent stale sessions
-
-### v4.1.3
-- **Codex Config**: Automatically migrate deprecated `sandbox_mode = "full-auto"` to `"danger-full-access"` to fix Codex startup
-- **Stability**: Fixed race conditions where fast-exiting commands could close panes before `remain-on-exit` was set
-- **Tmux**: More robust pane detection (prefer stable `$TMUX_PANE` env var) and better fallback when split targets disappear
-
-### v4.1.2
-- **Performance**: Added caching for tmux status bar (git branch & ccb status) to reduce system load
-- **Strict Tmux**: Explicitly require `tmux` for auto-launch; removed error-prone auto-attach logic
-- **CLI**: Added `--print-version` flag for fast version checks
-
-### v4.1.1
-- **CLI Fix**: Improved flag preservation (e.g., `-a`) when relaunching `ccb` in tmux
-- **UX**: Better error messages when running in non-interactive sessions
-- **Install**: Force update skills to ensure latest versions are applied
-
-### v4.1.0
-- **Async Guardrail**: `cask/gask/oask` prints a post-submit guardrail reminder for Claude
-- **Sync Mode**: add `--sync` to suppress guardrail prompts for Codex callers
-- **Codex Skills**: update `oask/gask` skills to wait silently with `--sync`
-
-### v4.0.9
-- **Project_ID Simplification**: `ccb_project_id` uses current-directory `.ccb/` anchor (no ancestor traversal, no git dependency)
-- **Codex Skills Stability**: Codex `oask/gask` skills were adjusted to avoid sending the next task too early
-
-### v4.0.8
-- **Codex Log Binding Refresh**: the Codex runtime now periodically refreshes `.codex-session` log paths by parsing `start_cmd` and scanning latest logs
-- **Tmux Clipboard Enhancement**: Added `xsel` support and `update-environment` for better clipboard integration across GUI/remote sessions
-
-### v4.0.7
-- **Tmux Status Bar Redesign**: Dual-line status bar with modern dot indicators (●/○), git branch, and CCB version display
-- **Session Freshness**: Always scan logs for latest session instead of using cached session file
-- **Simplified Auto Mode (Historical)**: auto-permission behavior was consolidated into the current primary start flow
-
-### v4.0.6
-- **Session Overrides**: `cping/gping/oping/cpend/opend` support `--session-file` / `CCB_SESSION_FILE` to bypass wrong `cwd`
-
-### v4.0.5
-- **Gemini Reliability**: Retry reading Gemini session JSON to avoid transient partial-write failures
-- **Claude Code Reliability**: `gpend` supports `--session-file` / `CCB_SESSION_FILE` to bypass wrong `cwd`
-
-### v4.0.4
-- **Fix**: Auto-repair duplicate `[projects.\"...\"]` entries in `~/.codex/config.toml` before starting Codex
-
-### v4.0.3
-- **Project Cleanliness**: Store session files under `.ccb/` (fallback to legacy root dotfiles)
-- **Claude Code Reliability**: `cask/gask/oask` support `--session-file` / `CCB_SESSION_FILE` to bypass wrong `cwd`
-- **Codex Config Safety**: Write auto-approval settings into a CCB-marked block to avoid config conflicts
-
-### v4.0.2
-- **Clipboard Paste**: Cross-platform support (xclip/wl-paste/pbpaste) in tmux config
-- **Install UX**: Auto-reload tmux config after installation
-- **Stability**: Default TMUX_ENTER_DELAY set to 0.5s for better reliability
-
-### v4.0.1
-- **Tokyo Night Theme**: Switch tmux status bar and pane borders to Tokyo Night color palette
-
-### v4.0
-- **Full Refactor**: Rebuilt from the ground up with a cleaner architecture
-- **Perfect tmux Support**: First-class splits, pane labels, borders and statusline
-- **Works in Any Terminal**: Recommended to run everything in tmux (except native Windows)
-
-### v3.0.0
-- **Smart Runtime Queue**: project askd with 60s idle timeout and provider queue support
-- **Cross-AI Collaboration**: Support multiple agents (Claude/Codex) calling one agent (OpenCode) simultaneously
-- **Interruption Detection**: Gemini now supports intelligent interruption handling
-- **Chained Execution**: Codex can call `oask` to drive OpenCode
-- **Stability**: Robust queue management and lock files
-
-### v2.3.9
-- Fix oask session tracking bug - follow new session when OpenCode creates one
-
-### v2.3.8
-- Plan mode enabled for autoflow projects regardless of `-a` flag
-
-### v2.3.7
-- Per-directory lock: different working directories can run cask/gask/oask independently
-
-### v2.3.6
-- Add non-blocking lock for cask/gask/oask to prevent concurrent requests
-- Unify oask with cask/gask logic (use _wait_for_complete_reply)
-
-### v2.3.5
-- Fix plan mode conflict with auto mode (--dangerously-skip-permissions)
-- Fix oask returning stale reply when OpenCode still processing
-
-### v2.3.4
-- Auto-enable plan mode when autoflow is installed
-
-### v2.3.3
-- Simplify cping.md to match oping/gping style (~65% token reduction)
-
-### v2.3.2
-- Optimize skill files: extract common patterns to docs/async-ask-pattern.md (~60% token reduction)
-
-### v2.3.1
-- Fix race condition in gask/cask: pre-check for existing messages before wait loop
-
-</details>
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
