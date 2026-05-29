@@ -18,31 +18,30 @@ Date: 2026-05-29
 - Discussed the full dynamic load/unload/replace direction and recorded the
   main safety risks: handler lock contention, stale handler service captures,
   unbounded draining, unbounded pending replacement, and namespace patch drift.
+- Established Phase 0 baseline diagnostics for control-plane handler latency,
+  heartbeat steps, project-view work, process metrics, and reload placeholders.
+- Introduced the Phase 1 config-bound service graph boundary used by startup,
+  with graph version and created-at diagnostics.
 
 ## In Progress
 
-- Define the phased execution plan, performance gates, dynamic unload/replace
-  behavior, and decision records in this plan root.
+- Architecture review for the Phase 1 service graph boundary before commit.
 
 ## Next
 
-1. Establish baseline metrics and gates in
-   [topics/performance-baseline-and-gates.md](topics/performance-baseline-and-gates.md).
-2. Add a config-bound service graph builder and non-blocking current-graph read
-   path.
-3. Change handlers to resolve current graph services at request time instead of
+1. Change handlers to resolve current graph services at request time instead of
    capturing old dispatcher/config/project-view objects.
-4. Add `ccb reload --dry-run` and `project_reload_config` dry-run mode:
+2. Add `ccb reload --dry-run` and `project_reload_config` dry-run mode:
    load/validate config, compute diff, report the execution plan, mutate
    nothing.
-5. Add bounded draining and retiring state machinery for unload, including
+3. Add bounded draining and retiring state machinery for unload, including
    queue limits, timeouts, and explicit failure responses.
-6. Add namespace additive/remove patch operations behind dry-run-proven plans.
-7. Expose additive mutating reload: view-only, add agent, and add window.
-8. Expose dynamic unload for idle and bounded-draining agents.
-9. Expose replacement only after unload semantics are safe; busy replacement
+4. Add namespace additive/remove patch operations behind dry-run-proven plans.
+5. Expose additive mutating reload: view-only, add agent, and add window.
+6. Expose dynamic unload for idle and bounded-draining agents.
+7. Expose replacement only after unload semantics are safe; busy replacement
    remains pending with explicit bounds.
-10. Run the automatic and manual matrix in
+8. Run the automatic and manual matrix in
     [topics/test-matrix.md](topics/test-matrix.md).
 
 ## Deferred

@@ -18,8 +18,33 @@ from cli.services.tmux_project_cleanup import cleanup_project_tmux_orphans_by_so
 
 
 class RuntimeSupervisor(SupervisorRuntimeStateMixin):
-    def __init__(self, *, project_root: Path, project_id: str, paths, config, registry, runtime_service, project_namespace: ProjectNamespaceController | None = None, clock=utc_now) -> None:
-        mount_manager = MountManager(paths, clock=clock)
+    def __init__(
+        self,
+        *,
+        project_root: Path,
+        project_id: str,
+        paths,
+        config,
+        registry,
+        runtime_service,
+        project_namespace: ProjectNamespaceController | None = None,
+        clock=utc_now,
+        mount_manager=None,
+        ownership_guard=None,
+        startup_report_store=None,
+        shutdown_report_store=None,
+        start_policy_store=None,
+    ) -> None:
+        if mount_manager is None:
+            mount_manager = MountManager(paths, clock=clock)
+        if ownership_guard is None:
+            ownership_guard = OwnershipGuard(paths, mount_manager, clock=clock)
+        if startup_report_store is None:
+            startup_report_store = CcbdStartupReportStore(paths)
+        if shutdown_report_store is None:
+            shutdown_report_store = CcbdShutdownReportStore(paths)
+        if start_policy_store is None:
+            start_policy_store = CcbdStartPolicyStore(paths)
         self._runtime_state = SupervisorRuntimeState(
             project_root=Path(project_root).expanduser().resolve(),
             project_id=project_id,
@@ -31,10 +56,10 @@ class RuntimeSupervisor(SupervisorRuntimeStateMixin):
             project_namespace=project_namespace,
             clock=clock,
             mount_manager=mount_manager,
-            ownership_guard=OwnershipGuard(paths, mount_manager, clock=clock),
-            startup_report_store=CcbdStartupReportStore(paths),
-            shutdown_report_store=CcbdShutdownReportStore(paths),
-            start_policy_store=CcbdStartPolicyStore(paths),
+            ownership_guard=ownership_guard,
+            startup_report_store=startup_report_store,
+            shutdown_report_store=shutdown_report_store,
+            start_policy_store=start_policy_store,
         )
 
     def start(

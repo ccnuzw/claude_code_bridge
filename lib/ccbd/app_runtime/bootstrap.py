@@ -5,31 +5,23 @@ import os
 import threading
 import uuid
 
-from agents.config_identity import project_config_identity_payload
 from agents.config_loader import load_project_config
 from agents.store import AgentRestoreStore
 from ccbd.lifecycle_report_store import CcbdShutdownReportStore, CcbdStartupReportStore
 from ccbd.metrics import ControlPlaneMetrics
-from ccbd.project_focus import ProjectFocusDependencies, ProjectFocusService
-from ccbd.project_view import ProjectViewDependencies, ProjectViewService, ProjectViewStateStore
+from ccbd.project_view import ProjectViewStateStore
 from ccbd.restore_report_store import CcbdRestoreReportStore
 from ccbd.services import (
-    AgentRegistry,
     CcbdLifecycleStore,
-    HealthMonitor,
-    JobDispatcher,
     JobHeartbeatService,
     MountManager,
     OwnershipGuard,
-    RuntimeService,
     SnapshotWriter,
 )
 from ccbd.services.project_namespace import ProjectNamespaceController
 from ccbd.services.project_namespace_state import ProjectNamespaceEventStore, ProjectNamespaceStateStore
 from ccbd.services.start_policy import CcbdStartPolicyStore
 from ccbd.socket_server import CcbdSocketServer
-from ccbd.supervision import RuntimeSupervisionLoop
-from ccbd.supervisor import RuntimeSupervisor
 from fault_injection import FaultInjectionService
 from heartbeat import HeartbeatPolicy, HeartbeatStateStore
 from project.ids import compute_project_id
@@ -42,6 +34,7 @@ from storage.text_artifacts import sweep_expired_text_artifacts
 
 from .handlers import register_handlers
 from .request_guard import lifecycle_is_stopping, rejection_for_request
+from .service_graph import CcbdServiceGraphDependencies, build_ccbd_service_graph
 
 APP_REQUEST_TIMEOUT_S = 0.0
 JOB_HEARTBEAT_SILENCE_START_AFTER_S = 600.0
@@ -56,8 +49,7 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
     sweep_expired_text_artifacts(app.paths)
     app.clock = clock
     app.pid = pid or os.getpid()
-    app.config = load_project_config(app.project_root).config
-    app.config_identity = project_config_identity_payload(app.config)
+    config = load_project_config(app.project_root).config
     keeper_pid = str(os.environ.get('CCB_KEEPER_PID') or '').strip()
     app.keeper_pid = int(keeper_pid) if keeper_pid.isdigit() and int(keeper_pid) > 0 else None
     app.daemon_instance_id = uuid.uuid4().hex
@@ -73,40 +65,8 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
     app.project_view_state_store = ProjectViewStateStore(app.paths, project_id=app.project_id)
     app.start_policy_store = CcbdStartPolicyStore(app.paths)
     app.ownership_guard = OwnershipGuard(app.paths, app.mount_manager, clock=app.clock)
-    app.registry = AgentRegistry(app.paths, app.config)
     app.restore_store = AgentRestoreStore(app.paths)
-    app.runtime_service = RuntimeService(
-        app.paths,
-        app.registry,
-        app.project_id,
-        app.restore_store,
-        daemon_generation_getter=lambda: app.lease.generation if app.lease is not None else None,
-        clock=app.clock,
-    )
     app.project_namespace = ProjectNamespaceController(app.paths, app.project_id, clock=app.clock)
-    app.runtime_supervisor = RuntimeSupervisor(
-        project_root=app.project_root,
-        project_id=app.project_id,
-        paths=app.paths,
-        config=app.config,
-        registry=app.registry,
-        runtime_service=app.runtime_service,
-        project_namespace=app.project_namespace,
-        clock=app.clock,
-    )
-    app.runtime_supervision = RuntimeSupervisionLoop(
-        project_id=app.project_id,
-        layout=app.paths,
-        config=app.config,
-        registry=app.registry,
-        runtime_service=app.runtime_service,
-        mount_agent_fn=app._mount_agent_from_policy,
-        remount_project_fn=app._remount_project_from_policy,
-        clock=app.clock,
-        generation_getter=lambda: app.lease.generation if app.lease is not None else None,
-        mount_missing_runtime_fn=lambda agent_name: app._mount_missing_runtime_requested(agent_name),
-        supervision_suspended_fn=lambda: lifecycle_is_stopping(_safe_load_lifecycle(app)),
-    )
     app.snapshot_writer = SnapshotWriter(app.paths, clock=app.clock)
     app.execution_registry = build_default_execution_registry()
     app.fault_injection = FaultInjectionService(app.paths, clock=app.clock)
@@ -116,52 +76,39 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         state_store=ExecutionStateStore(app.paths),
         fault_injection=app.fault_injection,
     )
-    from completion.tracker import CompletionTrackerService
-
-    app.completion_tracker = CompletionTrackerService(
-        app.config,
-        app.provider_catalog,
-        request_timeout_s=APP_REQUEST_TIMEOUT_S,
-    )
     app.control_plane_metrics = ControlPlaneMetrics()
-    app.dispatcher = JobDispatcher(
-        app.paths,
-        app.config,
-        app.registry,
-        runtime_service=app.runtime_service,
-        execution_service=app.execution_service,
-        auto_reply_delivery_on_complete=True,
-        require_actionable_runtime_binding_for_execution=True,
-        completion_tracker=app.completion_tracker,
-        provider_catalog=app.provider_catalog,
-        snapshot_writer=app.snapshot_writer,
-        timing_sink=app.control_plane_metrics,
-        clock=app.clock,
-    )
-    app.project_view_service = ProjectViewService(
-        ProjectViewDependencies(
+    app.lease = None
+    app.service_graph = build_ccbd_service_graph(
+        CcbdServiceGraphDependencies(
             project_root=app.project_root,
             project_id=app.project_id,
-            config=app.config,
-            registry=app.registry,
-            mount_manager=app.mount_manager,
-            namespace_state_store=app.namespace_state_store,
-            dispatcher=app.dispatcher,
-            namespace_controller=app.project_namespace,
-            state_store=app.project_view_state_store,
             paths=app.paths,
+            config=config,
+            provider_catalog=app.provider_catalog,
+            mount_manager=app.mount_manager,
+            lifecycle_store=app.lifecycle_store,
+            restore_store=app.restore_store,
+            namespace_state_store=app.namespace_state_store,
+            project_view_state_store=app.project_view_state_store,
+            project_namespace=app.project_namespace,
+            ownership_guard=app.ownership_guard,
+            startup_report_store=app.startup_report_store,
+            shutdown_report_store=app.shutdown_report_store,
+            start_policy_store=app.start_policy_store,
+            execution_service=app.execution_service,
+            snapshot_writer=app.snapshot_writer,
+            control_plane_metrics=app.control_plane_metrics,
             clock=app.clock,
-            metrics=app.control_plane_metrics,
+            request_timeout_s=APP_REQUEST_TIMEOUT_S,
+            daemon_generation_getter=lambda: app.lease.generation if app.lease is not None else None,
+            mount_agent_fn=app._mount_agent_from_policy,
+            remount_project_fn=app._remount_project_from_policy,
+            mount_missing_runtime_fn=lambda agent_name: app._mount_missing_runtime_requested(agent_name),
+            supervision_suspended_fn=lambda: lifecycle_is_stopping(_safe_load_lifecycle(app)),
+            version=1,
         )
     )
-    app.project_focus_service = ProjectFocusService(
-        ProjectFocusDependencies(
-            project_id=app.project_id,
-            config=app.config,
-            namespace_controller=app.project_namespace,
-            project_view_service=app.project_view_service,
-        )
-    )
+    _publish_service_graph_fields(app, app.service_graph)
     app.heartbeat_state_store = HeartbeatStateStore(app.paths)
     app.job_heartbeat = JobHeartbeatService(
         app.paths,
@@ -171,15 +118,6 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         ),
         store=app.heartbeat_state_store,
         clock=app.clock,
-    )
-    app.health_monitor = HealthMonitor(
-        app.registry,
-        app.ownership_guard,
-        project_id=app.project_id,
-        lifecycle_store=app.lifecycle_store,
-        runtime_service=app.runtime_service,
-        clock=app.clock,
-        namespace_state_store=app.namespace_state_store,
     )
     app.socket_server = CcbdSocketServer(app.paths.ccbd_socket_path)
     app.socket_server._record_request_queue_wait = lambda value: setattr(
@@ -197,7 +135,6 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         value,
     )
     app.socket_server.set_request_guard(lambda op: rejection_for_request(app, op))
-    app.lease = None
     app.project_stop_requested = False
     register_handlers(app)
 
@@ -207,6 +144,23 @@ def _safe_load_lifecycle(app):
         return app.lifecycle_store.load()
     except Exception:
         return None
+
+
+def _publish_service_graph_fields(app, graph) -> None:
+    app.config = graph.config
+    app.config_identity = graph.config_identity
+    app.registry = graph.registry
+    app.runtime_service = graph.runtime_service
+    app.runtime_supervisor = graph.runtime_supervisor
+    app.runtime_supervision = graph.runtime_supervision
+    app.completion_tracker = graph.completion_tracker
+    app.dispatcher = graph.dispatcher
+    app.project_view_service = graph.project_view_service
+    app.project_focus_service = graph.project_focus_service
+    app.health_monitor = graph.health_monitor
+    app.control_plane_metrics.service_graph_version = graph.version
+    app.control_plane_metrics.service_graph_created_at = graph.created_at
+    app.control_plane_metrics.service_graph_retained_count = 1
 
 
 __all__ = ['initialize_app']
