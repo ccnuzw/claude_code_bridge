@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.1.0-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.1.1-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -462,6 +462,16 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.1.1</b> - Sidebar View Height Release</summary>
+
+- Adds three configurable sidebar sections under `[ui.sidebar.view]`: `agents_height`, `comms_height`, and `tips_height`.
+- Changes the default native sidebar split to Agents `50%`, Comms `15%`, and Tips `35%`.
+- Carries the height settings through config parsing, project_view payloads, reload planning, and the Rust sidebar TUI.
+- Updates the inherited Codex/Claude `ccb-config` skill docs and references so generated or migrated windows topology exposes all three values.
+
+</details>
+
+<details>
 <summary><b>v7.1.0</b> - Dynamic Reload Release</summary>
 
 - Adds explicit hot reload for `.ccb/ccb.config`: use `ccb reload --dry-run` to preview and `ccb reload` to apply supported changes.

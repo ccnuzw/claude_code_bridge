@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v7.1.1 (2026-05-31)
+
+### Sidebar View Height Release
+
+- **Three Sidebar Heights Added**: `[ui.sidebar.view]` now supports `agents_height`, `comms_height`, and `tips_height` so projects can tune all native sidebar sections.
+- **Default Sidebar Split Updated**: default native sidebar layout is now Agents `50%`, Comms `15%`, and Tips `35%`.
+- **Project View And TUI Synced**: config parsing, project view payloads, reload planning, and the Rust sidebar TUI now carry and apply `tips_height` alongside the existing section heights.
+- **CCB Config Skill Updated**: inherited Codex/Claude `ccb-config` source docs and references now expose all three sidebar view height parameters when generating or migrating windows topology.
+
 ## v7.1.0 (2026-05-30)
 
 ### Dynamic Reload Release
