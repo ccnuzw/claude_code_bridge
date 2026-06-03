@@ -87,6 +87,8 @@ def test_write_install_metadata_avoids_bash4_parameter_expansion(tmp_path: Path)
             "CCB_BUILD_CHANNEL": "stable",
             "CCB_SOURCE_KIND": "release",
             "CCB_BUILD_TIME": "2026-05-04T00:00:00Z",
+            "CCB_TEST_EUID": "1000",
+            "CCB_TEST_USER_NAME": "runner",
         }
     )
     command = textwrap.dedent(
