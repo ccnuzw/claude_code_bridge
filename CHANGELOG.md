@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v7.2.3 (2026-06-03)
+
+### Root Install Support Validation Hotfix
+
+- **Root Install Support Preserved**: keeps the v7.2.2 root install confirmation gate, install identity metadata, and `ccb doctor` runtime identity diagnostics intact.
+- **WSL Release Validation Fixed**: install metadata tests now explicitly simulate a non-root user when validating metadata quoting, so WSL runners that execute as root no longer fail the release matrix for environment-dependent reasons.
+
 ## v7.2.2 (2026-06-03)
 
 ### Root Install Confirmation Release

@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.2.2-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.2.3-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -518,6 +518,15 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.2.3</b> - Root Install Support Validation Hotfix</summary>
+
+- Keeps the root install confirmation behavior from v7.2.2: root installs require explicit confirmation, while uninstall remains ungated.
+- Preserves install identity metadata and `ccb doctor` runtime user/owner/root diagnostics.
+- Fixes WSL release validation by making install metadata tests explicitly simulate non-root identity where required.
+
+</details>
+
+<details>
 <summary><b>v7.2.2</b> - Root Install Confirmation Release</summary>
 
 - Adds an explicit root install confirmation gate: `install.sh install` refuses root by default, accepts interactive `yes`, and requires `CCB_ALLOW_ROOT_INSTALL=1` for non-interactive root installs.
