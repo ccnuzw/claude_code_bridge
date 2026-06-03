@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.2.7-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.2.8-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -519,7 +519,7 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
-<summary><b>v7.2.7</b> - Agent Roles Catalog Release</summary>
+<summary><b>v7.2.8</b> - Agent Roles Catalog Release</summary>
 
 - Moves the production architecture role out of the CCB source tree and consumes `agentroles.archi` from `agent-roles-spec`.
 - Adds catalog-backed role list/install/update/sync/add/doctor behavior with installed-role metadata, project locks, digest pinning, and explicit re-add updates.
@@ -528,6 +528,14 @@ v7 highlights:
 - Fixes the source runtime guard so `ccb --project <allowed-test-dir> ...` smoke commands launched from the source checkout pass the release gate.
 - Passes generated soak, fastpath, and storage cleanup smoke roots through `CCB_SOURCE_ALLOWED_ROOTS`.
 - Passes the WSL mounted startup smoke project under `/mnt/c/Temp` through `CCB_SOURCE_ALLOWED_ROOTS`.
+- Hardens the Claude restart provider blackbox test to wait for the running partial reply before asserting it.
+
+</details>
+
+<details>
+<summary><b>v7.2.7</b> - Superseded WSL Mounted Smoke Hotfix</summary>
+
+- Superseded by v7.2.8 after the release gate found a provider blackbox timing race in the Claude restart partial-reply assertion.
 
 </details>
 

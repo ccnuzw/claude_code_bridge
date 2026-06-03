@@ -4814,9 +4814,16 @@ def test_ccb_claude_real_adapter_recovers_after_ccbd_restart_rotate_and_subagent
         else:
             raise AssertionError('expected assistant_chunk before restart')
 
-        running = _wait_for_phase2_status(project_root, 'demo', 'running')
+        deadline = time.time() + 5.0
+        running = ''
+        while time.time() < deadline:
+            running = _wait_for_phase2_status(project_root, 'demo', 'running')
+            if 'reply: old partial\nold child work' in running:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f'expected running partial reply before restart; last output={running!r}')
         assert f'job_id: {job_id}' in running
-        assert 'reply: old partial\nold child work' in running
         assert 'completion_reason: None' in running
 
         app1.request_shutdown()

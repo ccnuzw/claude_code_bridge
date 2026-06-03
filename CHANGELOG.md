@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v7.2.7 (2026-06-04)
+## v7.2.8 (2026-06-04)
 
 ### Agent Roles Catalog Release
 
@@ -14,6 +14,13 @@
 - **Source Runtime Guard Fixed**: source checkout commands that pass `--project` now validate the target project against allowed test roots, restoring CCBD communication smoke checks launched from the source checkout.
 - **Official Smoke Roots Fixed**: real-platform soak, fastpath, and storage cleanup smoke checks now pass their generated test roots through `CCB_SOURCE_ALLOWED_ROOTS`.
 - **WSL Mounted Startup Smoke Fixed**: the main Tests workflow now passes the generated `/mnt/c/Temp` startup-smoke project through `CCB_SOURCE_ALLOWED_ROOTS`.
+- **Provider Blackbox Wait Hardened**: the Claude restart blackbox test now waits for the running partial reply to be reflected before asserting it.
+
+## v7.2.7 (2026-06-04)
+
+### Superseded WSL Mounted Smoke Hotfix
+
+- Superseded by v7.2.8 after the release gate found a provider blackbox timing race in the Claude restart partial-reply assertion.
 
 ## v7.2.6 (2026-06-04)
 
