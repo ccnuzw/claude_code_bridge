@@ -515,9 +515,8 @@ v7 线重点：
 <summary><b>v7.2.12</b> - Agent Roles Store Migration Release</summary>
 
 - 默认使用外部 `agent-roles` package manager 执行 Role Pack install、update 和 sync。
-- Role Pack payload 默认写入 spec-owned `.roles/installed` store，`$XDG_DATA_HOME/ccb/roles` 仅作为 legacy fallback。
-- 自动将已有 legacy installed role snapshot 复制到 `.roles/installed`，不删除旧 store，并保留 project lock digest 解析能力。
-- 保留 `CCB_AGENT_ROLES_MANAGER=0` / `legacy` / `ccb` 作为临时故障回退开关。
+- Role Pack payload 默认写入 spec-owned `.roles/installed` store。
+- 自动将已有 legacy installed role snapshot 复制到 `.roles/installed`，不删除旧 store；迁移后 runtime lookup 只读取 spec-owned store。
 - `ccb roles update --path ...` 也会通过 Agent Roles manager，path update 不再写 legacy CCB store。
 - Supersede v7.2.11；v7.2.11 是未完成的 opt-in preview 发布，不应作为推荐版本使用。
 

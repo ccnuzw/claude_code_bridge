@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from agents.config_loader import load_project_config
-from agents.config_loader_runtime.role_lookup import role_store_root, role_store_roots
+from agents.config_loader_runtime.role_lookup import role_store_roots
 from agents.models import normalize_agent_name
 from project_memory.types import ProjectMemorySource
 from role_aliases import role_id_candidates
@@ -266,7 +266,6 @@ __all__ = [
     'project_role_memory_sources',
     'project_role_skill_sources',
     'resolve_project_agent_role',
-    'role_store_root',
     'role_store_roots',
     'tree_digest',
 ]

@@ -131,25 +131,26 @@ then adds CCB-specific behavior:
 `ccb roles add` remains CCB-owned because it mutates `.ccb/ccb.config` and
 `.ccb/role-lock.json`.
 
-Delegation is default-on in CCB. `CCB_AGENT_ROLES_MANAGER=0`, `legacy`, or `ccb`
-is a temporary rollback valve for troubleshooting, not the normal release path.
+Delegation is unconditional in CCB. The CCB-private installed-role writer and
+`CCB_AGENT_ROLES_MANAGER` rollback switch are removed so role payload writes have
+one owner: `agent-roles`.
 
 ## Migration Sequence
 
 1. Done: specify the `agent-roles` package-manager CLI/API and `.roles`
    metadata in `agent-roles-spec`.
-2. Done: add CCB compatibility reads for both `$XDG_DATA_HOME/ccb/roles/` and
-   `.roles/installed`.
-3. Done: make `ccb roles install/update/sync` call `agent-roles` by default for
-   package payload operations while preserving CCB output and tool-hook policy.
+2. Done: add CCB compatibility reads for `.roles/installed`.
+3. Done: make `ccb roles install/update/sync` call `agent-roles` for package
+   payload operations while preserving CCB output and tool-hook policy.
 4. Done: copy legacy installed role snapshots into `.roles/installed` at CCB
    management boundaries, including legacy `ccb.archi` aliases.
-5. Next: validate old-version upgrades with existing project locks and stale
+5. Done: remove the CCB-private installed role writer, remove the rollback
+   switch, and make runtime lookup use `.roles/installed` as the only installed
+   role store.
+6. Next: validate old-version upgrades with existing project locks and stale
    `source_path` metadata.
-6. Next: move migration ownership from the CCB compatibility bridge into
+7. Next: move migration ownership from the CCB compatibility bridge into
    `agent-roles` once the package manager exposes a stable migration command.
-7. Later: remove the CCB-private installed role writer after at least one release
-   cycle with the rollback valve.
 
 ## Non-Goals
 
@@ -166,8 +167,8 @@ is a temporary rollback valve for troubleshooting, not the normal release path.
   the JSON protocol is strict and versioned.
 - A library API may tempt CCB runtime paths to import management code; import
   boundary tests remain required.
-- A dual-store migration can confuse users unless diagnostics clearly show
-  whether a role came from the legacy CCB store or the spec-owned store.
+- Legacy migration can confuse users unless diagnostics clearly distinguish
+  migration input from the active `.roles/installed` store.
 - Tool hook ownership must stay explicit: role packages declare hooks, but CCB
   decides whether running them is allowed or required in a CCB update/install
   context.

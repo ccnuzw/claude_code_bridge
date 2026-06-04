@@ -2,13 +2,22 @@
 
 ## Unreleased
 
+- **Role Store Flow Simplified**: CCB now uses the Agent Roles manager as the
+  only Role Pack writer and reads installed roles only from `.roles/installed`.
+  The old CCB-owned writer and `CCB_AGENT_ROLES_MANAGER` rollback switch were
+  removed.
+- **Legacy Store Is Migration-Only**: existing `$XDG_DATA_HOME/ccb/roles`
+  snapshots are copied into `.roles/installed` at management boundaries, but
+  runtime lookup no longer falls back to the legacy store.
+- **Role Add Aligned**: `ccb roles add` now auto-installs missing system-source
+  roles through `agent-roles --path`, so it cannot write the legacy CCB store.
+
 ## v7.2.12 (2026-06-04)
 
 ### Agent Roles Store Migration Release
 
 - **Agent Roles Manager Default Enabled**: Role Pack install, update, and sync now use the external `agent-roles` package manager and write role payloads into the spec-owned `.roles/installed` store by default.
 - **Legacy Store Migration Added**: existing `$XDG_DATA_HOME/ccb/roles` installed snapshots are copied into `.roles/installed` at Role Pack management boundaries without deleting the old store, preserving existing project lock digest resolution.
-- **Compatibility Rollback Kept**: `CCB_AGENT_ROLES_MANAGER=0`, `legacy`, or `ccb` temporarily restores the old CCB-owned writer for troubleshooting.
 - **Path Update Aligned**: `ccb roles update --path ...` now also routes through the Agent Roles manager and writes `.roles/installed` instead of the legacy CCB store.
 - **Sync Validation Hardened**: malformed `agent-roles sync --json` role rows now fail closed, while `ccb roles sync --with-tools` composes manager-owned payload sync with CCB-owned tool hook execution.
 - **Role Config Guidance Updated**: inherited `ccb-config` skill docs now describe `.roles/installed` as the default package store while keeping `.ccb/ccb.config` limited to canonical role ids.

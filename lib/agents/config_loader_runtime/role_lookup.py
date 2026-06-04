@@ -32,18 +32,7 @@ def agent_roles_installed_root() -> Path:
 
 
 def role_store_roots() -> tuple[Path, ...]:
-    roots: list[Path] = []
-    seen: set[Path] = set()
-    for root in (agent_roles_installed_root(), role_store_root()):
-        try:
-            resolved = root.expanduser().resolve()
-        except Exception:
-            resolved = root.expanduser()
-        if resolved in seen:
-            continue
-        roots.append(root)
-        seen.add(resolved)
-    return tuple(roots)
+    return (agent_roles_installed_root(),)
 
 
 def normalize_role_id(value: str) -> str:
@@ -83,7 +72,7 @@ def load_installed_role_manifest(role_id: str) -> tuple[Path, dict[str, Any]]:
         if role_root is not None:
             break
     if role_root is None or root is None:
-        root = role_store_root() / role_id
+        root = agent_roles_installed_root() / role_id
         role_root = root
     manifest_path = role_root / 'role.toml'
     if not manifest_path.exists():

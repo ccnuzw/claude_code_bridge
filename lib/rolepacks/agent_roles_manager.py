@@ -15,13 +15,6 @@ class AgentRolesManagerError(ValueError):
     pass
 
 
-def manager_enabled() -> bool:
-    value = str(os.environ.get('CCB_AGENT_ROLES_MANAGER') or '').strip().lower()
-    if value in {'0', 'false', 'no', 'off', 'legacy', 'ccb'}:
-        return False
-    return True
-
-
 def install(role_id: str | None, *, source_path: Path | None = None) -> dict[str, object]:
     args = ['install']
     if role_id:
@@ -137,7 +130,7 @@ def _agent_roles_source_root() -> Path | None:
 
 
 def _timeout_seconds() -> float:
-    raw = str(os.environ.get('CCB_AGENT_ROLES_MANAGER_TIMEOUT_SECONDS') or '120').strip()
+    raw = str(os.environ.get('CCB_AGENT_ROLES_TIMEOUT_SECONDS') or '120').strip()
     try:
         return max(1.0, float(raw))
     except ValueError:
@@ -147,7 +140,6 @@ def _timeout_seconds() -> float:
 __all__ = [
     'AgentRolesManagerError',
     'install',
-    'manager_enabled',
     'sync',
     'update',
 ]

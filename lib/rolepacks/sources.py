@@ -10,7 +10,7 @@ import subprocess
 from typing import Any
 
 from agents.config_loader_runtime.role_lookup import agent_roles_installed_root, role_store_root, role_store_roots
-from role_aliases import legacy_role_ids, role_id_candidates
+from role_aliases import role_id_candidates
 from storage.atomic import atomic_write_text
 
 from .manifest import load_role_manifest, normalize_role_id
@@ -41,7 +41,20 @@ class SourceRole:
 
 
 def source_registry_path() -> Path:
-    return role_store_root() / 'sources.json'
+    path = agent_roles_installed_root().parent / 'sources.json'
+    _migrate_legacy_source_registry(path)
+    return path
+
+
+def _migrate_legacy_source_registry(target: Path) -> None:
+    legacy = role_store_root() / 'sources.json'
+    if _same_path(target, legacy) or target.is_file() or not legacy.is_file():
+        return
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, target)
+    except Exception:
+        return
 
 
 def default_agent_roles_source(*, refresh: bool = False) -> Path | None:
@@ -368,31 +381,6 @@ def _same_path(left: Path, right: Path) -> bool:
         return left.expanduser() == right.expanduser()
 
 
-def repair_installed_role_store(role_id: str, *, source_role: SourceRole | None = None) -> None:
-    _canonicalize_installed_role_store(role_id, source_role=source_role)
-
-
-def _canonicalize_installed_role_store(role_id: str, *, source_role: SourceRole | None = None) -> None:
-    canonical_id = normalize_role_id(role_id)
-    root = role_store_root()
-    canonical_dir = root / canonical_id
-    for legacy_id in legacy_role_ids(canonical_id):
-        legacy_dir = root / legacy_id
-        if not legacy_dir.is_dir():
-            continue
-        try:
-            if not canonical_dir.exists():
-                shutil.copytree(legacy_dir, canonical_dir, symlinks=True)
-            else:
-                _copy_missing_legacy_install_files(legacy_dir, canonical_dir)
-            _rewrite_canonical_install_metadata(canonical_dir, canonical_id, source_role=source_role)
-        except Exception:
-            return
-        return
-    if canonical_dir.is_dir():
-        _rewrite_canonical_install_metadata(canonical_dir, canonical_id, source_role=source_role)
-
-
 def _copy_missing_legacy_install_files(legacy_dir: Path, canonical_dir: Path) -> None:
     canonical_dir.mkdir(parents=True, exist_ok=True)
     for name in ('install.json', 'versions', 'current'):
@@ -408,34 +396,6 @@ def _copy_missing_legacy_install_files(legacy_dir: Path, canonical_dir: Path) ->
             shutil.copytree(source, target, symlinks=True)
         else:
             shutil.copy2(source, target)
-
-
-def _rewrite_canonical_install_metadata(
-    role_dir: Path,
-    canonical_id: str,
-    *,
-    source_role: SourceRole | None = None,
-) -> None:
-    path = role_dir / 'install.json'
-    try:
-        payload = json.loads(path.read_text(encoding='utf-8'))
-    except Exception:
-        return
-    if not isinstance(payload, dict):
-        return
-    changed = False
-    if str(payload.get('id') or '').strip() != canonical_id:
-        payload['id'] = canonical_id
-        changed = True
-    source_path = str(payload.get('source_path') or '').strip()
-    source_missing = not source_path or not Path(source_path).expanduser().is_dir()
-    if source_missing and source_role is not None:
-        payload['source'] = source_role.source
-        payload['source_path'] = str(source_role.path)
-        changed = True
-    if changed:
-        atomic_write_text(path, json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + '\n')
-    _repair_current_pointer(role_dir, payload)
 
 
 def _repair_current_pointer(role_dir: Path, metadata: dict[str, Any]) -> None:
@@ -466,8 +426,6 @@ def _repair_current_pointer(role_dir: Path, metadata: dict[str, Any]) -> None:
 def role_catalog_status(*, refresh_default: bool = False) -> tuple[dict[str, object], ...]:
     source_roles = {role.role_id: role for role in discover_source_roles(refresh_default=refresh_default)}
     migrate_legacy_installed_roles()
-    for role_id, source_role in source_roles.items():
-        _canonicalize_installed_role_store(role_id, source_role=source_role)
     installed = set(installed_role_ids())
     rows: list[dict[str, object]] = []
     for role_id, source_role in sorted(source_roles.items()):
@@ -713,7 +671,6 @@ __all__ = [
     'installed_role_ids',
     'installed_role_metadata',
     'load_role_sources',
-    'repair_installed_role_store',
     'remove_role_source',
     'role_catalog_status',
     'source_registry_path',

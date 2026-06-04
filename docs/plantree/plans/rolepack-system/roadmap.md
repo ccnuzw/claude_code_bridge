@@ -87,20 +87,21 @@ Date: 2026-06-01
 - Added the first executable `agent-roles` package-manager slice in
   `agent-roles-spec`: `.roles/installed` store, JSON package commands, and the
   `ccb.archi -> agentroles.archi` alias.
-- Added the first CCB compatibility bridge: runtime/config lookup can read both
-  spec-owned `AGENT_ROLES_STORE` or `~/.roles/installed` and legacy
-  `$XDG_DATA_HOME/ccb/roles`; `ccb roles install/update/sync` now delegates role
-  payload operations to `agent-roles` by default, while
-  `CCB_AGENT_ROLES_MANAGER=0` remains a temporary rollback valve.
+- Added the CCB compatibility bridge: `ccb roles install/update/sync` delegates
+  role payload operations to `agent-roles`, and runtime/config lookup reads the
+  spec-owned `AGENT_ROLES_STORE` or `~/.roles/installed` installed store.
 - Added automatic legacy installed-role migration from
   `$XDG_DATA_HOME/ccb/roles` into `.roles/installed` at CCB role-management
-  boundaries. The legacy store is preserved as fallback, but `.roles/installed`
-  is the preferred read/write path.
+  boundaries. The legacy store is migration input only; `.roles/installed` is
+  the single runtime read path.
+- Removed the CCB-private installed role writer and
+  `CCB_AGENT_ROLES_MANAGER` rollback switch so role payload writes have one
+  owner.
 
 ## In Progress
 
-- Validate the default-on spec-owned package manager bridge and legacy store
-  migration across old-version upgrade scenarios before release.
+- Validate the single-store spec-owned package manager bridge and legacy store
+  copy migration across old-version upgrade scenarios before release.
 
 ## Next
 

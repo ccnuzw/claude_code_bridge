@@ -522,9 +522,8 @@ v7 highlights:
 <summary><b>v7.2.12</b> - Agent Roles Store Migration Release</summary>
 
 - Uses the external `agent-roles` package manager by default for Role Pack install, update, and sync.
-- Writes Role Pack payloads into the spec-owned `.roles/installed` store, with `$XDG_DATA_HOME/ccb/roles` kept as a legacy fallback.
-- Copies existing legacy installed role snapshots into `.roles/installed` without deleting the old store, preserving project lock digest resolution.
-- Keeps `CCB_AGENT_ROLES_MANAGER=0` / `legacy` / `ccb` as a temporary rollback valve for troubleshooting.
+- Writes Role Pack payloads into the spec-owned `.roles/installed` store.
+- Copies existing legacy installed role snapshots into `.roles/installed` without deleting the old store; runtime lookup reads the spec-owned store only after migration.
 - Routes `ccb roles update --path ...` through the Agent Roles manager so path updates also write `.roles/installed`.
 - Supersedes v7.2.11, which was an incomplete opt-in preview release and should not be used as the recommended release.
 
