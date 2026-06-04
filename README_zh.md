@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.2.10-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.2.11-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **中文** | [English](README.md)
@@ -512,6 +512,16 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.2.11</b> - Agent Roles Manager Bridge Preview</summary>
+
+- 新增 opt-in `agent-roles` manager bridge：设置 `CCB_AGENT_ROLES_MANAGER=1` 后，`ccb roles install`、`ccb roles update`、`ccb roles sync` 可委托外部 `agent-roles` CLI 处理 role payload。
+- 默认路径不变：不设置 preview flag 时，CCB 仍使用现有 CCB-owned role store。
+- runtime/config lookup 可同时解析 legacy `$XDG_DATA_HOME/ccb/roles` 安装和 spec-owned `AGENT_ROLES_STORE` / `~/.roles/installed` 安装，runtime lookup 不加载 manager bridge。
+- Preview 用户应设置 `AGENT_ROLES_CLI` 或把 `agent-roles` 放入 `PATH`；项目配置应绑定 canonical role id，而不是本地 store path。
+
+</details>
+
+<details>
 <summary><b>v7.2.10</b> - Role Pack Post-Update Hotfix</summary>
 
 - 修复 managed `ccb update`：可选 Role Pack 和 Neovim provisioning 现在会交给新安装的 `ccb __post-update` entrypoint 执行，不再由旧 updater 进程继续跑。

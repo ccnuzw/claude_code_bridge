@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v7.2.11 (2026-06-04)
+
+### Agent Roles Manager Bridge Preview
+
+- **Opt-In Agent Roles Manager Bridge Added**: `ccb roles install`, `ccb roles update`, and `ccb roles sync` can delegate role payload operations to the external `agent-roles` CLI when `CCB_AGENT_ROLES_MANAGER=1` is set.
+- **Default Role Store Behavior Preserved**: the bridge is off by default, so normal CCB installs continue to use the existing CCB-owned role store unless users explicitly enable the preview.
+- **Spec-Owned Store Lookup Added**: runtime/config role lookup can resolve both legacy `$XDG_DATA_HOME/ccb/roles` installs and spec-owned `AGENT_ROLES_STORE` / `~/.roles/installed` installs without importing the manager bridge at runtime.
+- **Preview Setup Documented**: release users should provide `AGENT_ROLES_CLI` or put `agent-roles` on `PATH`; role config guidance now uses canonical role ids rather than local store paths.
+
 ## v7.2.10 (2026-06-04)
 
 ### Role Pack Post-Update Hotfix

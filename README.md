@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.2.10-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.2.11-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -519,6 +519,16 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.2.11</b> - Agent Roles Manager Bridge Preview</summary>
+
+- Adds an opt-in `agent-roles` manager bridge for `ccb roles install`, `ccb roles update`, and `ccb roles sync` when `CCB_AGENT_ROLES_MANAGER=1` is set.
+- Keeps the default path unchanged: without the preview flag, CCB continues to use its existing CCB-owned role store.
+- Lets runtime/config lookup resolve both legacy `$XDG_DATA_HOME/ccb/roles` installs and spec-owned `AGENT_ROLES_STORE` / `~/.roles/installed` installs without loading the manager bridge at runtime.
+- Preview users should set `AGENT_ROLES_CLI` or place `agent-roles` on `PATH`; project config should bind canonical role ids rather than local store paths.
+
+</details>
+
+<details>
 <summary><b>v7.2.10</b> - Role Pack Post-Update Hotfix</summary>
 
 - Fixes managed `ccb update` so optional Role Pack and Neovim provisioning runs through the newly installed `ccb __post-update` entrypoint instead of the old updater process.
