@@ -424,12 +424,45 @@ def test_post_update_required_roles_catalog_unavailable_returns_failure(
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("catalog down")),
     )
     monkeypatch.setattr(update_runtime, "_provision_neovim_after_update", lambda: None)
+    monkeypatch.setattr(update_runtime, "set_tmux_ui_active", lambda active: None)
 
     code = update_runtime._run_post_update_provisioning(install_dir=tmp_path / "install")
 
     captured = capsys.readouterr()
     assert code == 1
     assert "Agent Roles catalog unavailable" in captured.out
+
+
+def test_post_update_refreshes_tmux_ui_without_affecting_provisioning(monkeypatch, tmp_path: Path, capsys) -> None:
+    _clear_post_update_env(monkeypatch)
+    calls: list[bool] = []
+    monkeypatch.setenv("CCB_INSTALL_ROLES", "0")
+    monkeypatch.setenv("CCB_INSTALL_NEOVIM", "0")
+    monkeypatch.setattr(update_runtime, "set_tmux_ui_active", lambda active: calls.append(active))
+
+    code = update_runtime._run_post_update_provisioning(install_dir=tmp_path / "install")
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert calls == [True]
+    assert "Tmux UI post-update refresh skipped" not in captured.out
+
+
+def test_post_update_tmux_ui_refresh_failure_is_non_blocking(monkeypatch, tmp_path: Path, capsys) -> None:
+    _clear_post_update_env(monkeypatch)
+    monkeypatch.setenv("CCB_INSTALL_ROLES", "0")
+    monkeypatch.setenv("CCB_INSTALL_NEOVIM", "0")
+    monkeypatch.setattr(
+        update_runtime,
+        "set_tmux_ui_active",
+        lambda active: (_ for _ in ()).throw(RuntimeError("tmux unavailable")),
+    )
+
+    code = update_runtime._run_post_update_provisioning(install_dir=tmp_path / "install")
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "Tmux UI post-update refresh skipped: RuntimeError: tmux unavailable" in captured.out
 
 
 def test_post_update_required_installed_role_update_failure_returns_failure(monkeypatch, tmp_path: Path, capsys) -> None:

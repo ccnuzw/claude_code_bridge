@@ -14,11 +14,82 @@ if [[ -z "$session" ]]; then
 fi
 
 bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-status_script="$bin_dir/ccb-status.sh"
-border_script="$bin_dir/ccb-border.sh"
-git_script="$bin_dir/ccb-git.sh"
+
+realpath_portable() {
+  local path="$1"
+  local py=""
+  py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  if [[ -n "$py" ]]; then
+    "$py" - "$path" <<'PY' 2>/dev/null && return 0
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).expanduser().resolve())
+PY
+  fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$path" 2>/dev/null && return 0
+  fi
+  printf '%s\n' "$path"
+}
+
+config_script_from_root() {
+  local root="$1"
+  local script_name="$2"
+  [[ -n "$root" ]] || return 1
+  local candidate="$root/config/$script_name"
+  if [[ -f "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+config_script_from_ccb() {
+  local ccb_path="$1"
+  local script_name="$2"
+  [[ -n "$ccb_path" && -f "$ccb_path" ]] || return 1
+  ccb_path="$(realpath_portable "$ccb_path")"
+  local ccb_root
+  ccb_root="$(cd "$(dirname "$ccb_path")" && pwd)"
+  config_script_from_root "$ccb_root" "$script_name" && return 0
+  config_script_from_root "$(cd "$ccb_root/.." 2>/dev/null && pwd)" "$script_name" && return 0
+  return 1
+}
+
+resolve_config_script() {
+  local script_name="$1"
+  if [[ -n "${CODEX_INSTALL_PREFIX:-}" ]]; then
+    config_script_from_root "$CODEX_INSTALL_PREFIX" "$script_name" && return 0
+  fi
+  local path_ccb=""
+  path_ccb="$(command -v ccb 2>/dev/null || true)"
+  if [[ -n "$path_ccb" ]]; then
+    config_script_from_ccb "$path_ccb" "$script_name" && return 0
+  fi
+  config_script_from_root "$bin_dir/.." "$script_name" && return 0
+  if [[ -f "$bin_dir/$script_name" ]]; then
+    printf '%s\n' "$bin_dir/$script_name"
+    return 0
+  fi
+  command -v "$script_name" 2>/dev/null || true
+}
+
+status_script="$(resolve_config_script ccb-status.sh)"
+border_script="$(resolve_config_script ccb-border.sh)"
+git_script="$(resolve_config_script ccb-git.sh)"
 
 resolve_ccb_exec() {
+  if [[ -n "${CODEX_INSTALL_PREFIX:-}" && -x "$CODEX_INSTALL_PREFIX/ccb" ]]; then
+    printf '%s\n' "$CODEX_INSTALL_PREFIX/ccb"
+    return 0
+  fi
+  local path_ccb=""
+  path_ccb="$(command -v ccb 2>/dev/null || true)"
+  if [[ -n "$path_ccb" && -f "$path_ccb" ]]; then
+    realpath_portable "$path_ccb"
+    return 0
+  fi
   if [[ -x "$bin_dir/ccb" ]]; then
     printf '%s\n' "$bin_dir/ccb"
     return 0
@@ -194,7 +265,9 @@ if [[ -n "${CCB_TMUX_RENDERED_WINDOW_ACTIVE_STYLE:-}" ]]; then
 fi
 
 # Dynamic active-border color based on active pane agent (per-session hook).
-tmux set-hook -t "$session" after-select-pane "run-shell \"${border_script} \\\"#{pane_id}\\\"\"" >/dev/null 2>&1 || true
+if [[ -n "$border_script" ]]; then
+  tmux set-hook -t "$session" after-select-pane "run-shell -b \"[ -x \\\"${border_script}\\\" ] || exit 0; exec \\\"${border_script}\\\" \\\"#{pane_id}\\\"\"" >/dev/null 2>&1 || true
+fi
 
 # Apply once for current active pane (best-effort).
 pane_id="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"

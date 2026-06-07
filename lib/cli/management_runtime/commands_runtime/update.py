@@ -31,6 +31,12 @@ POST_UPDATE_TIMEOUT_SECONDS = 300.0
 ENTRYPOINT_SMOKE_TIMEOUT_SECONDS = 30.0
 
 
+def set_tmux_ui_active(active: bool) -> None:
+    from cli.services.tmux_ui import set_tmux_ui_active as _set_tmux_ui_active
+
+    _set_tmux_ui_active(active)
+
+
 def cmd_update(args, *, script_root: Path) -> int:
     supported, reason = _supported_update_platform()
     if not supported:
@@ -324,6 +330,10 @@ def _truthy_env(name: str) -> bool:
 
 def _run_post_update_provisioning(*, install_dir: Path) -> int:
     failures = 0
+    try:
+        set_tmux_ui_active(True)
+    except Exception as exc:
+        print(f"⚠️  Tmux UI post-update refresh skipped: {type(exc).__name__}: {exc}")
     try:
         failures += int(_update_builtin_roles_after_update(install_dir=install_dir) or 0)
     except Exception as exc:

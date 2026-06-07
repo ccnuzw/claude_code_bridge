@@ -119,6 +119,8 @@ def test_apply_project_tmux_ui_sets_session_theme_and_hook_from_current_install_
     assert any(
         call[:4] == ['set-hook', '-t', 'ccb-demo', 'after-select-pane']
         and 'ccb-border.sh' in call[4]
+        and '[ -x ' in call[4]
+        and 'run-shell -b' in call[4]
         for call in calls
     )
     sidebar_mouse_bindings = [
@@ -234,6 +236,73 @@ fi
     calls = log_path.read_text(encoding='utf-8')
     assert 'list-panes' not in calls
     assert 'set-option -p -t %0 pane-active-border-style fg=#6c7086' in calls
+
+
+def test_tmux_on_script_prefers_stable_install_config_for_border_hook(tmp_path: Path) -> None:
+    release_root = tmp_path / 'ccb-v7.3.4-release.fake'
+    release_config = release_root / 'config'
+    release_config.mkdir(parents=True)
+    on_script = release_config / 'ccb-tmux-on.sh'
+    on_script.write_text(Path('config/ccb-tmux-on.sh').read_text(encoding='utf-8'), encoding='utf-8')
+    on_script.chmod(0o755)
+    for script_name in ('ccb-status.sh', 'ccb-border.sh', 'ccb-git.sh'):
+        script = release_config / script_name
+        script.write_text('#!/usr/bin/env bash\nexit 0\n', encoding='utf-8')
+        script.chmod(0o755)
+
+    install_root = tmp_path / 'installed'
+    install_config = install_root / 'config'
+    install_config.mkdir(parents=True)
+    installed_border = install_config / 'ccb-border.sh'
+    for script_name in ('ccb-status.sh', 'ccb-border.sh', 'ccb-git.sh'):
+        script = install_config / script_name
+        script.write_text('#!/usr/bin/env bash\nexit 0\n', encoding='utf-8')
+        script.chmod(0o755)
+    installed_ccb = install_root / 'ccb'
+    installed_ccb.write_text('#!/usr/bin/env bash\necho v9.9.9\n', encoding='utf-8')
+    installed_ccb.chmod(0o755)
+
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    log_path = tmp_path / 'tmux.log'
+    fake_tmux = fake_bin / 'tmux'
+    fake_tmux.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> {log_path}
+if [[ "$1" == "display-message" && "$2" == "-p" ]]; then
+  case "${{@: -1}}" in
+    "#{{session_name}}") printf '%s\\n' 'ccb-demo' ;;
+    "#{{pane_id}}") printf '%s\\n' '%1' ;;
+    *) printf '\\n' ;;
+  esac
+fi
+exit 0
+""",
+        encoding='utf-8',
+    )
+    fake_tmux.chmod(0o755)
+
+    proc = subprocess.run(
+        [str(on_script)],
+        env={
+            **os.environ,
+            'PATH': f'{fake_bin}:{os.environ.get("PATH", "")}',
+            'TMUX': '/tmp/tmux-1/default,123,0',
+            'CODEX_INSTALL_PREFIX': str(install_root),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    calls = log_path.read_text(encoding='utf-8')
+    assert str(installed_border) in calls
+    assert str(release_config / 'ccb-border.sh') not in calls
+    assert 'after-select-pane run-shell -b' in calls
+    assert '[ -x ' in calls
 
 
 def test_detect_ccb_version_prefers_current_install_over_path(monkeypatch, tmp_path: Path) -> None:

@@ -176,7 +176,7 @@ def _apply_pane_theme(backend, *, session_name: str, border_script: str | None, 
         for option, value in options.items():
             tmux_run(backend, ['set-window-option', '-t', target, option, value])
     if border_script is not None:
-        hook = f'run-shell "{border_script} \\"#{{pane_id}}\\""'
+        hook = _border_hook_command(border_script)
         tmux_run(backend, ['set-hook', '-t', session_name, 'after-select-pane', hook])
 
 
@@ -193,6 +193,12 @@ def _apply_active_pane_border(backend, *, session_name: str) -> None:
         backend,
         ['set-option', '-p', '-t', active_pane_id, 'pane-active-border-style', style],
     )
+
+
+def _border_hook_command(border_script: str) -> str:
+    quoted_script = shlex.quote(str(border_script))
+    shell = f'[ -x {quoted_script} ] || exit 0; exec {quoted_script} "#{{pane_id}}"'
+    return 'run-shell -b ' + shlex.quote(shell)
 
 
 def _session_windows(backend, *, session_name: str) -> tuple[str, ...]:
