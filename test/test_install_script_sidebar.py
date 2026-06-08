@@ -22,8 +22,8 @@ def test_install_script_provisions_neovim_tool_softly() -> None:
 
     assert 'provision_neovim_tool' in text
     assert 'CCB_INSTALL_NEOVIM=0' in text
-    assert 'Install the default Neovim + LazyVim tool window now?' in text
-    assert 'non-interactive install' in text
+    assert 'Neovim/LazyVim provisioning enabled by default' in text
+    assert 'Install the default Neovim + LazyVim tool window now?' not in text
     assert 'tools install neovim' in text
     assert '[[ "$required" == "1" ]] && return 1 || return 0' in text
 
@@ -34,8 +34,8 @@ def test_install_script_provisions_role_packs_softly() -> None:
     assert 'provision_role_packs' in text
     assert 'CCB_INSTALL_ROLES=0' in text
     assert 'check_role_pack_dependencies required' in text
-    assert 'Install catalog Role Packs and dependencies now?' in text
-    assert 'non-interactive install' in text
+    assert 'Role Pack provisioning enabled by default' in text
+    assert 'Install catalog Role Packs and dependencies now?' not in text
     assert 'roles update agentroles.archi' in text
     assert 'Role Pack not installed yet; installing agentroles.archi.' in text
     assert 'roles install agentroles.archi' in text

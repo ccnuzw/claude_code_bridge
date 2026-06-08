@@ -89,6 +89,55 @@ def test_install_requirements_continue_when_optional_watchdog_is_skipped(tmp_pat
     assert "requirements-ok" in completed.stdout
 
 
+def test_install_role_pack_provisioning_runs_by_default_without_prompt(tmp_path: Path) -> None:
+    completed = _run_install_snippet(
+        tmp_path,
+        """
+        CCB_SOURCE_KIND=release
+        mkdir -p "$CODEX_INSTALL_PREFIX"
+        cat > "$CODEX_INSTALL_PREFIX/ccb" <<'SH'
+        #!/usr/bin/env bash
+        printf '%s\\n' "$*" >> "$CODEX_INSTALL_PREFIX/ccb-argv.txt"
+        exit 0
+        SH
+        chmod +x "$CODEX_INSTALL_PREFIX/ccb"
+        check_role_pack_dependencies() { echo "deps:$1"; return 0; }
+        provision_role_packs
+        cat "$CODEX_INSTALL_PREFIX/ccb-argv.txt"
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "Role Pack provisioning enabled by default" in completed.stdout
+    assert "Install catalog Role Packs and dependencies now?" not in completed.stdout
+    assert "Role Pack provisioning skipped in non-interactive install" not in completed.stdout
+    assert "roles update agentroles.archi" in completed.stdout
+
+
+def test_install_neovim_provisioning_runs_by_default_without_prompt(tmp_path: Path) -> None:
+    completed = _run_install_snippet(
+        tmp_path,
+        """
+        CCB_SOURCE_KIND=release
+        mkdir -p "$CODEX_INSTALL_PREFIX"
+        cat > "$CODEX_INSTALL_PREFIX/ccb" <<'SH'
+        #!/usr/bin/env bash
+        printf '%s\\n' "$*" >> "$CODEX_INSTALL_PREFIX/ccb-argv.txt"
+        exit 0
+        SH
+        chmod +x "$CODEX_INSTALL_PREFIX/ccb"
+        provision_neovim_tool
+        cat "$CODEX_INSTALL_PREFIX/ccb-argv.txt"
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "Neovim/LazyVim provisioning enabled by default" in completed.stdout
+    assert "Install the default Neovim + LazyVim tool window now?" not in completed.stdout
+    assert "Neovim/LazyVim provisioning skipped in non-interactive install" not in completed.stdout
+    assert "tools install neovim" in completed.stdout
+
+
 def test_install_requirements_defers_tomli_to_managed_venv(tmp_path: Path) -> None:
     completed = _run_install_snippet(
         tmp_path,

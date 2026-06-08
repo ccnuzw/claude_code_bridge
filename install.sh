@@ -325,8 +325,8 @@ Optional environment variables:
                            auto = enabled for macOS release installs, disabled for source/dev installs
   CCB_INSTALL_TOMLI        Auto-install tomli on Python versions without tomllib (default: 1; set 0 to skip)
   CCB_INSTALL_WATCHDOG     Auto-install optional watchdog dependency (default: 1; set 0 to skip)
-  CCB_INSTALL_NEOVIM       Install default Neovim/LazyVim tool: ask (default), 1 force, 0 skip
-  CCB_INSTALL_ROLES        Install catalog Role Packs and dependencies: ask (default), 1 force, 0 skip
+  CCB_INSTALL_NEOVIM       Install default Neovim/LazyVim tool: auto soft (default), 1 required, 0 skip
+  CCB_INSTALL_ROLES        Install catalog Role Packs and dependencies: auto soft (default), 1 required, 0 skip
   CCB_ALLOW_ROOT_INSTALL   Set to 1 to explicitly allow a root-owned install
   CCB_CONFIRM_MAJOR_UPGRADE Set to 1 to confirm replacing a pre-v6 install with v6+
 USAGE
@@ -2809,7 +2809,7 @@ install_requirements() {
   check_wsl_compatibility
   confirm_backend_env_wsl
   require_python_version
-  if env_value_is_true "${CCB_INSTALL_ROLES:-ask}"; then
+  if env_value_is_true "${CCB_INSTALL_ROLES:-auto}"; then
     check_role_pack_dependencies required
   fi
   if use_managed_venv; then
@@ -2913,7 +2913,7 @@ install_all() {
 }
 
 provision_role_packs() {
-  local requested="${CCB_INSTALL_ROLES:-ask}"
+  local requested="${CCB_INSTALL_ROLES:-auto}"
   if env_value_is_false "$requested"; then
     echo "INFO: Role Pack provisioning skipped by CCB_INSTALL_ROLES=0"
     return 0
@@ -2922,22 +2922,7 @@ provision_role_packs() {
   if env_value_is_true "$requested"; then
     required=1
   else
-    if [[ ! -t 0 || ! -t 1 ]]; then
-      echo "INFO: Role Pack provisioning skipped in non-interactive install."
-      echo "      Run 'ccb roles install agentroles.archi' later to install roles and dependencies."
-      return 0
-    fi
-    printf "Install catalog Role Packs and dependencies now? [Y/n] "
-    local answer
-    IFS= read -r answer || answer=""
-    case "$answer" in
-      n|N|no|NO|No)
-        echo "INFO: Role Pack provisioning skipped."
-        echo "      Run 'ccb roles install agentroles.archi' later to install roles and dependencies."
-        return 0
-        ;;
-      *) ;;
-    esac
+    echo "INFO: Role Pack provisioning enabled by default; set CCB_INSTALL_ROLES=0 to skip."
   fi
   local dependency_mode="warn"
   if [[ "$required" == "1" ]]; then
@@ -2978,31 +2963,16 @@ provision_role_packs() {
 }
 
 provision_neovim_tool() {
-  local requested="${CCB_INSTALL_NEOVIM:-ask}"
-  if [[ "$requested" == "0" || "$requested" == "false" || "$requested" == "off" || "$requested" == "no" ]]; then
+  local requested="${CCB_INSTALL_NEOVIM:-auto}"
+  if env_value_is_false "$requested"; then
     echo "INFO: Neovim tool provisioning skipped by CCB_INSTALL_NEOVIM=0"
     return 0
   fi
   local required=0
-  if [[ "$requested" == "1" || "$requested" == "true" || "$requested" == "on" || "$requested" == "yes" ]]; then
+  if env_value_is_true "$requested"; then
     required=1
   else
-    if [[ ! -t 0 || ! -t 1 ]]; then
-      echo "INFO: Neovim/LazyVim provisioning skipped in non-interactive install."
-      echo "      Run 'ccb tools install neovim' later to enable the default neovim window."
-      return 0
-    fi
-    printf "Install the default Neovim + LazyVim tool window now? [y/N] "
-    local answer
-    IFS= read -r answer || answer=""
-    case "$answer" in
-      y|Y|yes|YES|Yes) ;;
-      *)
-        echo "INFO: Neovim/LazyVim provisioning skipped."
-        echo "      Run 'ccb tools install neovim' later to enable the default neovim window."
-        return 0
-        ;;
-    esac
+    echo "INFO: Neovim/LazyVim provisioning enabled by default; set CCB_INSTALL_NEOVIM=0 to skip."
   fi
   local ccb_entry
   if install_uses_live_source; then

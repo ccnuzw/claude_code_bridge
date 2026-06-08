@@ -276,9 +276,9 @@ instead of copying long role instructions into every project.
 
 The current catalog role is `agentroles.archi`, an architecture reviewer role
 from `agent-roles-spec` backed by Architec. More specialized roles will be
-added over time. Install or refresh catalog roles when prompted during
-`install.sh install`; `ccb update` refreshes already installed roles and reports
-new catalog roles. You can also refresh manually:
+added over time. `install.sh install` automatically attempts to install or
+refresh catalog roles by default; `ccb update` refreshes already installed roles
+and reports new catalog roles. You can also refresh manually:
 
 ```bash
 ccb roles update agentroles.archi
@@ -355,7 +355,7 @@ command = "ccb-nvim"
 label = "neovim"
 ```
 
-`ccb tools install neovim` prepares an isolated `ccb-nvim` wrapper and LazyVim profile under CCB-owned XDG paths. `install.sh install` and `ccb update` ask in interactive terminals whether to install or refresh this tool. Non-interactive installs skip it and print the follow-up command. Set `CCB_INSTALL_NEOVIM=1` to force provisioning or `CCB_INSTALL_NEOVIM=0` to skip it.
+`ccb tools install neovim` prepares an isolated `ccb-nvim` wrapper and LazyVim profile under CCB-owned XDG paths. `install.sh install` automatically attempts this provisioning by default and keeps failures non-blocking; `ccb update` asks in interactive terminals whether to refresh it. Set `CCB_INSTALL_NEOVIM=1` to make install provisioning required or `CCB_INSTALL_NEOVIM=0` to skip it.
 If `nvim` is not already on `PATH`, provisioning attempts to download the official Neovim release tarball for Linux/macOS and verifies the release sha256 before activating it. It does not write `~/.config/nvim`.
 The managed profile defaults to ASCII icons so terminals without Nerd Font support do not show unreadable boxes. To opt back into LazyVim glyph icons, launch with `CCB_LAZYVIM_ICON_STYLE=glyph ccb-nvim`.
 Use `ccb tools doctor neovim` to verify the managed profile. A working LazyVim setup reports `neovim_status: ok` and `lazyvim_health_status: ok`; damaged or partially downloaded plugin trees report `degraded` and can be repaired by rerunning `ccb tools install neovim`.
