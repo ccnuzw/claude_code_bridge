@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
@@ -44,6 +45,7 @@ def start_active_submission(
     request_anchor = request_anchor_fn(job.job_id)
     no_wrap = no_wrap_requested(job)
     prompt = job.request.body if no_wrap else wrap_prompt_fn(job.request.body, request_anchor)
+    session_path = state_session_path(state)
     wait_for_runtime_ready(prepared.backend, prepared.pane_id)
     send_prompt_to_runtime_target(prepared.backend, prepared.pane_id, prompt)
 
@@ -72,9 +74,15 @@ def start_active_submission(
             'last_final_answer': '',
             'last_assistant_message': '',
             'last_assistant_signature': '',
-            'session_path': state_session_path(state),
+            'session_path': session_path,
             'workspace_path': str(prepared.work_dir),
             'no_wrap': no_wrap,
+            'delivery_state': 'not_required' if no_wrap else 'pending_anchor',
+            'delivery_started_at': '' if no_wrap else now,
+            'delivery_timeout_s': 0.0 if no_wrap else resolved_delivery_timeout_s(),
+            'delivery_target_pane_id': prepared.pane_id,
+            'delivery_target_session_path': session_path,
+            'delivery_confirmed_at': '',
         },
     )
 
@@ -144,10 +152,18 @@ def state_session_path(state: dict[str, object]) -> str:
     return normalize_session_path(state.get('log_path'))
 
 
+def resolved_delivery_timeout_s(default: float = 120.0) -> float:
+    try:
+        return max(0.0, float(os.environ.get('CCB_CODEX_DELIVERY_TIMEOUT_S', default)))
+    except Exception:
+        return max(0.0, default)
+
+
 __all__ = [
     'load_session',
     'preferred_log_path',
     'resume_submission',
+    'resolved_delivery_timeout_s',
     'start_active_submission',
     'state_session_path',
 ]

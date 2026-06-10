@@ -24,7 +24,7 @@ def poll_submission(submission: ProviderSubmission, *, now: str) -> ProviderPoll
     state = submission.runtime_state.get("state") or {}
     poll = build_poll_state(submission)
     state = poll_entry_batches(submission, poll, prepared.reader, state, now=now)
-    return finalize_poll_result(submission, poll, state=state)
+    return finalize_poll_result(submission, poll, state=state, now=now)
 
 
 def poll_entry_batches(submission, poll, reader, state, *, now: str):

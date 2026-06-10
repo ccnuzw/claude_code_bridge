@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from provider_backends.codex.execution_runtime.readiness import looks_ready, wait_for_runtime_ready
+from provider_backends.codex.execution_runtime.readiness import looks_ready, looks_unusable, wait_for_runtime_ready
 
 
 def test_codex_looks_ready_rejects_loading_banner() -> None:
@@ -9,6 +9,13 @@ def test_codex_looks_ready_rejects_loading_banner() -> None:
 
 def test_codex_looks_ready_accepts_ready_banner() -> None:
     assert looks_ready('>_ OpenAI Codex\nmodel: gpt-5.5 xhigh /model to change\n› Implement {feature}')
+
+
+def test_codex_looks_ready_rejects_shutdown_text() -> None:
+    text = '>_ OpenAI Codex\nShutting down...\nPane is dead'
+
+    assert looks_unusable(text)
+    assert not looks_ready(text)
 
 
 def test_codex_wait_for_runtime_ready_waits_for_stable_ready_prompt(monkeypatch) -> None:

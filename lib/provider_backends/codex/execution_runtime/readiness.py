@@ -5,9 +5,23 @@ import time
 from dataclasses import dataclass
 
 
+_UNUSABLE_MARKERS = (
+    'pane is dead',
+    'pane dead',
+    'shutting down',
+)
+
+
+def looks_unusable(text: str) -> bool:
+    lowered = str(text or '').lower()
+    return any(marker in lowered for marker in _UNUSABLE_MARKERS)
+
+
 def looks_ready(text: str) -> bool:
     normalized = str(text or '')
     lowered = normalized.lower()
+    if looks_unusable(normalized):
+        return False
     if 'openai codex' not in lowered:
         return False
     if 'model:' in lowered and 'loading' in lowered:
@@ -28,6 +42,9 @@ def wait_for_runtime_ready(backend: object, pane_id: str, *, timeout_s: float = 
             return
         if text.strip():
             state.saw_content = True
+        if looks_unusable(text):
+            time.sleep(0.2)
+            continue
         if stable_ready_seen(state, text):
             time.sleep(0.2)
             return
@@ -66,4 +83,4 @@ def stable_ready_seen(state: ReadinessState, text: str) -> bool:
     return time.time() - state.stable_since >= 0.5
 
 
-__all__ = ['looks_ready', 'wait_for_runtime_ready']
+__all__ = ['looks_ready', 'looks_unusable', 'wait_for_runtime_ready']

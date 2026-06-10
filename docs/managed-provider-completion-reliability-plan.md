@@ -480,6 +480,59 @@ If not:
 - mark startup degraded / failed
 - do not accept async jobs silently
 
+#### 10.1.4 Recover Stale Bound Session Logs Safely
+
+Codex completion polling may encounter a stale bound session file when the
+provider has switched to a new managed session log but the bridge-side binding
+tracker did not update `.codex-*-session`.
+
+The completion reader must not globally weaken bound-session isolation. Instead,
+while an active job has not yet observed its request anchor, it may switch away
+from the bound log only when all of these are true:
+
+- the current bound log has no unread bytes at the captured cursor
+- exactly one other log under the same managed Codex session root has matching
+  workspace `cwd`
+- that candidate log contains the active request anchor
+- the candidate has a parseable Codex session id, so subsequent reads remain
+  locked to that exact session
+
+This is a completion-layer recovery path, not a replacement for bridge health
+supervision. Bridge/helper death or a missing `CCB_SESSION_FILE` should still be
+reported as a binding-health problem.
+
+#### 10.1.5 Separate Prompt Delivery Acceptance From Completion Timeout
+
+Codex pane-backed submission has two distinct failure boundaries:
+
+- prompt delivery acceptance: the wrapped prompt must appear in a valid Codex
+  protocol log as the active `CCB_REQ_ID`
+- completion: after acceptance, Codex must eventually emit assistant/terminal
+  evidence for that accepted turn
+
+`running` at the dispatcher layer only means CCB has started the attempt and
+sent text toward the pane. It must not be treated as proof that Codex accepted a
+protocol turn.
+
+For wrapped Codex turns, submission records `delivery_state = pending_anchor`
+until the request anchor is observed. A Codex-specific delivery guard may
+terminalize with `reason = codex_prompt_delivery_failed` only when all of these
+hold:
+
+- the job is still active, wrapped, and has not observed the request anchor
+- the originally bound/current log is drained at the captured cursor, so the
+  stale-session fallback has had a chance to run
+- no unique same-workspace fallback log under the managed Codex session root
+  contains the active request anchor
+- there is hard evidence that the pane cannot accept the prompt (`Shutting down`
+  / `Pane is dead`) or the conservative delivery timeout has elapsed
+
+The first implementation must not automatically resend the prompt. Anchor
+absence is observation failure, not proof that Codex never began executing.
+Diagnostics should expose `delivery_failure_kind`, `delivery_retryable`, the
+checked log/workspace paths, and the delivery timeout so operators can choose an
+explicit retry without risking duplicate downstream side effects.
+
 ### 10.2 Gemini
 
 Gemini currently has the most fragile turn attribution.

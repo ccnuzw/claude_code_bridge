@@ -76,7 +76,7 @@ def test_poll_submission_processes_entries_until_terminal(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "provider_backends.codex.execution_runtime.polling_runtime.finalize_poll_result",
-        lambda submission, poll, state: {"state": state, "calls": list(calls)},
+        lambda submission, poll, state, now=None: {"state": state, "calls": list(calls), "now": now},
     )
 
     result = poll_submission(submission, now="2026-04-06T00:01:00Z")
