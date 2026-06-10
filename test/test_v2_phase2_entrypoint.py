@@ -1489,7 +1489,8 @@ def _wait_for_pid_exit(pid: int, timeout: float = 2.0) -> None:
 
 
 @pytest.mark.ccb_lifecycle_smoke
-def test_ccb_v2_project_lifecycle(tmp_path: Path) -> None:
+def test_ccb_v2_project_lifecycle(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv('STUB_DELAY', '2.0')
     project_root = tmp_path / 'repo'
     _write(project_root / '.ccb' / 'ccb.config', _config_text())
 
