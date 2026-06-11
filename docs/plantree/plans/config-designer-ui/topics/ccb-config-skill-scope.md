@@ -77,6 +77,13 @@ The skill should present supported knobs in a structured way:
 ## Default Proposal Rules
 
 - Prefer `version = 2` `[windows]` topology.
+- Treat `[windows]` as the only authority for agent presence, provider,
+  default `inplace`/`git-worktree` workspace mode, order, and window grouping.
+- Use `[agents.<name>]` only for overlays such as model/API, provider profile,
+  role binding for custom local names, runtime policy, descriptions, labels,
+  and advanced workspace fields. Do not write redundant `provider`,
+  `workspace_mode = "inplace"`, or `workspace_mode = "git-worktree"` fields in
+  overlays.
 - Include `[tool_windows.neovim]` by default unless the user asks to disable it.
 - Disable Neovim by removing the `[tool_windows.neovim]` block, not by writing
   `enabled = false`.

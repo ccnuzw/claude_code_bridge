@@ -1925,7 +1925,8 @@ def test_roles_add_uses_explicit_overlay_for_custom_agent_name(tmp_path: Path, m
     text = (project / '.ccb' / 'ccb.config').read_text(encoding='utf-8')
     assert 'main = "agent1:codex, archi-review:codex"' in text
     assert '[agents.archi-review]' in text
-    assert 'role = "agentroles.archi"' in text
+    assert '[agents.archi-review]\nrole = "agentroles.archi"' in text
+    assert '[agents.archi-review]\nrole = "agentroles.archi"\nprovider =' not in text
     loaded = load_project_config(project).config
     assert loaded.agents['archi-review'].role == 'agentroles.archi'
 

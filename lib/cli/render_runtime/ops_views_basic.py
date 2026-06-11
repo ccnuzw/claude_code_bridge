@@ -7,7 +7,7 @@ from .ops_views_common import binding_line
 
 
 def render_config_validate(summary) -> tuple[str, ...]:
-    return (
+    lines = [
         'config_status: valid',
         f'project: {summary.project_root}',
         f'project_id: {summary.project_id}',
@@ -18,7 +18,9 @@ def render_config_validate(summary) -> tuple[str, ...]:
         f'agents: {", ".join(summary.agent_names)}',
         f'cmd_enabled: {str(summary.cmd_enabled).lower()}',
         f'layout: {summary.layout_spec}',
-    )
+    ]
+    lines.extend(f'config_warning: {warning}' for warning in getattr(summary, 'style_warnings', ()) or ())
+    return tuple(lines)
 
 
 def render_start(summary) -> tuple[str, ...]:

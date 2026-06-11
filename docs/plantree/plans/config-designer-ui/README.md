@@ -25,6 +25,9 @@ source of truth.
   icon entry point after the standalone config UI exists.
 - [decisions/001-config-ui-is-local-config-editor.md](decisions/001-config-ui-is-local-config-editor.md):
   decision record for keeping the UI local, optional, and config-only.
+- [decisions/002-config-single-authority.md](decisions/002-config-single-authority.md):
+  decision record for canonical `.ccb/ccb.config` writing rules that keep
+  topology authority in `[windows]` and use `[agents.<name>]` only as overlays.
 
 ## Related Sources
 

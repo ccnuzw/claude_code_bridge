@@ -283,6 +283,43 @@ home = ".ccb/provider-profiles/shared-codex"
     assert 'duplicate effective codex_home' in stderr
 
 
+def test_phase2_config_validate_reports_windows_style_warnings(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-config-style-warnings'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+
+[windows]
+main = "agent1:codex(worktree)"
+
+[agents.agent1]
+provider = "codex"
+workspace_mode = "git-worktree"
+
+[agents.ghost]
+provider = "codex"
+""",
+    )
+
+    code, stdout, stderr = _run_phase2_local(['config', 'validate'], cwd=project_root)
+
+    assert code == 0
+    assert stderr == ''
+    assert 'config_status: valid' in stdout
+    assert (
+        'config_warning: redundant_agent_provider: agents.agent1.provider repeats [windows] and should be removed'
+        in stdout
+    )
+    assert (
+        'config_warning: redundant_agent_workspace_mode: agents.agent1.workspace_mode repeats [windows] and should be removed'
+        in stdout
+    )
+    assert (
+        'config_warning: stale_agent_overlay: agents.ghost is ignored because it is not referenced by [windows]'
+        in stdout
+    )
+
+
 def test_ccb_kill_without_anchor_is_noop_and_does_not_bootstrap(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-kill-no-anchor'
     project_root.mkdir()

@@ -579,7 +579,6 @@ def add_role_to_project_config(
         after = _upsert_agent_role_overlay(
             after,
             agent_name=selected_agent,
-            provider=selected_provider,
             role_id=role_id,
         )
     loaded = _load_project_config_from_text(after)
@@ -625,7 +624,7 @@ def _load_builtin_role_by_id(role_id: str) -> RolePack | None:
         return None
 
 
-def _upsert_agent_role_overlay(text: str, *, agent_name: str, provider: str, role_id: str) -> str:
+def _upsert_agent_role_overlay(text: str, *, agent_name: str, role_id: str) -> str:
     lines = text.rstrip().splitlines()
     header = f'[agents.{agent_name}]'
     start = None
@@ -642,13 +641,12 @@ def _upsert_agent_role_overlay(text: str, *, agent_name: str, provider: str, rol
             '',
             header,
             f'role = "{role_id}"',
-            f'provider = "{provider}"',
         ]
         return '\n'.join(lines + block).rstrip() + '\n'
 
     block = lines[start:end]
     block = _upsert_key(block, 'role', role_id)
-    block = _upsert_key(block, 'provider', provider)
+    block = _remove_key(block, 'provider')
     return '\n'.join(lines[:start] + block + lines[end:]).rstrip() + '\n'
 
 
@@ -720,6 +718,16 @@ def _upsert_key(block: list[str], key: str, value: str) -> list[str]:
             block[index] = rendered
             return block
     return block + [rendered]
+
+
+def _remove_key(block: list[str], key: str) -> list[str]:
+    prefix = f'{key} '
+    return [
+        line
+        for index, line in enumerate(block)
+        if index == 0
+        or not (line.strip().startswith(prefix) or line.strip().startswith(f'{key}='))
+    ]
 
 
 def _write_project_role_lock(project_root: Path, role: RolePack) -> None:

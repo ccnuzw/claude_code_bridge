@@ -20,20 +20,38 @@ Date: 2026-06-06
   tool window.
 - Added language-following rules so `ccb-config` presents menus, questions, and
   explanations in the user's language while keeping CCB syntax literal.
+- Accepted the single-authority config writing rule in
+  [decisions/002-config-single-authority.md](decisions/002-config-single-authority.md):
+  `[windows]` owns agent presence, provider, default `inplace`/`git-worktree`
+  workspace mode, ordering, and window grouping; `[agents.<name>]` is overlay
+  only.
+- Updated generated role binding behavior so custom local Role Pack bindings no
+  longer write redundant overlay `provider`.
+- Added `ccb config validate` style warnings for redundant provider,
+  redundant default workspace mode, overriding `inplace`/`git-worktree`
+  workspace mode, and stale `[agents.<name>]` overlays.
+- Updated `ccb_self`'s built-in `ccb-config` guidance to use Role Pack
+  shorthand or role-only overlays and to treat style warnings as cleanup before
+  reload.
 
 ## In Progress
 
-- Validate the config skill cleanup against the inherited Codex and Claude
-  copies and keep the staged UI plan aligned.
+- Keep the staged UI plan aligned with the single-authority config writing
+  contract and the private `ccb_self` `ccb-config` skill.
 
 ## Next
 
 1. Dogfood the cleaned `ccb-config` skill on a representative config migration.
-2. Design and implement `ccb config ui`:
+2. Extract a supported config field registry so parser validation, docs,
+   `ccb_self` skill guidance, UI metadata, and formatter behavior cannot drift.
+3. Design and implement `ccb config format` or `ccb config normalize --write`
+   for safe cleanup of redundant provider/default-workspace fields and stale
+   overlays.
+4. Design and implement `ccb config ui`:
    - local-only browser UI;
    - current config loading and draft editing;
    - TOML preview, diff, validation, and apply.
-3. Add sidebar config icon only after `ccb config ui` is usable:
+5. Add sidebar config icon only after `ccb config ui` is usable:
    - right-side icon in the tree header;
    - launch the same CLI command;
    - show fallback URL/status in the sidebar when browser open fails.

@@ -49,11 +49,14 @@ label = "neovim"
 Rules:
 
 - `[windows]` defines the configured-agent set.
+- `[windows]` is the authority for provider and default workspace mode.
 - Each agent leaf appears exactly once.
 - `cmd` is not valid inside `[windows]` topology.
-- `[agents.<name>]` tables are overlays for names referenced in `[windows]`.
+- `[agents.<name>]` tables are overlays for names referenced in `[windows]`;
+  do not repeat `provider`, `workspace_mode = "inplace"`, or
+  `workspace_mode = "git-worktree"` there.
 - Stale `[agents.<name>]` tables are residue when the name is no longer in
-  `[windows]`.
+  `[windows]`; `ccb config validate` reports them as style warnings.
 
 ## Role Bindings
 
@@ -69,7 +72,6 @@ ops = "ccb_self:codex"
 
 [agents.ccb_self]
 role = "agentroles.ccb_self"
-provider = "codex"
 ```
 
 If the role is missing, tell the user to run `ccb roles install <role-id>`.

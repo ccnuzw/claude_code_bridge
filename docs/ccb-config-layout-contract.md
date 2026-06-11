@@ -231,7 +231,9 @@ Contract:
 - legacy compact and hybrid configs that do not declare `[windows]` remain
   single-window configs; they are mounted in the project workspace window and
   keep their existing `cmd` pane semantics
-- `[windows]` is the authority for layout, default agent traversal, per-window agent grouping, and the effective configured-agent set.
+- `[windows]` is the authority for layout, default agent traversal, per-window
+  agent grouping, provider selection, default workspace mode, and the effective
+  configured-agent set.
 - Each `[windows]` value uses the compact layout grammar, but `cmd` is not supported in windows topology.
 - Every agent leaf in `[windows]` must declare a provider.
 - Each configured agent is an agent leaf referenced by `[windows]` and must appear in exactly one window layout.
@@ -258,8 +260,22 @@ Contract:
 - `[ui.sidebar.view]` is optional and controls only the sidebar pane's internal presentation. It must not redefine managed windows, agents, pane ownership, provider runtime, or message/job authority.
 - `[ui.sidebar.view]` changes are UI-only: `agents_height`, `comms_height`, `tips_height`, `comms_limit`, `comms_compact`, `tips_enabled`, and `tips` are delivered through `project_view` and must not force namespace topology recreation. `agents_height` controls the top Tree/Agent panel, `comms_height` controls the Comms panel, and `tips_height` controls the Tips panel; all three accept a positive integer row count or a percentage string. The default split is `50%`, `15%`, and `35%`.
 - If a hot-loaded `[ui.sidebar.view]` parse fails, `project_view.namespace.sidebar.view_error` reports the config error and the sidebar displays a `config ✕` warning while retaining the daemon's last valid view config.
-- Agent leaves in `[windows]` provide default `provider` and default `workspace_mode` (`agent:provider` means `inplace`; `agent:provider(worktree)` means `git-worktree`). They may also include an `@N` split hint, for example `agent:provider@60` or `agent:provider(worktree)@40`.
-- `[agents.<name>]` tables are overlays for names referenced by `[windows]`. They may provide any agent-local override, including `workspace_mode`; if they repeat `provider`, it must match the provider declared in `[windows]`.
+- Agent leaves in `[windows]` provide canonical `provider` and default
+  `workspace_mode` (`agent:provider` means `inplace`;
+  `agent:provider(worktree)` means `git-worktree`). They may also include an
+  `@N` split hint, for example `agent:provider@60` or
+  `agent:provider(worktree)@40`.
+- `[agents.<name>]` tables are overlays for names referenced by `[windows]`.
+  Canonical user-authored overlays must not repeat topology-owned fields that
+  are already expressible in the window leaf:
+  - `provider`
+  - `workspace_mode = "inplace"`
+  - `workspace_mode = "git-worktree"`
+- Legacy rich TOML that repeats `provider` or `workspace_mode` remains accepted
+  when it does not conflict, but `ccb config validate` reports style warnings
+  and CCB-generated config must not introduce those redundant fields.
+- `workspace_mode = "copy"` remains an advanced overlay-only mode until the
+  compact leaf grammar has a first-class copy-mode spelling.
 - `[agents.<name>].role` may bind a configured agent to a reusable Role Pack
   such as `ccb.archi`. The role id is stable package identity; the agent name
   remains the project-local ask target. Role ids must use publisher-qualified
@@ -270,6 +286,8 @@ Contract:
   assets. Provider sessions, auth, runtime authority, mailbox state, and agent
   private memory must remain agent/project scoped.
 - `[agents.<name>]` tables for names no longer referenced by `[windows]` are ignored as stale overlay residue and must not become configured agents or block startup.
+  `ccb config validate` reports them as style warnings so accidental misspelled
+  overlays are visible.
 
 Example managed tool window:
 
