@@ -139,7 +139,7 @@ Type directly in an agent pane, or route work between agents:
 
 Agents can also call `/ask` from workflow orchestration to delegate and hand off work automatically.
 
-## v7 UI Tour
+### v7 UI Tour
 
 | Region | Purpose |
 | :--- | :--- |
@@ -148,13 +148,18 @@ Agents can also call `/ask` from workflow orchestration to delegate and hand off
 | Workspace | Every pane is a real CLI. Switch by mouse or tmux shortcuts. |
 | Useful shortcuts | `Ctrl-b h/j/k/l` switches adjacent panes; `Ctrl-b z` zooms or restores the current CLI pane. |
 
-The sidebar implementation uses ideas from [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar). Thanks to that project.
+### Contact
+
+- Email: `bfly123@126.com`
+- WeChat: `seemseam-com`
+
+---
 
 ## More Reading
 
 Start with Quick Start for first use; the sections below cover CCB's design boundaries, comparisons, daily operations, and configuration model.
 
-## What Is CCB?
+### What Is CCB?
 
 CCB is a project-level agent CLI workspace. It uses tmux to manage multiple real CLI agents and unifies startup, restore, communication, configuration, windows, and runtime state for one project.
 
@@ -171,7 +176,7 @@ CCB is a project-level agent CLI workspace. It uses tmux to manage multiple real
 - **Recoverable runtime**: CCB supervises agent panes and supports attach, restore, and project-scoped cleanup.
 - **Explicit collaboration channel**: agents can delegate through `/ask`, `$ask`, callback, and silence routes.
 
-## Why Multi Agents
+### Why Multi Agents
 
 A single agent is enough for small tasks. Once work needs planning, parallel edits, review, testing, and handoff, multi agents help separate roles, context, models, and execution. CCB focuses on putting multiple real CLI agents into one visible terminal workspace.
 
@@ -192,7 +197,7 @@ A single agent is enough for small tasks. Once work needs planning, parallel edi
 
 </details>
 
-## Which Multi-Agent Approach Should You Use?
+### Which Multi-Agent Approach Should You Use?
 
 Multi-agent systems are not one fixed shape. Use the short table first; expand the details only if you are comparing tradeoffs.
 
@@ -217,7 +222,7 @@ CCB also supports complex workflows, but it is not an automatic DAG generator. Y
 
 </details>
 
-## Daily Operation
+### Daily Operation
 
 | Goal | Command |
 | :--- | :--- |
@@ -231,7 +236,7 @@ CCB also supports complex workflows, but it is not an automatic DAG generator. Y
 | Preview a config reload plan without changing tmux | `ccb reload --dry-run` |
 | Apply supported config changes without restarting other agents | `ccb reload` |
 
-## tmux Basics
+### tmux Basics
 
 CCB can be used mostly with the mouse, but learning a few tmux shortcuts makes daily work much faster. This section lists only common tmux keyboard operations.
 
@@ -276,7 +281,7 @@ New users should avoid pane/window killing shortcuts at first. To stop a CCB pro
 
 </details>
 
-## Configure Your Agent Team
+### Configure Your Agent Team
 
 CCB resolves config in three layers, from lowest to highest priority:
 
@@ -304,7 +309,7 @@ After editing `.ccb/ccb.config` in a mounted project, run `ccb reload --dry-run`
 
 If you want to discuss the configuration before writing it by hand, ask `ccb_self` to describe the target team. Blank projects include this route by default; projects with a user or project config should add `agentroles.ccb_self` if they have overridden the built-in default. Its built-in `ccb-config` skill proposes a complete config first, then writes `.ccb/ccb.config` only after confirmation.
 
-### Role Packs
+#### Role Packs
 
 Role Packs define reusable agent roles. A role can carry a stable identity,
 responsibilities, memory, provider-specific skills, tool hooks, and dependency
@@ -356,7 +361,7 @@ into that agent's managed provider home.
 <details>
 <summary><b>Config format examples: single window, multi-window, per-agent model/API</b></summary>
 
-### Single-window compact config
+#### Single-window compact config
 
 ```text
 cmd; main:codex, worker1:codex(worktree); reviewer:claude
@@ -370,7 +375,7 @@ Meaning:
 - `;` splits left-to-right; `,` stacks top-to-bottom.
 - `(worktree)` means that agent uses an isolated git worktree.
 
-### Multi-window topology
+#### Multi-window topology
 
 When you want planning, implementation, review, and research in different tmux windows, use `version = 2` and `[windows]`:
 
@@ -397,7 +402,7 @@ comms_limit = 3
 
 Note: `cmd` belongs to compact/hybrid single-window layouts. Do not put `cmd` inside `[windows]`.
 
-### Managed Neovim tool window
+#### Managed Neovim tool window
 
 Tool windows are tmux windows managed by CCB, but they are not agents. They do not appear in `ccb ask` targets and do not create provider runtime records.
 
@@ -418,7 +423,7 @@ If `nvim` is not already on `PATH`, provisioning attempts to download the offici
 The managed profile defaults to ASCII icons so terminals without Nerd Font support do not show unreadable boxes. To opt back into LazyVim glyph icons, launch with `CCB_LAZYVIM_ICON_STYLE=glyph ccb-nvim`.
 Use `ccb tools doctor neovim` to verify the managed profile. A working LazyVim setup reports `neovim_status: ok` and `lazyvim_health_status: ok`; damaged or partially downloaded plugin trees report `degraded` and can be repaired by rerunning `ccb tools install neovim`.
 
-### Per-agent model, API key, or base URL
+#### Per-agent model, API key, or base URL
 
 Use compact format when layout is enough. If some agents need separate models or API routes, keep the compact header and add TOML overlays:
 
@@ -441,7 +446,7 @@ Do not commit real API keys to a public repository. `key` / `url` are agent-loca
 
 </details>
 
-## Use ccb_self For CCB Config
+### Use ccb_self For CCB Config
 
 The full `ccb-config` skill belongs to the `agentroles.ccb_self` role. It is not a globally inherited skill for every agent. CCB installs or refreshes this Role Pack by default, and blank projects include `ccb_self` in the built-in default config. Existing projects, or projects with a user/project config that replaces the built-in default, should bind it where they want the maintenance assistant.
 
@@ -471,7 +476,7 @@ By default, `ccb-config` does not edit `.ccb/ccb_memory.md` or `.ccb/agents/<age
 
 </details>
 
-## Agent Collaboration
+### Agent Collaboration
 
 Normal `ask` is submit-and-return: after handing work to the target agent, the current agent should not poll and wait.
 
@@ -506,7 +511,7 @@ If agent A is handling a user-originated CCB task and needs agent B's result to 
 
 </details>
 
-## Editor Workflow
+### Editor Workflow
 
 <p align="center">
   <img src="assets/nvim.png" alt="Neovim integration with multi-model code review" width="860">
@@ -514,9 +519,9 @@ If agent A is handling a user-originated CCB task and needs agent B's result to 
 
 CCB does not require leaving your editor. A common setup is: editor for code, CCB terminal for multi-agent planning, implementation, review, testing, and handoff.
 
-## Install And Update
+### Install And Update
 
-### Requirements
+#### Requirements
 
 - Node.js and npm for the recommended npm install path
 - Python 3.10+
@@ -526,7 +531,7 @@ CCB does not require leaving your editor. A common setup is: editor for code, CC
 
 Current v7 / newer versions do not claim native Windows support. Native Windows support only applies to the v5 line. If you are on Windows and want current versions, use WSL and keep both `ccb` and agent CLIs inside WSL.
 
-### npm first
+#### npm first
 
 For first install, prefer npm:
 
@@ -542,7 +547,7 @@ ccb update
 
 [GitHub Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) remain available for environments where npm is unavailable. Source checkout install is for development, fix validation, or temporary fallback.
 
-### Uninstall
+#### Uninstall
 
 ```bash
 ccb uninstall
@@ -552,7 +557,7 @@ ccb reinstall
 ./install.sh uninstall
 ```
 
-## FAQ
+### FAQ
 
 <details>
 <summary><b>The expected agents did not appear</b></summary>
@@ -582,11 +587,7 @@ Prefer a release package because it carries or handles the sidebar helper. Sourc
 
 </details>
 
-## Community And Credits
-
-Email: `bfly123@126.com`
-
-WeChat: `seemseam-com`
+### Community And Credits
 
 Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and discussion.
 
@@ -596,7 +597,7 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
   <img src="assets/weixin.jpg" alt="WeChat group" width="300">
 </div>
 
-## Release Notes
+### Release Notes
 
 v7 highlights:
 
