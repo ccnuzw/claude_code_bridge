@@ -42,6 +42,7 @@ class _HindsightConfig:
     recall_timeout: int
     retain_context: str
     recall_preamble: str
+    show_hook_context: bool
     api_token: str = ""
     config_path: str = ""
 
@@ -79,6 +80,8 @@ def recall_hindsight_memories(
         return HindsightRecall(diagnostics={"enabled": True, "status": "empty", "bank_id": config.bank_id})
 
     context = _format_context(results, preamble=config.recall_preamble)
+    if config.show_hook_context:
+        context = _format_visible_hook_context(context)
     return HindsightRecall(
         context=context,
         diagnostics={
@@ -89,6 +92,7 @@ def recall_hindsight_memories(
             "session_id": session_id,
             "agent_name": agent_name,
             "workspace_path": workspace_path,
+            "show_hook_context": config.show_hook_context,
         },
     )
 
@@ -157,6 +161,8 @@ def _load_config() -> _HindsightConfig:
         recall_timeout=_int(payload.get("recallTimeout"), 10),
         retain_context=_retain_context(payload, path),
         recall_preamble=str(payload.get("recallPromptPreamble") or "Relevant memories from past conversations:"),
+        show_hook_context=_bool_env("CCB_KIMI_HINDSIGHT_SHOW_HOOK_CONTEXT")
+        or _bool(payload.get("showHookContext"), False),
         api_token=str(os.environ.get("HINDSIGHT_API_TOKEN") or payload.get("hindsightApiToken") or ""),
         config_path=str(path or ""),
     )
@@ -237,6 +243,16 @@ def _format_context(results: list[object], *, preamble: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _format_visible_hook_context(context: str) -> str:
+    indented = "\n".join(f"  {line}" if line else "" for line in context.splitlines())
+    return "\n".join(
+        [
+            "UserPromptSubmit hook (completed)",
+            f"hook context: {indented}",
+        ]
+    ).strip()
+
+
 def _memory_text(item: object) -> str:
     if isinstance(item, str):
         return item.strip()
@@ -275,6 +291,22 @@ def _int(value: object, default: int) -> int:
         return int(value)
     except Exception:
         return default
+
+
+def _bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _bool_env(name: str) -> bool:
+    return _bool(os.environ.get(name), False)
 
 
 def _quote(value: str) -> str:

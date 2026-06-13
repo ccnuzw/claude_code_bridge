@@ -200,3 +200,38 @@ def test_kimi_reuses_codex_hindsight_config_without_codex_retain_context(monkeyp
     assert retained.retained is True
     assert isinstance(payload, dict)
     assert payload["items"][0]["context"] == "kimi"
+
+
+def test_kimi_can_render_visible_hindsight_hook_context(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config_dir = home / ".hindsight"
+    config_dir.mkdir(parents=True)
+    (config_dir / "kimi.json").write_text(
+        json.dumps(
+            {
+                "hindsightApiUrl": "http://127.0.0.1:18888",
+                "bankId": "local-ai-memory",
+                "showHookContext": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def request_stub(method: str, path: str, payload: object, **kwargs) -> object:
+        del method, path, payload, kwargs
+        return {"results": [{"content": "visible memory"}]}
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(kimi_hindsight, "_request", request_stub)
+
+    recall = kimi_hindsight.recall_hindsight_memories(
+        "please use memory",
+        session_id="session-1",
+        agent_name="kimi1",
+        workspace_path="/repo",
+    )
+
+    assert "UserPromptSubmit hook (completed)" in recall.context
+    assert "hook context:   <hindsight_memories>" in recall.context
+    assert "visible memory" in recall.context
+    assert recall.diagnostics["show_hook_context"] is True
