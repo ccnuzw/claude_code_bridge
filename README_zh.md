@@ -83,6 +83,16 @@ npm install -g @seemseam/ccb
 ccb update
 ```
 
+可选富媒体工作台用 `ccb update rich` 安装或刷新，它会打包 WezTerm、Yazi、LazyVim、Markdown 渲染以及图片/PDF/视频预览能力：
+
+```bash
+ccb update rich
+```
+
+<p align="center">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich 富媒体工作台在 WezTerm 中使用 Yazi 预览 PDF" width="860">
+</p>
+
 <details>
 <summary><b>GitHub release 包和源码安装兜底</b></summary>
 
@@ -253,6 +263,8 @@ CCB 也支持复杂工作流，但它不是自动生成 DAG 的 harness；复杂
 | 停止当前项目后台 | `ccb kill` |
 | 强制清理当前项目残留后再重建 | `ccb kill -f` 后接 `ccb -n` |
 | 更新到最新稳定 release | `ccb update` |
+| 安装或刷新可选 rich 富媒体工作台 | `ccb update rich` |
+| 打开 rich 富媒体工作台 | `ccb rich` |
 | 查看当前使用的配置层 | `ccb config validate` |
 | 预览配置热加载计划，不修改 tmux | `ccb reload --dry-run` |
 | 应用支持的配置变更，不重启其他 agent | `ccb reload` |
@@ -308,7 +320,7 @@ CCB 配置有三层，优先级从低到高：
 3. 项目配置 `.ccb/ccb.config`。
 
 更高层会整体替换低层，不做局部合并。当前项目的权威配置文件是 `.ccb/ccb.config`；旧路径 `.ccb_config/ccb.config` 只应作为迁移参考。
-内置默认配置是 v2 `[windows]` 拓扑，包含 `agent1`、`agent2`、`agent3`、`ccb_self`，以及一个使用 `ccb-nvim` 的托管 `neovim` 工具 window。默认 `ccb_self` 使用 `codex` 并绑定 `agentroles.ccb_self`。
+内置默认配置是 v2 `[windows]` 拓扑，包含 `agent1`、`agent2`、`agent3` 和 `ccb_self`。可选 rich 富媒体工作台通过 `ccb update rich` 安装，需要时可以挂载成工具 window。默认 `ccb_self` 使用 `codex` 并绑定 `agentroles.ccb_self`。
 
 `.ccb/ccb.config` 主要配置这些内容：
 
@@ -318,7 +330,7 @@ CCB 配置有三层，优先级从低到高：
 | agent 名称和 provider | `main:codex`、`reviewer:claude` | 名称用于界面、ask 路由和记忆文件；provider 决定启动哪家 CLI。 |
 | 工作区隔离 | `worker1:codex(worktree)` | 给实现类 agent 独立 git worktree，降低互相覆盖的风险。 |
 | sidebar 行为 | `[ui.sidebar]` | 控制 sidebar 是否每个 window 都显示、宽度和 Comms 高度。 |
-| 工具 window | `[tool_windows.<name>]` | 添加 Neovim 这类非 agent 托管 window；sidebar 只显示一行，不是 `ask` 目标。 |
+| 工具 window | `[tool_windows.<name>]` | 添加 rich 富媒体工作台这类非 agent 托管 window；sidebar 只显示一行，不是 `ask` 目标。 |
 | 单 agent 模型/API | `[agents.<name>]` | 可为不同 agent 配 `model`、`key`、`url` 等。 |
 | Role Pack 绑定 | `agentroles.archi:codex` | 通过 window leaf 绑定可复用角色包；role 资产统一安装，再投影到解析出的 agent。 |
 | 角色说明 | `[agents.<name>] description = "..."` | 给 agent 一个简短职责说明；更长的工作流规则建议写到 memory。 |
@@ -415,7 +427,7 @@ comms_limit = 3
 
 注意：`cmd` 只属于紧凑/混合单窗口布局；`[windows]` 拓扑里不要写 `cmd`。
 
-#### 托管 Neovim 工具 window
+#### 可选 rich 富媒体工具 window
 
 工具 window 是 CCB 管理的 tmux window，但不是 agent。它不会出现在 `ccb ask` 目标中，也不会创建 provider runtime 记录。
 
@@ -426,15 +438,12 @@ entry_window = "main"
 [windows]
 main = "main:codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.rich]
+command = "CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench files"
+label = "rich"
 ```
 
-`ccb tools install neovim` 会准备隔离的 `ccb-nvim` wrapper 和 LazyVim profile，路径在 CCB 自己的 XDG 目录下。`install.sh install` 和 `ccb update` 默认都会尝试安装或刷新该工具，并把默认 provisioning 失败保留为 warning。设置 `CCB_INSTALL_NEOVIM=1` 可强制 provisioning，设置 `CCB_INSTALL_NEOVIM=0` 可跳过。
-如果 `PATH` 里没有 `nvim`，provisioning 会尝试下载 Linux/macOS 官方 Neovim release tarball，并校验 release sha256 后再启用；不会写入 `~/.config/nvim`。
-托管 profile 默认使用 ASCII 图标，避免没有 Nerd Font 的终端出现方块/乱码。确认终端字体支持 Nerd Font 时，可用 `CCB_LAZYVIM_ICON_STYLE=glyph ccb-nvim` 恢复 LazyVim 图标。
-用 `ccb tools doctor neovim` 验证托管 profile。LazyVim 真正可用时会显示 `neovim_status: ok` 和 `lazyvim_health_status: ok`；插件目录损坏或半下载会显示 `degraded`，重新运行 `ccb tools install neovim` 会尝试修复。
+`ccb update rich` 会在 CCB 自己的 XDG 目录下准备可选工作台包，包括 WezTerm 配置、Yazi profile、LazyVim 编辑能力、Markdown 渲染，以及图片/PDF/视频预览辅助工具。普通 `ccb update` 不会主动安装或刷新该包；需要安装、修复或更新时重新运行 `ccb update rich`，然后使用 `ccb rich` 或上面的工具 window 挂载方式启动。
 
 #### 给 agent 单独配置模型、API key 或 base URL
 

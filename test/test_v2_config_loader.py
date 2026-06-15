@@ -178,8 +178,7 @@ def test_load_project_config_uses_builtin_default_when_project_config_is_missing
     assert config.windows_explicit is True
     assert config.entry_window == 'main'
     assert [window.name for window in config.windows] == ['main']
-    assert [tool.name for tool in config.tool_windows] == ['neovim']
-    assert config.tool_windows[0].command == 'ccb-nvim'
+    assert config.tool_windows == ()
     loaded = load_project_config(project_root)
     assert loaded.source_path is None
     assert loaded.source_kind == CONFIG_SOURCE_BUILTIN_DEFAULT
@@ -189,8 +188,7 @@ def test_load_project_config_uses_builtin_default_when_project_config_is_missing
     assert loaded.config.windows_explicit is True
     assert loaded.config.entry_window == 'main'
     assert [window.name for window in loaded.config.windows] == ['main']
-    assert [tool.name for tool in loaded.config.tool_windows] == ['neovim']
-    assert loaded.config.tool_windows[0].command == 'ccb-nvim'
+    assert loaded.config.tool_windows == ()
     assert set(loaded.config.agents) == {'agent1', 'agent2', 'agent3', 'ccb_self'}
     assert loaded.config.agents['agent1'].provider == 'codex'
     assert loaded.config.agents['agent2'].provider == 'codex'
@@ -201,7 +199,7 @@ def test_load_project_config_uses_builtin_default_when_project_config_is_missing
     assert loaded.config.agents['agent1'].runtime_mode is RuntimeMode.PANE_BACKED
 
 
-def test_render_default_project_config_text_includes_neovim_tool_window(tmp_path: Path) -> None:
+def test_render_default_project_config_text_omits_optional_tool_windows(tmp_path: Path) -> None:
     from agents.config_loader import render_default_project_config_text
 
     rendered = render_default_project_config_text()
@@ -210,8 +208,7 @@ def test_render_default_project_config_text_includes_neovim_tool_window(tmp_path
     assert 'main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"' in rendered
     assert '[agents.ccb_self]' in rendered
     assert 'role = "agentroles.ccb_self"' in rendered
-    assert '[tool_windows.neovim]' in rendered
-    assert 'command = "ccb-nvim"' in rendered
+    assert '[tool_windows.' not in rendered
     assert '[ui.sidebar.view]' in rendered
     assert 'agents_height = "50%"' in rendered
     assert 'comms_height = "15%"' in rendered
@@ -219,7 +216,7 @@ def test_render_default_project_config_text_includes_neovim_tool_window(tmp_path
     config_path = tmp_path / 'repo-render-default' / '.ccb' / 'ccb.config'
     _write(config_path, rendered)
     loaded = load_project_config(config_path.parents[1]).config
-    assert [tool.name for tool in loaded.tool_windows] == ['neovim']
+    assert loaded.tool_windows == ()
     assert loaded.agents['ccb_self'].role == 'agentroles.ccb_self'
 
 

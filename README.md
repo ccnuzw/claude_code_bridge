@@ -83,6 +83,16 @@ After CCB is installed, use CCB's updater:
 ccb update
 ```
 
+Install or refresh the optional rich media workbench with WezTerm, Yazi, LazyVim, Markdown rendering, and image/PDF/video previews:
+
+```bash
+ccb update rich
+```
+
+<p align="center">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi PDF preview in WezTerm" width="860">
+</p>
+
 <details>
 <summary><b>GitHub release package and source install fallbacks</b></summary>
 
@@ -254,6 +264,8 @@ CCB also supports complex workflows, but it is not an automatic DAG generator. Y
 | Stop this project's background runtime | `ccb kill` |
 | Force cleanup before rebuilding | `ccb kill -f` then `ccb -n` |
 | Update to the latest stable release | `ccb update` |
+| Install or refresh the optional rich workbench | `ccb update rich` |
+| Open the rich workbench | `ccb rich` |
 | Inspect the active config layer | `ccb config validate` |
 | Preview a config reload plan without changing tmux | `ccb reload --dry-run` |
 | Apply supported config changes without restarting other agents | `ccb reload` |
@@ -312,7 +324,7 @@ CCB resolves config in three layers, from lowest to highest priority:
 3. Project config at `.ccb/ccb.config`.
 
 Higher layers replace lower layers as a whole; they are not merged. The project authority file is `.ccb/ccb.config`. The old `.ccb_config/ccb.config` path is legacy migration evidence only.
-The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3`, `ccb_self`, and a managed `neovim` tool window using `ccb-nvim`. The default `ccb_self` agent uses `codex` and is bound to `agentroles.ccb_self`.
+The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3`, and `ccb_self`. The optional rich workbench can be installed with `ccb update rich` and mounted as a tool window when wanted. The default `ccb_self` agent uses `codex` and is bound to `agentroles.ccb_self`.
 
 `.ccb/ccb.config` mainly controls:
 
@@ -322,7 +334,7 @@ The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3
 | Agent name and provider | `main:codex`, `reviewer:claude` | Names are used by the UI, ask routing, and memory files; provider decides which CLI starts. |
 | Workspace isolation | `worker1:codex(worktree)` | Gives implementation agents isolated git worktrees to reduce accidental overlap. |
 | Sidebar behavior | `[ui.sidebar]` | Controls whether the sidebar appears in every window, plus width and Comms height. |
-| Tool windows | `[tool_windows.<name>]` | Add managed non-agent windows such as Neovim; they appear as one sidebar row and are not `ask` targets. |
+| Tool windows | `[tool_windows.<name>]` | Add managed non-agent windows such as the rich workbench; they appear as one sidebar row and are not `ask` targets. |
 | Per-agent model/API | `[agents.<name>]` | Configure `model`, `key`, `url`, and related agent-local overrides. |
 | Role Pack binding | `agentroles.archi:codex` | Bind a reusable role package through a window leaf; role assets are installed once and projected into the derived agent. |
 | Role description | `[agents.<name>] description = "..."` | Give an agent a short responsibility note; longer workflow rules belong in memory. |
@@ -424,7 +436,7 @@ comms_limit = 3
 
 Note: `cmd` belongs to compact/hybrid single-window layouts. Do not put `cmd` inside `[windows]`.
 
-#### Managed Neovim tool window
+#### Optional rich workbench tool window
 
 Tool windows are tmux windows managed by CCB, but they are not agents. They do not appear in `ccb ask` targets and do not create provider runtime records.
 
@@ -435,15 +447,12 @@ entry_window = "main"
 [windows]
 main = "main:codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.rich]
+command = "CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench files"
+label = "rich"
 ```
 
-`ccb tools install neovim` prepares an isolated `ccb-nvim` wrapper and LazyVim profile under CCB-owned XDG paths. `install.sh install` and `ccb update` automatically attempt this provisioning by default and keep failures non-blocking. Set `CCB_INSTALL_NEOVIM=1` to make install provisioning required or `CCB_INSTALL_NEOVIM=0` to skip it.
-If `nvim` is not already on `PATH`, provisioning attempts to download the official Neovim release tarball for Linux/macOS and verifies the release sha256 before activating it. It does not write `~/.config/nvim`.
-The managed profile defaults to ASCII icons so terminals without Nerd Font support do not show unreadable boxes. To opt back into LazyVim glyph icons, launch with `CCB_LAZYVIM_ICON_STYLE=glyph ccb-nvim`.
-Use `ccb tools doctor neovim` to verify the managed profile. A working LazyVim setup reports `neovim_status: ok` and `lazyvim_health_status: ok`; damaged or partially downloaded plugin trees report `degraded` and can be repaired by rerunning `ccb tools install neovim`.
+`ccb update rich` prepares the optional workbench bundle under CCB-owned XDG paths, including WezTerm config, Yazi profiles, LazyVim-backed editing, Markdown rendering, and image/PDF/video preview helpers. Normal `ccb update` keeps this bundle untouched; rerun `ccb update rich` to install, repair, or refresh it, then use `ccb rich` or mount the tool window above.
 
 #### Per-agent model, API key, or base URL
 
