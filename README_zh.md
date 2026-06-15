@@ -83,7 +83,7 @@ npm install -g @seemseam/ccb
 ccb update
 ```
 
-可选富媒体工作台用 `ccb update rich` 安装或刷新，它会打包 WezTerm、Yazi、LazyVim、Markdown 渲染以及图片/PDF/视频预览能力：
+可选富媒体工作台用 `ccb update rich` 安装或刷新，它也会尝试自动安装 WezTerm、Yazi、Markdown/PDF/图片/视频辅助工具和推荐字体：
 
 ```bash
 ccb update rich
@@ -181,7 +181,7 @@ ccb
 
 ### Rich 模式（NEW!）
 
-运行 `ccb update rich` 安装可选富媒体工作台，再用 `ccb rich` 打开 WezTerm + Yazi + LazyVim，支持 Markdown 渲染和图片/PDF/视频预览。
+运行 `ccb update rich` 安装可选富媒体工作台及其依赖，再用 `ccb rich` 打开 WezTerm + Yazi + LazyVim，支持 Markdown 渲染和图片/PDF/视频预览。
 
 <p align="center">
   <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich 富媒体工作台在 WezTerm 中使用 Yazi 预览 PDF" width="860">
@@ -449,7 +449,7 @@ command = "CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench f
 label = "rich"
 ```
 
-`ccb update rich` 会在 CCB 自己的 XDG 目录下准备可选工作台包，包括 WezTerm 配置、Yazi profile、LazyVim 编辑能力、Markdown 渲染，以及图片/PDF/视频预览辅助工具。普通 `ccb update` 不会主动安装或刷新该包；需要安装、修复或更新时重新运行 `ccb update rich`，然后使用 `ccb rich` 或上面的工具 window 挂载方式启动。
+`ccb update rich` 会在 CCB 自己的 XDG 目录下准备可选工作台包，并通过当前平台的包管理器尝试安装 rich 依赖，包括 WezTerm、Yazi、Markdown/PDF/图片/视频辅助工具和推荐字体。普通 `ccb update` 不会主动安装或刷新该包；需要安装、修复或更新时重新运行 `ccb update rich`，然后使用 `ccb rich` 或上面的工具 window 挂载方式启动。设置 `CCB_RICH_INSTALL_DEPS=0` 可跳过系统包安装。
 
 #### 给 agent 单独配置模型、API key 或 base URL
 

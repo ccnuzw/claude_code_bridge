@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import signal
@@ -21,6 +22,157 @@ DETACHED_TMUX_ENV_KEYS = (
     'TMUX_PANE',
     'CCB_TMUX_SOCKET',
     'CCB_TMUX_SOCKET_PATH',
+)
+RICH_DEPENDENCIES: tuple[dict[str, object], ...] = (
+    {
+        'id': 'wezterm',
+        'commands': ('wezterm',),
+        'packages': {
+            'apt': ('wezterm',),
+            'dnf': ('wezterm',),
+            'yum': ('wezterm',),
+            'pacman': ('wezterm',),
+            'zypper': ('wezterm',),
+            'apk': ('wezterm',),
+            'brew_cask': ('wezterm',),
+        },
+    },
+    {
+        'id': 'yazi',
+        'commands': ('yazi', 'ya'),
+        'require_all': True,
+        'packages': {
+            'apt': ('yazi',),
+            'dnf': ('yazi',),
+            'yum': ('yazi',),
+            'pacman': ('yazi',),
+            'zypper': ('yazi',),
+            'apk': ('yazi',),
+            'brew': ('yazi',),
+        },
+    },
+    {
+        'id': 'markdown',
+        'commands': ('python3',),
+        'python_module': 'rich',
+        'packages': {
+            'apt': ('python3-rich',),
+            'dnf': ('python3-rich',),
+            'yum': ('python3-rich',),
+            'pacman': ('python-rich',),
+            'zypper': ('python3-rich',),
+            'apk': ('py3-rich',),
+            'brew': ('glow',),
+        },
+    },
+    {
+        'id': 'image_preview',
+        'commands': ('chafa',),
+        'packages': {
+            'apt': ('chafa',),
+            'dnf': ('chafa',),
+            'yum': ('chafa',),
+            'pacman': ('chafa',),
+            'zypper': ('chafa',),
+            'apk': ('chafa',),
+            'brew': ('chafa',),
+        },
+    },
+    {
+        'id': 'image_metadata',
+        'commands': ('identify',),
+        'packages': {
+            'apt': ('imagemagick',),
+            'dnf': ('ImageMagick',),
+            'yum': ('ImageMagick',),
+            'pacman': ('imagemagick',),
+            'zypper': ('ImageMagick',),
+            'apk': ('imagemagick',),
+            'brew': ('imagemagick',),
+        },
+    },
+    {
+        'id': 'pdf',
+        'commands': ('pdfinfo', 'pdftotext', 'pdftoppm'),
+        'require_all': True,
+        'packages': {
+            'apt': ('poppler-utils',),
+            'dnf': ('poppler-utils',),
+            'yum': ('poppler-utils',),
+            'pacman': ('poppler',),
+            'zypper': ('poppler-tools',),
+            'apk': ('poppler-utils',),
+            'brew': ('poppler',),
+        },
+    },
+    {
+        'id': 'video',
+        'commands': ('ffprobe', 'ffmpeg'),
+        'require_all': True,
+        'packages': {
+            'apt': ('ffmpeg',),
+            'dnf': ('ffmpeg',),
+            'yum': ('ffmpeg',),
+            'pacman': ('ffmpeg',),
+            'zypper': ('ffmpeg',),
+            'apk': ('ffmpeg',),
+            'brew': ('ffmpeg',),
+        },
+    },
+)
+RICH_FONT_DEPENDENCIES: tuple[dict[str, object], ...] = (
+    {
+        'id': 'font_jetbrains_mono',
+        'families': ('JetBrains Mono',),
+        'packages': {
+            'apt': ('fonts-jetbrains-mono',),
+            'dnf': ('jetbrains-mono-fonts',),
+            'yum': ('jetbrains-mono-fonts',),
+            'pacman': ('ttf-jetbrains-mono',),
+            'zypper': ('jetbrains-mono-fonts',),
+            'apk': ('font-jetbrains-mono',),
+            'brew_cask': ('font-jetbrains-mono',),
+        },
+    },
+    {
+        'id': 'font_symbols',
+        'families': ('Symbols Nerd Font Mono', 'Symbols Nerd Font', 'Noto Sans Symbols2'),
+        'packages': {
+            'apt': ('fonts-noto', 'fonts-symbola'),
+            'dnf': ('google-noto-symbols-fonts',),
+            'yum': ('google-noto-symbols-fonts',),
+            'pacman': ('noto-fonts', 'ttf-jetbrains-mono-nerd'),
+            'zypper': ('noto-sans-symbols-fonts',),
+            'apk': ('font-noto',),
+            'brew_cask': ('font-symbols-only-nerd-font',),
+        },
+    },
+    {
+        'id': 'font_cjk',
+        'families': ('Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans CJK'),
+        'packages': {
+            'apt': ('fonts-noto-cjk',),
+            'dnf': ('google-noto-sans-cjk-fonts',),
+            'yum': ('google-noto-sans-cjk-fonts',),
+            'pacman': ('noto-fonts-cjk',),
+            'zypper': ('noto-sans-cjk-fonts',),
+            'apk': ('font-noto-cjk',),
+            'brew_cask': ('font-noto-sans-cjk-sc',),
+        },
+    },
+    {
+        'id': 'font_emoji',
+        'families': ('Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji'),
+        'packages': {
+            'apt': ('fonts-noto-color-emoji',),
+            'dnf': ('google-noto-emoji-color-fonts',),
+            'yum': ('google-noto-emoji-color-fonts',),
+            'pacman': ('noto-fonts-emoji',),
+            'zypper': ('noto-coloremoji-fonts',),
+            'apk': ('font-noto-emoji',),
+            'brew_cask': ('font-noto-color-emoji',),
+        },
+    },
 )
 
 
@@ -96,17 +248,254 @@ def cmd_rich(
 
 
 def update_rich_workbench() -> dict[str, object]:
+    dependency_result = install_rich_dependencies()
     result = provision_workbench(profile='rich')
     if result.get('status') not in {'ok', 'degraded'}:
         result['rich_update_status'] = result.get('status')
+        _merge_dependency_install_result(result, dependency_result)
         return result
     enabled = enable_workbench(profile='rich')
     enabled['rich_update_status'] = result.get('status')
+    _merge_dependency_install_result(enabled, dependency_result)
+    _write_manifest(_paths(), enabled)
     return enabled
+
+
+def install_rich_dependencies() -> dict[str, object]:
+    if _env_false('CCB_RICH_INSTALL_DEPS'):
+        return {'status': 'skipped', 'reason': 'skipped by CCB_RICH_INSTALL_DEPS=0'}
+    missing = _missing_rich_dependencies(include_unknown_fonts=True)
+    if not missing:
+        return {'status': 'ok', 'reason': 'all rich dependencies are already available'}
+    manager = _detect_package_manager()
+    if not manager:
+        return {
+            'status': 'degraded',
+            'reason': 'no supported package manager found for automatic rich dependency installation',
+            'missing': ','.join(_dependency_ids(missing)),
+        }
+    install_items = _dependency_install_items(missing, manager)
+    if not install_items:
+        return {
+            'status': 'degraded',
+            'tool': manager,
+            'reason': 'no package mapping for missing rich dependencies on this platform',
+            'missing': ','.join(_dependency_ids(missing)),
+        }
+    sudo = _sudo_prefix(manager)
+    if sudo is None:
+        return {
+            'status': 'degraded',
+            'tool': manager,
+            'reason': 'automatic dependency installation requires root or sudo',
+            'missing': ','.join(_dependency_ids(missing)),
+        }
+    commands = _dependency_install_commands(manager, install_items, sudo=sudo)
+    print(f'🔧 Installing rich dependencies with {manager}: {", ".join(_format_install_item(item) for item in install_items)}')
+    failed: list[str] = []
+    installed: list[str] = []
+    for command, label in commands:
+        completed = subprocess.run(command)
+        if completed.returncode == 0:
+            installed.append(label)
+        else:
+            failed.append(label)
+    remaining = _missing_rich_dependencies(include_unknown_fonts=False)
+    status = 'ok' if not remaining else 'degraded'
+    result: dict[str, object] = {
+        'status': status,
+        'tool': manager,
+        'packages': ','.join(_format_install_item(item) for item in install_items),
+    }
+    if installed:
+        result['installed_packages'] = ','.join(installed)
+    if failed:
+        result['failed_packages'] = ','.join(failed)
+    if remaining:
+        result['missing'] = ','.join(_dependency_ids(remaining))
+        result['reason'] = 'some rich dependencies are still unavailable after automatic install'
+    elif failed:
+        result['reason'] = 'all required rich dependencies are available; some optional package installs failed'
+    return result
 
 
 def print_workbench_status(status: dict[str, object], stdout: TextIO | None = None) -> None:
     _print_status(status, stdout or sys.stdout)
+
+
+def _missing_rich_dependencies(*, include_unknown_fonts: bool) -> list[dict[str, object]]:
+    missing: list[dict[str, object]] = []
+    for spec in RICH_DEPENDENCIES:
+        if _command_dependency_missing(spec):
+            missing.append(spec)
+    for spec in RICH_FONT_DEPENDENCIES:
+        font_missing = _font_dependency_missing(spec)
+        if font_missing is True or (font_missing is None and include_unknown_fonts):
+            missing.append(spec)
+    return missing
+
+
+def _command_dependency_missing(spec: dict[str, object]) -> bool:
+    if spec.get('id') == 'markdown':
+        return _markdown_dependency_missing()
+    commands = tuple(str(item) for item in spec.get('commands', ()) or ())
+    require_all = bool(spec.get('require_all', False))
+    found = [command for command in commands if shutil.which(command)]
+    if commands:
+        if require_all and len(found) != len(commands):
+            return True
+        if not require_all and not found:
+            return True
+    module = str(spec.get('python_module') or '').strip()
+    if module:
+        python = shutil.which('python3')
+        if not python or not _python_module_available(module, python=python):
+            return True
+    return False
+
+
+def _markdown_dependency_missing() -> bool:
+    if shutil.which('glow') or shutil.which('mdcat'):
+        return False
+    python = shutil.which('python3')
+    return not (python and _python_module_available('rich', python=python))
+
+
+def _python_module_available(module: str, *, python: str) -> bool:
+    try:
+        completed = subprocess.run(
+            [python, '-c', f'import {module}'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    return completed.returncode == 0
+
+
+def _font_dependency_missing(spec: dict[str, object]) -> bool | None:
+    results = [_font_family_available(str(family)) for family in tuple(spec.get('families', ()) or ())]
+    if not results or all(result is None for result in results):
+        return None
+    return not any(result is True for result in results)
+
+
+def _font_family_available(family: str) -> bool | None:
+    fc_match = shutil.which('fc-match')
+    if not fc_match:
+        return None
+    try:
+        completed = subprocess.run(
+            [fc_match, '-f', '%{family}\n', family],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    requested = family.lower().replace(' ', '')
+    families = (completed.stdout or '').lower().replace(' ', '')
+    return requested in families
+
+
+def _detect_package_manager() -> str | None:
+    if platform.system() == 'Darwin' and shutil.which('brew'):
+        return 'brew'
+    for manager in ('apt-get', 'dnf', 'yum', 'pacman', 'zypper', 'apk'):
+        if shutil.which(manager):
+            return 'apt' if manager == 'apt-get' else manager
+    return None
+
+
+def _dependency_install_items(missing: list[dict[str, object]], manager: str) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    result: list[tuple[str, str]] = []
+    package_keys = ('brew', 'brew_cask') if manager == 'brew' else (manager,)
+    for spec in missing:
+        packages = spec.get('packages')
+        if not isinstance(packages, dict):
+            continue
+        for key in package_keys:
+            values = tuple(str(item) for item in packages.get(key, ()) or ())
+            kind = 'cask' if key == 'brew_cask' else 'package'
+            if manager == 'brew' and key == 'brew':
+                kind = 'formula'
+            for package in values:
+                item = (kind, package)
+                if item not in seen:
+                    seen.add(item)
+                    result.append(item)
+    return result
+
+
+def _dependency_install_commands(
+    manager: str,
+    items: list[tuple[str, str]],
+    *,
+    sudo: list[str],
+) -> list[tuple[list[str], str]]:
+    commands: list[tuple[list[str], str]] = []
+    if manager == 'apt':
+        commands.append((sudo + ['apt-get', 'update'], 'apt-get update'))
+        for _kind, package in items:
+            commands.append((sudo + ['apt-get', 'install', '-y', package], package))
+    elif manager in {'dnf', 'yum'}:
+        for _kind, package in items:
+            commands.append((sudo + [manager, 'install', '-y', package], package))
+    elif manager == 'pacman':
+        for _kind, package in items:
+            commands.append((sudo + ['pacman', '-Sy', '--needed', '--noconfirm', package], package))
+    elif manager == 'zypper':
+        for _kind, package in items:
+            commands.append((sudo + ['zypper', '--non-interactive', 'install', package], package))
+    elif manager == 'apk':
+        for _kind, package in items:
+            commands.append((sudo + ['apk', 'add', package], package))
+    elif manager == 'brew':
+        for kind, package in items:
+            if kind == 'cask':
+                commands.append((['brew', 'install', '--cask', package], f'cask:{package}'))
+            else:
+                commands.append((['brew', 'install', package], package))
+    return commands
+
+
+def _sudo_prefix(manager: str) -> list[str] | None:
+    if manager == 'brew':
+        return []
+    geteuid = getattr(os, 'geteuid', None)
+    if callable(geteuid) and geteuid() == 0:
+        return []
+    if not shutil.which('sudo'):
+        return None
+    return ['sudo'] if sys.stdin.isatty() else ['sudo', '-n']
+
+
+def _dependency_ids(items: list[dict[str, object]]) -> list[str]:
+    return [str(item.get('id') or '').strip() for item in items if str(item.get('id') or '').strip()]
+
+
+def _format_install_item(item: tuple[str, str]) -> str:
+    kind, package = item
+    return f'{kind}:{package}' if kind in {'cask', 'formula'} else package
+
+
+def _merge_dependency_install_result(status: dict[str, object], dependency_result: dict[str, object]) -> None:
+    prefix = 'dependency_install'
+    status[f'{prefix}_status'] = dependency_result.get('status')
+    for key in ('tool', 'packages', 'installed_packages', 'failed_packages', 'missing', 'reason'):
+        value = dependency_result.get(key)
+        if value not in (None, '', [], {}):
+            status[f'{prefix}_{key}'] = value
+
+
+def _env_false(name: str) -> bool:
+    value = str(os.environ.get(name) or '').strip().lower()
+    return value in {'0', 'false', 'off', 'no'}
 
 
 def provision_workbench(*, profile: str = DEFAULT_PROFILE) -> dict[str, object]:
@@ -1146,6 +1535,13 @@ def _print_status(status: dict[str, object], stdout: TextIO) -> None:
         'disabled_at',
         'close_status',
         'closed_processes',
+        'dependency_install_status',
+        'dependency_install_tool',
+        'dependency_install_packages',
+        'dependency_install_installed_packages',
+        'dependency_install_failed_packages',
+        'dependency_install_missing',
+        'dependency_install_reason',
         'rich_update_status',
         'launch_status',
         'launch_pid',
@@ -1228,6 +1624,7 @@ __all__ = [
     'cmd_rich',
     'disable_workbench',
     'enable_workbench',
+    'install_rich_dependencies',
     'launch_workbench',
     'print_workbench_status',
     'provision_workbench',

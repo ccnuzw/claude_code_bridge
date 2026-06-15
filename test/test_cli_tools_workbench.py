@@ -205,6 +205,52 @@ def test_update_rich_workbench_provisions_and_enables_bundle(tmp_path: Path, mon
     assert manifest['enabled'] is True
 
 
+def test_update_rich_workbench_installs_missing_dependencies(tmp_path: Path, monkeypatch) -> None:
+    fake_bin = _prepare_env(tmp_path, monkeypatch)
+    for name in ('yazi', 'ya', 'wezterm', 'chafa', 'pdfinfo', 'pdftotext', 'pdftoppm', 'ffprobe', 'ffmpeg'):
+        (fake_bin / name).unlink()
+    _stub_neovim(monkeypatch, tmp_path)
+    monkeypatch.setattr(workbench_tools, '_font_dependency_missing', lambda _spec: False)
+    monkeypatch.setattr(workbench_tools, '_python_module_available', lambda _module, *, python: True)
+    commands_by_package = {
+        'yazi': ('yazi', 'ya'),
+        'wezterm': ('wezterm',),
+        'chafa': ('chafa',),
+        'imagemagick': ('identify',),
+        'poppler-utils': ('pdfinfo', 'pdftotext', 'pdftoppm'),
+        'ffmpeg': ('ffprobe', 'ffmpeg'),
+    }
+    calls: list[list[str]] = []
+
+    class _Input:
+        def isatty(self) -> bool:
+            return False
+
+    def _run(command, **_kwargs):
+        calls.append(list(command))
+        package = command[-1]
+        for executable in commands_by_package.get(package, ()):
+            _fake_executable(fake_bin / executable)
+        return workbench_tools.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(workbench_tools.sys, 'stdin', _Input())
+    monkeypatch.setattr(workbench_tools.os, 'geteuid', lambda: 1000)
+    _fake_executable(fake_bin / 'sudo')
+    _fake_executable(fake_bin / 'apt-get')
+    monkeypatch.setattr(workbench_tools.subprocess, 'run', _run)
+
+    result = workbench_tools.update_rich_workbench()
+
+    assert result['status'] == 'ok'
+    assert result['enabled'] is True
+    assert result['dependency_install_status'] == 'ok'
+    assert result['dependency_install_tool'] == 'apt'
+    assert result['dependency_install_packages'] == 'wezterm,yazi,chafa,imagemagick,poppler-utils,ffmpeg'
+    assert calls[0] == ['sudo', '-n', 'apt-get', 'update']
+    assert ['sudo', '-n', 'apt-get', 'install', '-y', 'yazi'] in calls
+    assert ['sudo', '-n', 'apt-get', 'install', '-y', 'wezterm'] in calls
+
+
 def test_workbench_enable_disable_and_uninstall_are_bundle_scoped(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
     _stub_neovim(monkeypatch, tmp_path)

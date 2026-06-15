@@ -83,7 +83,7 @@ After CCB is installed, use CCB's updater:
 ccb update
 ```
 
-Install or refresh the optional rich media workbench with WezTerm, Yazi, LazyVim, Markdown rendering, and image/PDF/video previews:
+Install or refresh the optional rich media workbench; this also attempts to install WezTerm, Yazi, Markdown/PDF/image/video helpers, and recommended fonts:
 
 ```bash
 ccb update rich
@@ -180,7 +180,7 @@ Agents can also call `/ask` from workflow orchestration to delegate and hand off
 
 ### Rich Mode (NEW!)
 
-Run `ccb update rich` to install the optional rich workbench, then `ccb rich` to open WezTerm + Yazi + LazyVim with Markdown rendering and image/PDF/video previews.
+Run `ccb update rich` to install the optional rich workbench and its dependencies, then `ccb rich` to open WezTerm + Yazi + LazyVim with Markdown rendering and image/PDF/video previews.
 
 <p align="center">
   <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi PDF preview in WezTerm" width="860">
@@ -458,7 +458,7 @@ command = "CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench f
 label = "rich"
 ```
 
-`ccb update rich` prepares the optional workbench bundle under CCB-owned XDG paths, including WezTerm config, Yazi profiles, LazyVim-backed editing, Markdown rendering, and image/PDF/video preview helpers. Normal `ccb update` keeps this bundle untouched; rerun `ccb update rich` to install, repair, or refresh it, then use `ccb rich` or mount the tool window above.
+`ccb update rich` prepares the optional workbench bundle under CCB-owned XDG paths and attempts to install required rich dependencies through the platform package manager, including WezTerm, Yazi, Markdown/PDF/image/video helpers, and recommended fonts. Normal `ccb update` keeps this bundle untouched; rerun `ccb update rich` to install, repair, or refresh it, then use `ccb rich` or mount the tool window above. Set `CCB_RICH_INSTALL_DEPS=0` to skip system package installation.
 
 #### Per-agent model, API key, or base URL
 
