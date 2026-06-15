@@ -725,6 +725,22 @@ case "$cmd" in
     if [ "$#" -eq 0 ]; then
       set -- "${{SHELL:-/bin/sh}}" -lc 'ccb-yazi-rich "$PWD"'
     fi
+    term_program="$(printf '%s' "${{TERM_PROGRAM:-}}" | tr '[:upper:]' '[:lower:]')"
+    workbench_terminal="$(printf '%s' "${{CCB_WORKBENCH_TERMINAL_PROGRAM:-}}" | tr '[:upper:]' '[:lower:]')"
+    if [ -n "${{WEZTERM_PANE:-}}" ] || [ -n "${{WEZTERM_EXECUTABLE:-}}" ] || [ -n "${{WEZTERM_UNIX_SOCKET:-}}" ] || [ "$term_program" = "wezterm" ] || [ "$workbench_terminal" = "wezterm" ]; then
+      exec wezterm cli spawn --cwd "$PWD" -- env \
+        -u TMUX \
+        -u TMUX_PANE \
+        -u CCB_TMUX_SOCKET \
+        -u CCB_TMUX_SOCKET_PATH \
+        CCB_WORKBENCH_PROFILE=rich \
+        CCB_WORKBENCH_ROOT={_shell_quote(str(paths['root']))} \
+        CCB_WORKBENCH_TERMINAL_PROGRAM=WezTerm \
+        CCB_WORKBENCH_YAZI_SAFE_CONFIG={_shell_quote(str(paths['yazi_safe_profile']))} \
+        CCB_WORKBENCH_YAZI_RICH_CONFIG={_shell_quote(str(paths['yazi_rich_profile']))} \
+        CCB_WORKBENCH_FORCE_RICH=1 \
+        "$@"
+    fi
     exec wezterm --config-file {_shell_quote(str(paths['wezterm_config']))} \
       start --always-new-process --no-auto-connect --cwd "$PWD" -- env \
       -u TMUX \

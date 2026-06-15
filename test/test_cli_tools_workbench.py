@@ -135,11 +135,13 @@ def test_workbench_install_writes_independent_bundle_profiles(tmp_path: Path, mo
     assert 'export TERM_PROGRAM_VERSION="${CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION}"' in wrapper
     assert str(tmp_path / 'home' / '.config') not in wrapper
     workbench = (root / 'bin' / 'ccb-workbench').read_text(encoding='utf-8')
+    assert 'WEZTERM_PANE' in workbench
+    assert 'wezterm cli spawn --cwd "$PWD" -- env' in workbench
     assert 'wezterm --config-file' in workbench
     assert '--config-file' in workbench
     assert 'start --always-new-process --no-auto-connect --cwd "$PWD"' in workbench
     assert ' --skip-config' not in workbench
-    assert ' -n ' not in workbench
+    assert 'start -n ' not in workbench
     assert str(root / 'profiles' / 'wezterm' / 'wezterm.lua') in workbench
     assert 'CCB_WORKBENCH_FORCE_RICH=1' in workbench
     assert 'CCB_WORKBENCH_TERMINAL_PROGRAM=WezTerm' in workbench
@@ -279,6 +281,53 @@ def test_workbench_launch_detaches_outer_tmux_environment(tmp_path: Path, monkey
     assert 'TMUX_PANE' not in env
     assert 'CCB_TMUX_SOCKET' not in env
     assert 'CCB_TMUX_SOCKET_PATH' not in env
+
+
+def test_workbench_terminal_reuses_current_wezterm_window(tmp_path: Path, monkeypatch) -> None:
+    fake_bin = _prepare_env(tmp_path, monkeypatch)
+    _stub_neovim(monkeypatch, tmp_path)
+    workbench_tools.provision_workbench(profile='rich')
+    project_root = tmp_path / 'project'
+    project_root.mkdir()
+    wezterm_log = tmp_path / 'wezterm-argv.txt'
+    (fake_bin / 'wezterm').write_text(
+        '#!/usr/bin/env sh\n'
+        'printf "%s\\n" "$@" > "$WEZTERM_ARGV_LOG"\n',
+        encoding='utf-8',
+    )
+    (fake_bin / 'wezterm').chmod(0o755)
+    monkeypatch.setenv('WEZTERM_PANE', '7')
+    monkeypatch.setenv('WEZTERM_ARGV_LOG', str(wezterm_log))
+    monkeypatch.setenv('TMUX', '/tmp/tmux-1000/outer,123,0')
+    monkeypatch.setenv('TMUX_PANE', '%7')
+
+    env = workbench_tools._detached_terminal_env()
+    env['PATH'] = f'{fake_bin}:/usr/bin:/bin'
+    result = workbench_tools.subprocess.run(
+        [
+            str(tmp_path / 'xdg-data' / 'ccb' / 'tools' / 'workbench' / 'bin' / 'ccb-workbench'),
+            'terminal',
+            '/bin/sh',
+            '-lc',
+            'echo rich',
+        ],
+        cwd=project_root,
+        env=env,
+        text=True,
+        stdout=workbench_tools.subprocess.PIPE,
+        stderr=workbench_tools.subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = wezterm_log.read_text(encoding='utf-8').splitlines()
+    assert argv[:5] == ['cli', 'spawn', '--cwd', str(project_root), '--']
+    assert 'start' not in argv
+    assert '--always-new-process' not in argv
+    assert '-u' in argv
+    assert 'TMUX' in argv
+    assert 'CCB_WORKBENCH_FORCE_RICH=1' in argv
+    assert argv[-3:] == ['/bin/sh', '-lc', 'echo rich']
 
 
 def test_rich_launch_opens_wezterm_with_source_test_entrypoint(tmp_path: Path, monkeypatch) -> None:
