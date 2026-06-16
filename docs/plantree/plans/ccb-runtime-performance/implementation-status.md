@@ -55,14 +55,17 @@ success recording, and covering `request_sidebar_refresh()` followed by
   including project_view/Rust-helper work from worker3; commit packaging must be
   path-scoped.
 
-## Current Commit Target
+## Last Landed
 
-First candidate commit: lifecycle profiling harness, detached tmux prepare
-cache, project_focus fast path, pending sidebar-refresh support, tests, and
-plan evidence from
-[candidate-commit-scope-2026-06-16.md](topics/candidate-commit-scope-2026-06-16.md).
-This commit must not include the quarantined worker3 project_view/Rust-helper
-slice.
+- `af2818d Add runtime performance profiling and latency fast paths`: lifecycle
+  profiling harness, detached tmux prepare cache, project_focus fast path,
+  pending sidebar-refresh support, tests, and plan evidence.
+
+## Next Commit Target
+
+Separate project_view/store optimization review. This must not reuse the
+quarantined worker3 project_view/Rust-helper slice without a fresh scoped
+review, staged-tree tests, and source-runtime smoke.
 
 ## Last Verified
 

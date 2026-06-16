@@ -32,6 +32,8 @@ PROJECT_VIEW_TTL_MS = 1000
 PROJECT_VIEW_COMMS_LIMIT = 8
 _RECENT_JOB_SCAN_LIMIT_PER_AGENT = 128
 _RECENT_JOB_RESULT_LIMIT = PROJECT_VIEW_COMMS_LIMIT * 8
+_RECENT_JOB_INITIAL_SCAN_MIN = 8
+_RECENT_JOB_INITIAL_SCAN_MAX = 32
 _COMMS_RECENT_STATUSES = frozenset(
     {
         JobStatus.COMPLETED,
@@ -1039,6 +1041,28 @@ def _recent_jobs(
     if store is None:
         return ()
     jobs: list[object] = []
+    agent_names = tuple(agents)
+    initial_scan_limit = _recent_job_initial_scan_limit(
+        agent_count=len(agent_names),
+        result_limit=_RECENT_JOB_RESULT_LIMIT,
+        max_per_agent=_RECENT_JOB_SCAN_LIMIT_PER_AGENT,
+    )
+    if hasattr(store, 'list_project_view_recent_jobs'):
+        try:
+            if metrics_context is not None:
+                metrics_context.store_scan_count += len(agent_names)
+            jobs = list(
+                store.list_project_view_recent_jobs(
+                    agent_names,
+                    per_agent_limit=_RECENT_JOB_SCAN_LIMIT_PER_AGENT,
+                    per_agent_initial_limit=initial_scan_limit,
+                    result_limit=_RECENT_JOB_RESULT_LIMIT,
+                    statuses=tuple(status.value for status in _COMMS_RECENT_STATUSES),
+                )
+            )
+        except Exception:
+            jobs = []
+        return tuple(sorted(jobs, key=lambda item: item.updated_at, reverse=True)[:_RECENT_JOB_RESULT_LIMIT])
     for agent_name in agents:
         try:
             if metrics_context is not None:
@@ -1058,6 +1082,15 @@ def _recent_jobs(
             if getattr(record, 'status', None) in _COMMS_RECENT_STATUSES
         )
     return tuple(sorted(jobs, key=lambda item: item.updated_at, reverse=True)[:_RECENT_JOB_RESULT_LIMIT])
+
+
+def _recent_job_initial_scan_limit(*, agent_count: int, result_limit: int, max_per_agent: int) -> int:
+    if agent_count <= 0 or result_limit <= 0 or max_per_agent <= 0:
+        return 0
+    per_agent = ((result_limit + agent_count - 1) // agent_count) * 2
+    per_agent = max(_RECENT_JOB_INITIAL_SCAN_MIN, per_agent)
+    per_agent = min(_RECENT_JOB_INITIAL_SCAN_MAX, per_agent)
+    return min(max_per_agent, per_agent)
 
 
 def _configured_agent_names(dispatcher) -> frozenset[str]:

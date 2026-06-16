@@ -1789,6 +1789,51 @@ def test_project_view_recent_jobs_uses_bounded_tail_reads(tmp_path: Path, monkey
     ]
 
 
+def test_project_view_recent_jobs_uses_adaptive_scan_budget(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-comms-adaptive-budget'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        registry.upsert(_runtime(agent_name, project_id=project_id))
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    captured: dict[str, object] = {}
+
+    def fake_recent_jobs(agent_names, *, per_agent_limit, per_agent_initial_limit, result_limit, statuses):
+        captured['agent_names'] = tuple(agent_names)
+        captured['per_agent_limit'] = per_agent_limit
+        captured['per_agent_initial_limit'] = per_agent_initial_limit
+        captured['result_limit'] = result_limit
+        captured['statuses'] = tuple(statuses)
+        return ()
+
+    monkeypatch.setattr(dispatcher._job_store, 'list_project_view_recent_jobs', fake_recent_jobs)
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            clock=lambda: NOW,
+        )
+    )
+
+    service.build_response()
+
+    assert captured['agent_names'] == ('agent1', 'agent2', 'agent3')
+    assert captured['per_agent_limit'] == 128
+    assert captured['per_agent_initial_limit'] == 32
+    assert captured['result_limit'] == 64
+    assert 'completed' in captured['statuses']
+
+
 def test_project_view_backfills_reply_delivery_source_outside_recent_tail(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-comms-delivery-tail'
     project_root.mkdir()

@@ -1,10 +1,51 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 from ccbd.api_models import DeliveryScope, JobEvent, JobRecord, JobStatus, MessageEnvelope, SubmissionRecord, TargetKind
 from storage.jsonl_store import JsonlStore
 from storage.paths import PathLayout
 
 SCHEMA_VERSION = 2
+PROJECT_VIEW_RECENT_JOB_STATUS_VALUES = frozenset(
+    {
+        JobStatus.COMPLETED.value,
+        JobStatus.CANCELLED.value,
+        JobStatus.FAILED.value,
+        JobStatus.INCOMPLETE.value,
+    }
+)
+
+
+@dataclass(frozen=True)
+class ProjectViewMessageSummary:
+    project_id: str = ''
+    to_agent: str = ''
+    from_actor: str = ''
+    body: str = ''
+    task_id: str | None = None
+    reply_to: str | None = None
+    message_type: str = ''
+    delivery_scope: str = ''
+    silence_on_success: bool = False
+    route_options: dict[str, Any] = field(default_factory=dict)
+    body_artifact: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ProjectViewJobSummary:
+    job_id: str
+    agent_name: str
+    provider: str
+    request: ProjectViewMessageSummary
+    status: JobStatus
+    terminal_decision: dict[str, Any] | None
+    created_at: str
+    updated_at: str
+    target_kind: TargetKind = TargetKind.AGENT
+    target_name: str = ''
+    provider_options: dict[str, Any] = field(default_factory=dict)
 
 
 class JobStore:
@@ -30,6 +71,61 @@ class JobStore:
 
     def list_agent_tail(self, agent_name: str, *, limit: int) -> list[JobRecord]:
         return self.list_target_tail(TargetKind.AGENT, agent_name, limit=limit)
+
+    def list_project_view_recent_jobs(
+        self,
+        agent_names: tuple[str, ...] | list[str],
+        *,
+        per_agent_limit: int,
+        result_limit: int,
+        statuses: tuple[str, ...] | list[str] | None = None,
+        per_agent_initial_limit: int | None = None,
+    ) -> tuple[ProjectViewJobSummary, ...]:
+        if per_agent_limit < 0:
+            raise ValueError('per_agent_limit cannot be negative')
+        if result_limit < 0:
+            raise ValueError('result_limit cannot be negative')
+        if per_agent_initial_limit is not None and per_agent_initial_limit < 0:
+            raise ValueError('per_agent_initial_limit cannot be negative')
+        normalized = [str(agent_name) for agent_name in agent_names]
+        if not normalized or per_agent_limit <= 0 or result_limit <= 0:
+            return ()
+        status_values = frozenset(str(status) for status in (statuses or tuple(PROJECT_VIEW_RECENT_JOB_STATUS_VALUES)))
+        initial_limit = per_agent_limit if per_agent_initial_limit is None else min(per_agent_initial_limit, per_agent_limit)
+        if initial_limit <= 0:
+            initial_limit = min(per_agent_limit, 1)
+        current_limit = initial_limit
+        while True:
+            jobs = self._list_project_view_recent_jobs_python(
+                normalized,
+                per_agent_limit=current_limit,
+                result_limit=result_limit,
+                status_values=status_values,
+            )
+            if len(jobs) >= result_limit or current_limit >= per_agent_limit:
+                return jobs
+            current_limit = min(per_agent_limit, max(current_limit + 1, current_limit * 2))
+
+    def _list_project_view_recent_jobs_python(
+        self,
+        agent_names: list[str],
+        *,
+        per_agent_limit: int,
+        result_limit: int,
+        status_values: frozenset[str],
+    ) -> tuple[ProjectViewJobSummary, ...]:
+        jobs: list[ProjectViewJobSummary] = []
+        for agent_name in agent_names:
+            latest_by_job: dict[str, JobRecord] = {}
+            for record in self.list_agent_tail(agent_name, limit=per_agent_limit):
+                latest_by_job[record.job_id] = record
+            jobs.extend(
+                _project_view_job_summary_from_job(record)
+                for record in latest_by_job.values()
+                if record.status.value in status_values
+            )
+        jobs.sort(key=lambda item: item.updated_at, reverse=True)
+        return tuple(jobs[:result_limit])
 
     def list_target_tail(self, target_kind: TargetKind | str, target_name: str, *, limit: int) -> list[JobRecord]:
         return self._store.read_tail(
@@ -142,6 +238,34 @@ def _job_record_from_record(record: dict) -> JobRecord:
         target_name=record.get('target_name', record.get('agent_name', '')),
         provider_instance=record.get('provider_instance'),
         provider_options=dict(record.get('provider_options') or {}),
+    )
+
+
+def _project_view_job_summary_from_job(record: JobRecord) -> ProjectViewJobSummary:
+    return ProjectViewJobSummary(
+        job_id=record.job_id,
+        agent_name=record.agent_name,
+        provider=record.provider,
+        request=ProjectViewMessageSummary(
+            project_id=record.request.project_id,
+            to_agent=record.request.to_agent,
+            from_actor=record.request.from_actor,
+            body=record.request.body,
+            task_id=record.request.task_id,
+            reply_to=record.request.reply_to,
+            message_type=record.request.message_type,
+            delivery_scope=record.request.delivery_scope.value,
+            silence_on_success=record.request.silence_on_success,
+            route_options=dict(record.request.route_options),
+            body_artifact=dict(record.request.body_artifact) if isinstance(record.request.body_artifact, dict) else None,
+        ),
+        status=record.status,
+        terminal_decision=dict(record.terminal_decision) if isinstance(record.terminal_decision, dict) else None,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        target_kind=record.target_kind,
+        target_name=record.target_name,
+        provider_options=dict(record.provider_options or {}),
     )
 
 

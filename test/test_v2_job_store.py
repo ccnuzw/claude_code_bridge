@@ -211,6 +211,88 @@ def test_job_store_lists_agent_tail(tmp_path: Path) -> None:
     assert [record.job_id for record in records] == ['job-3', 'job-4', 'job-5']
 
 
+def test_job_store_lists_project_view_recent_job_summaries(tmp_path: Path) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary')
+    store = JobStore(layout)
+    for index, status in enumerate((JobStatus.RUNNING, JobStatus.COMPLETED, JobStatus.FAILED)):
+        store.append(
+            JobRecord(
+                job_id=f'job-{index}',
+                submission_id=None,
+                agent_name='agent1',
+                provider='codex',
+                request=_envelope(),
+                status=status,
+                terminal_decision={'reason': status.value} if status in {JobStatus.COMPLETED, JobStatus.FAILED} else None,
+                cancel_requested_at=None,
+                created_at='2026-03-18T00:00:00Z',
+                updated_at=f'2026-03-18T00:00:0{index}Z',
+            )
+        )
+
+    summaries = store.list_project_view_recent_jobs(
+        ('agent1',),
+        per_agent_limit=10,
+        result_limit=8,
+        statuses=('completed', 'failed'),
+    )
+
+    assert [summary.job_id for summary in summaries] == ['job-2', 'job-1']
+    assert summaries[0].status is JobStatus.FAILED
+    assert summaries[0].request.from_actor == 'user'
+
+
+def test_job_store_project_view_recent_jobs_adaptive_python_scan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary-adaptive')
+    store = JobStore(layout)
+    for index in range(12):
+        store.append(
+            JobRecord(
+                job_id=f'job-{index}',
+                submission_id=None,
+                agent_name='agent1',
+                provider='codex',
+                request=_envelope(),
+                status=JobStatus.COMPLETED,
+                terminal_decision={'reason': 'task_complete'},
+                cancel_requested_at=None,
+                created_at='2026-03-18T00:00:00Z',
+                updated_at=f'2026-03-18T00:00:{index:02d}Z',
+            )
+        )
+    original = store.list_agent_tail
+    limits: list[int] = []
+
+    def recording_tail(agent_name: str, *, limit: int):
+        limits.append(limit)
+        return original(agent_name, limit=limit)
+
+    monkeypatch.setattr(store, 'list_agent_tail', recording_tail)
+
+    summaries = store.list_project_view_recent_jobs(
+        ('agent1',),
+        per_agent_initial_limit=4,
+        per_agent_limit=16,
+        result_limit=8,
+        statuses=('completed',),
+    )
+
+    assert limits == [4, 8]
+    assert [summary.job_id for summary in summaries] == [
+        'job-11',
+        'job-10',
+        'job-9',
+        'job-8',
+        'job-7',
+        'job-6',
+        'job-5',
+        'job-4',
+    ]
+
+
 def test_job_store_roundtrips_silence_on_success_request_flag(tmp_path: Path) -> None:
     layout = PathLayout(tmp_path / 'repo')
     store = JobStore(layout)
