@@ -175,4 +175,19 @@ def test_ccbd_implementation_summary_flags_temporary_root(monkeypatch) -> None:
 
     assert payload["status"] == "degraded"
     assert payload["reason"] == "ccbd_implementation_root_is_temporary"
-    assert payload["root"] == "/tmp/ccb-smoke/prefix"
+    assert payload["root"] == str(Path("/tmp/ccb-smoke/prefix").resolve(strict=False))
+
+
+def test_ccbd_implementation_summary_flags_resolved_tempdir_root(monkeypatch) -> None:
+    temp_root = Path("/private/var/folders/ccb-test/T").resolve(strict=False)
+    monkeypatch.setattr(ccbd.tempfile, "gettempdir", lambda: str(temp_root))
+    monkeypatch.setattr(
+        ccbd,
+        "_process_cmdline",
+        lambda pid: ("python3", str(temp_root / "prefix/lib/ccbd/main.py"), "--project", "/repo"),
+    )
+
+    payload = ccbd._implementation_summary(1234)
+
+    assert payload["status"] == "degraded"
+    assert payload["reason"] == "ccbd_implementation_root_is_temporary"

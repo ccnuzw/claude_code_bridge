@@ -1,5 +1,20 @@
 # Changelog
 
+## v7.6.3 (2026-06-16)
+
+### macOS CI Green Patch
+
+- **macOS Temporary Roots Fixed**: install-time temporary-prefix guards now
+  recognize the canonical `${TMPDIR:-/tmp}` parent in addition to `/tmp`,
+  `/private/tmp`, `/var/tmp`, and `/dev/shm`, matching GitHub Actions macOS
+  runner paths under `/private/var/folders/...`.
+- **Doctor Temporary Detection Fixed**: doctor runtime checks include the
+  resolved `tempfile.gettempdir()` root so temporary ccbd implementations are
+  diagnosed consistently across Linux and macOS `/tmp` symlink behavior.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and the macOS
+  CI compatibility tests are aligned for 7.6.3.
+
 ## v7.6.2 (2026-06-16)
 
 ### Rich Workbench Hotfix

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shlex
+import tempfile
 
 from terminal_runtime.tmux import tmux_base
 from .stores import report_summary_fields, safe_report_load
@@ -164,8 +165,15 @@ def _implementation_root_from_cmdline(cmdline: tuple[str, ...]) -> Path | None:
 
 def _path_is_temporary(path: Path) -> bool:
     text = str(path)
-    temporary_roots = ('/tmp', '/var/tmp', '/dev/shm', '/private/tmp')
+    temporary_roots = ('/tmp', '/var/tmp', '/dev/shm', '/private/tmp', _resolved_tempdir())
     return any(text == root or text.startswith(f'{root}/') for root in temporary_roots)
+
+
+def _resolved_tempdir() -> str:
+    try:
+        return str(Path(tempfile.gettempdir()).expanduser().resolve(strict=False))
+    except Exception:
+        return str(Path(tempfile.gettempdir()).expanduser())
 
 
 def _tmux_start_server_command(socket_path: object) -> str | None:

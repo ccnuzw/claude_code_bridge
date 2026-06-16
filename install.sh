@@ -271,10 +271,13 @@ path_is_temporary_rooted() {
     /tmp|/tmp/*|/var/tmp|/var/tmp/*|/dev/shm|/dev/shm/*|/private/tmp|/private/tmp/*)
       return 0
       ;;
-    *)
-      return 1
-      ;;
   esac
+  local tmp_root=""
+  tmp_root="$(canonical_existing_parent_path "${TMPDIR:-/tmp}" 2>/dev/null || true)"
+  if [[ -n "$tmp_root" && ( "$path" == "$tmp_root" || "$path" == "$tmp_root/"* ) ]]; then
+    return 0
+  fi
+  return 1
 }
 
 validate_temporary_install_scope() {

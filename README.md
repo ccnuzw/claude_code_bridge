@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.2-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.3-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -641,6 +641,19 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.3</b> - macOS CI Green Patch</summary>
+
+- Fixes macOS temporary-root detection for install guards by recognizing the
+  resolved `${TMPDIR:-/tmp}` parent used by GitHub Actions runners.
+- Aligns doctor temporary implementation detection with macOS `/tmp` symlink
+  behavior, preventing false red CI on `/private/tmp` and
+  `/private/var/folders/...` paths.
+- Keeps the v7.6.2 rich workbench and tmux single-status-row fixes intact for
+  user install testing.
+
+</details>
+
+<details>
 <summary><b>v7.6.2</b> - Rich Workbench Hotfix</summary>
 
 - Allows `rich` in `.ccb/ccb.config` as a tool/layout alias without requiring

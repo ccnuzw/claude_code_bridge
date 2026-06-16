@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.2-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.3-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -630,6 +630,19 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.3</b> - macOS CI 绿灯补丁</summary>
+
+- install guard 现在会识别 GitHub Actions macOS runner 使用的
+  `${TMPDIR:-/tmp}` canonical parent，避免 `/private/var/folders/...` 临时
+  路径被误放行。
+- doctor 的 temporary implementation 检测同步兼容 macOS `/tmp` symlink
+  行为，避免 `/private/tmp` 和 `/private/var/folders/...` 路径导致 CI 误红。
+- 保留 v7.6.2 已发布的 rich workbench 与 tmux 单行 status 修复，供用户安装
+  实测。
+
+</details>
+
+<details>
 <summary><b>v7.6.2</b> - Rich Workbench 热修复</summary>
 
 - `.ccb/ccb.config` 现在可以把 `rich` 当作工具/layout alias 使用，不需要

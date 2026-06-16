@@ -6,6 +6,7 @@ from pathlib import Path
 import platform
 import shutil
 import sys
+import tempfile
 from typing import Any
 
 from cli.management import find_install_dir, get_version_info
@@ -146,8 +147,15 @@ def _path_is_within(root: Path | None, candidate: Path | None) -> bool:
 
 def _path_is_temporary(path: Path) -> bool:
     text = str(path)
-    temporary_roots = ('/tmp', '/var/tmp', '/dev/shm', '/private/tmp')
+    temporary_roots = ('/tmp', '/var/tmp', '/dev/shm', '/private/tmp', _resolved_tempdir())
     return any(text == root or text.startswith(f'{root}/') for root in temporary_roots)
+
+
+def _resolved_tempdir() -> str:
+    try:
+        return str(Path(tempfile.gettempdir()).expanduser().resolve(strict=False))
+    except Exception:
+        return str(Path(tempfile.gettempdir()).expanduser())
 
 
 def _effective_uid() -> int:
