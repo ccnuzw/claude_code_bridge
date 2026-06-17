@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.5.3-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.6-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -186,7 +186,7 @@ ccb
 运行 `ccb update rich` 安装可选富媒体工作台；它会尽量封装 Yazi 等二进制，并用 WezTerm 承载富媒体终端界面，提供 Markdown 渲染和图片/PDF/视频预览。安装后，普通 `ccb` 会自动打开 rich launcher，只有当当前已经处于 CCB 自己拉起的 rich WezTerm 中时才不会再次跳转；`ccb rich` 仍可作为显式启动入口。
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich 富媒体工作台在 WezTerm 中使用 Yazi 预览 PDF" width="860">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich 富媒体工作台在 WezTerm 中使用 Yazi 预览" width="860">
 </p>
 
 ### 联系方式
@@ -436,7 +436,7 @@ comms_limit = 3
 
 注意：`cmd` 只属于紧凑/混合单窗口布局；`[windows]` 拓扑里不要写 `cmd`。
 
-#### 可选 rich 富媒体工具 window
+#### Rich 富媒体工作台工具 window
 
 工具 window 是 CCB 管理的 tmux window，但不是 agent。它不会出现在 `ccb ask` 目标中，也不会创建 provider runtime 记录。
 
@@ -630,6 +630,95 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.6</b> - Role Store Home Pinning</summary>
+
+- role store lookup 现在会固定在 managed provider home 之外，provider session
+  改写 `HOME` 时不再误查 provider-local `.roles` 目录。
+- CCB 启动边界会保留 `AGENT_ROLES_STORE`；未显式设置时回退到真实
+  source/account home 下的 role store。
+- 缺失 role 的诊断会打印解析后的 role store 路径，便于定位 provider-home
+  漂移问题。
+
+</details>
+
+<details>
+<summary><b>v7.6.5</b> - Rich WezTerm 输入法</summary>
+
+- 生成的 rich WezTerm 配置现在会启用 IME，并把 `XMODIFIERS=@im=...`
+  映射为 WezTerm 的 XIM 名称，修复 X11 下 fcitx/ibus 中文输入连接问题。
+- 生成的 `ccb-workbench` wrapper 会在启动 WezTerm 前探测运行中或已安装的
+  `fcitx5`、`fcitx`、`ibus-daemon`，只在用户未设置时补齐输入法环境变量。
+- 保留 v7.6.4 已绿发布面，以及 v7.6.2 的 rich/tmux 修复，供 npm latest
+  安装实测。
+
+</details>
+
+<details>
+<summary><b>v7.6.4</b> - macOS Release Install Smoke</summary>
+
+- 保留 7.6.3 的 macOS temporary-root 加固，同时让 CI release install smoke
+  对隔离的 sibling `CODEX_BIN_DIR` 显式设置临时 bin override。
+- 不放宽用户侧 installer 安全规则，但允许 release workflow 从临时 smoke root
+  验证 macOS 包安装。
+- 保留 v7.6.2 已发布的 rich workbench 与 tmux 单行 status 修复，供用户安装
+  实测。
+
+</details>
+
+<details>
+<summary><b>v7.6.3</b> - macOS CI 绿灯补丁</summary>
+
+- install guard 现在会识别 GitHub Actions macOS runner 使用的
+  `${TMPDIR:-/tmp}` canonical parent，避免 `/private/var/folders/...` 临时
+  路径被误放行。
+- doctor 的 temporary implementation 检测同步兼容 macOS `/tmp` symlink
+  行为，避免 `/private/tmp` 和 `/private/var/folders/...` 路径导致 CI 误红。
+- 保留 v7.6.2 已发布的 rich workbench 与 tmux 单行 status 修复，供用户安装
+  实测。
+
+</details>
+
+<details>
+<summary><b>v7.6.2</b> - Rich Workbench 热修复</summary>
+
+- `.ccb/ccb.config` 现在可以把 `rich` 当作工具/layout alias 使用，不需要
+  provider runtime；它会 materialize 成托管工具 pane/window，不会成为 `ask`
+  目标。
+- `ccb update rich` 启用 bundle 后，普通 `ccb` 在既有 rich/WezTerm 会话外可
+  自动走 rich launcher，同时避免递归重复拉起 WezTerm。
+- 新增 `ccb uninstall rich`、`ccb rich uninstall` 和 `ccb rich disable`，
+  可回到普通 CCB 启动；完整 `ccb uninstall` 语义保持不变。
+- rich 更新只清理 CCB-owned legacy editor roots 和链接，不会碰用户自己的
+  editor 安装和个人配置。
+
+</details>
+
+<details>
+<summary><b>v7.6.1</b> - Rich Workbench 二进制封装</summary>
+
+- `ccb update rich` 会优先封装并验证 Yazi/ya 二进制，再让包管理器兜底。
+- Linux rich 安装优先使用官方 Yazi musl 构建，再回退 GNU 构建，避免旧稳定
+  发行版遇到较新的 glibc 要求。
+- 下载的 Yazi 二进制必须通过 `--version` 验证才会启用；无效的 managed
+  二进制会被移除，保证后续 fallback 仍可工作。
+- WSL 下 rich launcher 可使用 Windows 原生 `wezterm.exe`，同时让 CCB、Yazi
+  和 preview helpers 继续运行在当前 Linux 发行版内。
+
+</details>
+
+<details>
+<summary><b>v7.6.0</b> - Rich Workbench 生命周期</summary>
+
+- Rich workbench 变为显式可选 bundle，统一通过 `ccb update rich` 安装和更新。
+- 普通 `install.sh install` 和 `ccb update` 只处理 CCB 本体，不再自动
+  provision standalone Neovim。
+- 公开 `ccb tools ... neovim` 路由会拒绝 standalone provisioning 并提示
+  `ccb update rich`；`ccb rich` 只启动已经安装并启用的 rich bundle。
+- CCB tmux 状态栏恢复为单行，移除旧的第二行复制提示。
+
+</details>
+
+<details>
 <summary><b>v7.5.3</b> - Kimi 运行可靠性与 Hindsight 兼容性</summary>
 
 - 增强 Kimi 运行路径，但不改变其他 provider 的执行路径：当 native turn

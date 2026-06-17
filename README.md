@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.5.3-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.6-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -185,7 +185,7 @@ Agents can also call `/ask` from workflow orchestration to delegate and hand off
 Run `ccb update rich` to install the optional rich workbench; it bundles Yazi where possible, uses WezTerm for the rich terminal surface, and gives Markdown rendering plus image/PDF/video previews. After installation, plain `ccb` automatically opens this rich launcher unless it is already running inside a CCB-managed rich WezTerm; `ccb rich` remains available as an explicit launcher.
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi PDF preview in WezTerm" width="860">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi preview in WezTerm" width="860">
 </p>
 
 ### Contact
@@ -445,7 +445,7 @@ comms_limit = 3
 
 Note: `cmd` belongs to compact/hybrid single-window layouts. Do not put `cmd` inside `[windows]`.
 
-#### Optional rich workbench tool window
+#### Rich workbench tool window
 
 Tool windows are tmux windows managed by CCB, but they are not agents. They do not appear in `ccb ask` targets and do not create provider runtime records.
 
@@ -641,6 +641,105 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.6</b> - Role Store Home Pinning</summary>
+
+- Pins role store lookup outside managed provider homes so provider session
+  `HOME` rewrites no longer make role checks search provider-local `.roles`
+  directories.
+- Preserves `AGENT_ROLES_STORE` through CCB launch boundaries and falls back to
+  the real source/account home role store when no explicit store is set.
+- Missing role diagnostics now print the resolved role store path, making
+  provider-home drift easier to identify.
+
+</details>
+
+<details>
+<summary><b>v7.6.5</b> - Rich WezTerm IME</summary>
+
+- Enables IME support in the generated rich WezTerm config and maps
+  `XMODIFIERS=@im=...` into WezTerm's XIM name so X11 fcitx/ibus input works
+  for Chinese and other IME-backed text.
+- Generated `ccb-workbench` wrappers now detect running or installed
+  `fcitx5`, `fcitx`, or `ibus-daemon` before launching WezTerm, while
+  preserving any user-provided input-method environment.
+- Keeps the v7.6.4 green release surface and all v7.6.2 rich/tmux fixes intact
+  for npm latest install testing.
+
+</details>
+
+<details>
+<summary><b>v7.6.4</b> - macOS Release Install Smoke</summary>
+
+- Keeps the 7.6.3 macOS temporary-root hardening and updates the CI release
+  install smoke to use the explicit temporary-bin override for its isolated
+  sibling `CODEX_BIN_DIR`.
+- Leaves user-facing installer safety intact while allowing the release
+  workflow to validate macOS package installation from a temporary smoke root.
+- Keeps the v7.6.2 rich workbench and tmux single-status-row fixes intact for
+  user install testing.
+
+</details>
+
+<details>
+<summary><b>v7.6.3</b> - macOS CI Green Patch</summary>
+
+- Fixes macOS temporary-root detection for install guards by recognizing the
+  resolved `${TMPDIR:-/tmp}` parent used by GitHub Actions runners.
+- Aligns doctor temporary implementation detection with macOS `/tmp` symlink
+  behavior, preventing false red CI on `/private/tmp` and
+  `/private/var/folders/...` paths.
+- Keeps the v7.6.2 rich workbench and tmux single-status-row fixes intact for
+  user install testing.
+
+</details>
+
+<details>
+<summary><b>v7.6.2</b> - Rich Workbench Hotfix</summary>
+
+- Allows `rich` in `.ccb/ccb.config` as a tool/layout alias without requiring
+  a provider runtime; it materializes as a managed tool pane/window and is not
+  an `ask` target.
+- After `ccb update rich` enables the bundle, plain `ccb` can use the rich
+  launcher outside an existing rich/WezTerm session while avoiding recursive
+  WezTerm launches.
+- Adds `ccb uninstall rich`, `ccb rich uninstall`, and `ccb rich disable` for
+  returning to normal CCB startup without changing full `ccb uninstall`
+  behavior.
+- Rich updates clean only CCB-owned legacy editor roots and links, leaving
+  user-owned editor installs and personal config untouched.
+
+</details>
+
+<details>
+<summary><b>v7.6.1</b> - Rich Workbench Binary Packaging</summary>
+
+- `ccb update rich` now bundles verified Yazi/ya binaries where possible before
+  falling back to package managers.
+- Linux rich installs prefer official Yazi musl builds before GNU builds to
+  avoid newer glibc requirements on older stable distributions.
+- Downloaded Yazi binaries must pass `--version` validation before activation,
+  and invalid managed binaries are removed so fallback paths remain available.
+- Under WSL, rich launchers can use Windows-native `wezterm.exe` while keeping
+  CCB, Yazi, and preview helpers inside the current Linux distro.
+
+</details>
+
+<details>
+<summary><b>v7.6.0</b> - Rich Workbench Lifecycle</summary>
+
+- Makes rich workbench an explicit optional bundle installed with
+  `ccb update rich`.
+- Keeps ordinary `install.sh install` and `ccb update` focused on CCB itself;
+  they no longer auto-provision standalone Neovim.
+- Public `ccb tools ... neovim` routes now refuse standalone provisioning and
+  point users to `ccb update rich`; `ccb rich` launches only an installed and
+  enabled rich bundle.
+- Restores the CCB tmux status bar to one line by removing the old second-line
+  copy hint.
+
+</details>
+
+<details>
 <summary><b>v7.5.3</b> - Kimi Runtime Reliability And Hindsight Compatibility</summary>
 
 - Adds Kimi runtime hardening without changing other provider execution paths:

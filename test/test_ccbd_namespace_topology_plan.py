@@ -34,8 +34,8 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout() -> None:
     assert len(plan.windows) == 2
     window = plan.windows[0]
     assert window.name == 'main'
-    assert window.user_layout == 'agent1:codex, agent2:codex, agent3:claude, ccb_self:codex'
-    assert window.realized_layout == 'sidebar; (agent1:codex, agent2:codex, agent3:claude, ccb_self:codex)'
+    assert window.user_layout == 'agent1:codex, agent2:codex, agent3:claude'
+    assert window.realized_layout == 'sidebar; (agent1:codex, agent2:codex, agent3:claude)'
     assert window.sidebar is not None
     assert window.sidebar.width == '15%'
     assert window.sidebar.launch_args == (
@@ -47,11 +47,10 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout() -> None:
         '--pane-window',
         'main',
     )
-    tool = plan.windows[1]
-    assert tool.name == 'neovim'
-    assert tool.kind == 'tool'
-    assert tool.command == 'ccb-nvim'
-    assert tool.agent_names == ()
+    ccb_self_window = plan.windows[1]
+    assert ccb_self_window.name == 'ccb_self'
+    assert ccb_self_window.user_layout == 'ccb_self:claude'
+    assert ccb_self_window.realized_layout == 'sidebar; (ccb_self:claude)'
 
 
 def test_namespace_topology_plan_leaves_layout_plain_when_sidebar_off() -> None:
