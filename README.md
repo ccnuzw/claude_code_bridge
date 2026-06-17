@@ -794,6 +794,11 @@ v7 highlights:
   only when `.hindsight/kimi.json`, `.hindsight/codex.json`,
   `HINDSIGHT_API_URL`, or `HINDSIGHT_BANK_ID` is configured, and failures remain
   non-blocking provider diagnostics.
+- Preserves trusted Codex command hooks, including Hindsight Codex hooks, when
+  CCB materializes managed Codex homes. Operators can extend the allowlist with
+  `CCB_CODEX_INHERITED_HOOK_EVENTS` and
+  `CCB_CODEX_INHERITED_COMMAND_HOOK_MARKERS`; arbitrary root hooks remain
+  filtered out.
 - Accepts both `HINDSIGHT_API_KEY` and `HINDSIGHT_API_TOKEN` for the Kimi
   bridge and the `scripts/hindsight` helper.
 - Documents the supported provider surface more clearly in the README while

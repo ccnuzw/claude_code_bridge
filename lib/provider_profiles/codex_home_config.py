@@ -54,8 +54,10 @@ _CODEX_ACTIVITY_HOOK_EVENTS = (
     'Stop',
 )
 _CODEX_ACTIVITY_HOOK_TIMEOUT_S = 5
-_CODEX_INHERITED_HOOK_EVENTS = frozenset({'SessionStart', 'UserPromptSubmit', 'Stop'})
-_CODEX_INHERITED_HOOK_COMMAND_MARKERS = ('.hindsight/codex/scripts/',)
+_CODEX_DEFAULT_INHERITED_HOOK_EVENTS = frozenset({'SessionStart', 'UserPromptSubmit', 'Stop'})
+_CODEX_DEFAULT_INHERITED_COMMAND_HOOK_MARKERS = ('.hindsight/codex/scripts/',)
+_CODEX_INHERITED_HOOK_EVENTS_ENV = 'CCB_CODEX_INHERITED_HOOK_EVENTS'
+_CODEX_INHERITED_COMMAND_HOOK_MARKERS_ENV = 'CCB_CODEX_INHERITED_COMMAND_HOOK_MARKERS'
 _TOML_TABLE_HEADER_RE = re.compile(r'^\s*\[{1,2}[^\]]+\]{1,2}\s*(?:#.*)?$')
 
 
@@ -821,6 +823,10 @@ def _codex_activity_hook_events(command: str) -> dict[str, list[dict[str, object
 def _allowed_inherited_codex_hooks(source_home: Path | None) -> dict[str, list[dict[str, object]]]:
     if source_home is None:
         return {}
+    policy_events = _codex_inherited_hook_events()
+    command_markers = _codex_inherited_command_hook_markers()
+    if not policy_events or not command_markers:
+        return {}
     hooks_path = Path(source_home).expanduser() / 'hooks.json'
     try:
         payload = json.loads(hooks_path.read_text(encoding='utf-8'))
@@ -833,11 +839,11 @@ def _allowed_inherited_codex_hooks(source_home: Path | None) -> dict[str, list[d
     selected: dict[str, list[dict[str, object]]] = {}
     for event_name, raw_groups in hooks.items():
         event = str(event_name)
-        if event not in _CODEX_INHERITED_HOOK_EVENTS or not isinstance(raw_groups, list):
+        if event not in policy_events or not isinstance(raw_groups, list):
             continue
         groups: list[dict[str, object]] = []
         for raw_group in raw_groups:
-            group = _allowed_inherited_codex_hook_group(raw_group)
+            group = _allowed_inherited_codex_hook_group(raw_group, command_markers=command_markers)
             if group is not None:
                 groups.append(group)
         if groups:
@@ -845,7 +851,38 @@ def _allowed_inherited_codex_hooks(source_home: Path | None) -> dict[str, list[d
     return selected
 
 
-def _allowed_inherited_codex_hook_group(raw_group: object) -> dict[str, object] | None:
+def _codex_inherited_hook_events() -> frozenset[str]:
+    configured = _split_codex_inherited_hook_env(os.environ.get(_CODEX_INHERITED_HOOK_EVENTS_ENV))
+    return frozenset([*_CODEX_DEFAULT_INHERITED_HOOK_EVENTS, *configured])
+
+
+def _codex_inherited_command_hook_markers() -> tuple[str, ...]:
+    configured = _split_codex_inherited_hook_env(os.environ.get(_CODEX_INHERITED_COMMAND_HOOK_MARKERS_ENV))
+    markers = [*_CODEX_DEFAULT_INHERITED_COMMAND_HOOK_MARKERS, *configured]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for marker in markers:
+        normalized_marker = str(marker or '').strip().replace('\\', '/')
+        if not normalized_marker or normalized_marker in seen:
+            continue
+        normalized.append(normalized_marker)
+        seen.add(normalized_marker)
+    return tuple(normalized)
+
+
+def _split_codex_inherited_hook_env(value: object) -> tuple[str, ...]:
+    raw = str(value or '').strip()
+    if not raw:
+        return ()
+    parts = re.split(f'[,{re.escape(os.pathsep)}]+', raw)
+    return tuple(part.strip() for part in parts if part.strip())
+
+
+def _allowed_inherited_codex_hook_group(
+    raw_group: object,
+    *,
+    command_markers: tuple[str, ...],
+) -> dict[str, object] | None:
     if not isinstance(raw_group, dict):
         return None
     raw_handlers = raw_group.get('hooks')
@@ -853,7 +890,7 @@ def _allowed_inherited_codex_hook_group(raw_group: object) -> dict[str, object] 
         return None
     handlers: list[dict[str, object]] = []
     for raw_handler in raw_handlers:
-        handler = _allowed_inherited_codex_hook_handler(raw_handler)
+        handler = _allowed_inherited_codex_hook_handler(raw_handler, command_markers=command_markers)
         if handler is None:
             return None
         handlers.append(handler)
@@ -865,14 +902,18 @@ def _allowed_inherited_codex_hook_group(raw_group: object) -> dict[str, object] 
     return group
 
 
-def _allowed_inherited_codex_hook_handler(raw_handler: object) -> dict[str, object] | None:
+def _allowed_inherited_codex_hook_handler(
+    raw_handler: object,
+    *,
+    command_markers: tuple[str, ...],
+) -> dict[str, object] | None:
     if not isinstance(raw_handler, dict):
         return None
     if str(raw_handler.get('type') or '') != 'command':
         return None
     command = str(raw_handler.get('command') or '')
     normalized_command = command.replace('\\', '/')
-    if not any(marker in normalized_command for marker in _CODEX_INHERITED_HOOK_COMMAND_MARKERS):
+    if not any(marker in normalized_command for marker in command_markers):
         return None
     handler: dict[str, object] = {
         'type': 'command',
