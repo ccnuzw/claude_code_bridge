@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.8-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.9-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -630,6 +630,18 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.9</b> - Kimi / AGY Provider 可靠性</summary>
+
+- Kimi execution 现在记录 receipt、无捕获输出诊断、trace 和 resume
+  metadata，便于定位缺失回复和恢复 turn。
+- AGY prompt delivery 现在等待 ready evidence，处理 pane fallback 和
+  ambiguous tmux send 结果，并更清楚地报告合并请求诊断。
+- dispatcher、mailbox trace 和 text artifact 诊断现在会暴露排查 Kimi/AGY
+  delivery 与 completion 边界所需的 provider 细节。
+
+</details>
+
+<details>
 <summary><b>v7.6.8</b> - Role Pack Current Store</summary>
 
 - Role Pack 运行时现在跟随 `.roles/installed/<role-id>/current` 下的当前安装包；
