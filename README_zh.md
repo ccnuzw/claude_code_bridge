@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.6-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.7-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -630,6 +630,18 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.7</b> - Rich Workbench 闭环</summary>
+
+- 普通 `ccb` 和 `ccb rich` 现在会启动 CCB 托管的 rich WezTerm；只有已经在该
+  CCB 托管 rich 会话内时才跳过自动启动，普通外部 WezTerm 不再误判为 rich。
+- 运行入口统一走 `_ccb-python` launcher，让安装版和源码版命令都固定到预期
+  Python 解释器。
+- 内置默认配置继续把 `ccb_self` 放在独立 `claude` window，同时普通默认启动
+  不恢复 standalone Neovim tool window。
+
+</details>
+
+<details>
 <summary><b>v7.6.6</b> - Role Store Home Pinning</summary>
 
 - role store lookup 现在会固定在 managed provider home 之外，provider session

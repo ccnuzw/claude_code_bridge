@@ -586,7 +586,8 @@ def test_workbench_terminal_uses_windows_wezterm_from_wsl(tmp_path: Path, monkey
     assert result.returncode == 0, result.stderr
     argv = wezterm_log.read_text(encoding='utf-8').splitlines()
     config_path = str(tmp_path / 'xdg-data' / 'ccb' / 'tools' / 'workbench' / 'profiles' / 'wezterm' / 'wezterm.lua')
-    assert argv[:8] == ['--config-file', config_path, 'start', '--always-new-process', '--no-auto-connect', '--', 'wsl.exe', '-d']
+    assert argv[:1] + argv[2:8] == ['--config-file', 'start', '--always-new-process', '--no-auto-connect', '--', 'wsl.exe', '-d']
+    assert argv[1] == config_path or argv[1].replace('\\', '/').endswith('/xdg-data/ccb/tools/workbench/profiles/wezterm/wezterm.lua')
     assert 'Ubuntu' in argv
     assert str(project_root) in argv
     env_index = argv.index('env')

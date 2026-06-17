@@ -1,5 +1,22 @@
 # Changelog
 
+## v7.6.7 (2026-06-17)
+
+### Rich Workbench Closure
+
+- **Rich Launcher Closure**: plain `ccb` and `ccb rich` now start the
+  CCB-managed rich WezTerm launcher unless already running inside that managed
+  rich session; ordinary external WezTerm sessions no longer suppress rich
+  auto-start.
+- **Runtime Launcher Pinning**: command entrypoints now share the `_ccb-python`
+  launcher so installed and source runtimes use a consistent interpreter.
+- **Default Self Window Updated**: the built-in default config keeps `ccb_self`
+  in its own window with the `claude` provider while preserving the rich-only
+  optional workbench model and avoiding ordinary default Neovim tool windows.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.7.
+
 ## v7.6.6 (2026-06-16)
 
 ### Role Store Home Pinning

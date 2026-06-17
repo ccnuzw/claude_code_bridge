@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.6-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.7-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -641,6 +641,19 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.7</b> - Rich Workbench Closure</summary>
+
+- Plain `ccb` and `ccb rich` now launch the CCB-managed rich WezTerm unless
+  already inside that managed rich session; ordinary external WezTerm sessions
+  no longer suppress rich auto-start.
+- Runtime entrypoints share the `_ccb-python` launcher, keeping installed and
+  source command execution pinned to the intended Python interpreter.
+- Built-in defaults keep `ccb_self` in its own `claude` window, while ordinary
+  default startup still avoids standalone Neovim tool windows.
+
+</details>
+
+<details>
 <summary><b>v7.6.6</b> - Role Store Home Pinning</summary>
 
 - Pins role store lookup outside managed provider homes so provider session
