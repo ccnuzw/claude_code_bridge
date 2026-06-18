@@ -52,7 +52,6 @@ class ProjectFocusService:
         namespace = _namespace(self._deps.namespace_controller)
         _validate_epoch(namespace_epoch, namespace.namespace_epoch)
         backend = backend_for_namespace(self._deps.namespace_controller._backend_factory, namespace)
-        select_window(backend, session_name=namespace.tmux_session_name, window_name=window.name)
         pane_id = find_agent_pane(
             backend,
             project_id=self._deps.project_id,
