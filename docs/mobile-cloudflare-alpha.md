@@ -59,6 +59,8 @@ ccb mobile serve \
 
 This command prints a short-lived pairing code and a claim endpoint. It does
 not bind a public listener. The public URL is pairing metadata only.
+Use the HTTPS origin only, such as `https://mobile.example.com`; do not include
+a path, query string, fragment, or credentials.
 
 In another terminal, start the Cloudflare tunnel:
 
@@ -116,6 +118,9 @@ origin does not point at the `--gateway-listen` port.
 Named tunnels must use a fixed loopback `--gateway-listen` such as
 `127.0.0.1:8787`; the default dynamic port `127.0.0.1:0` is only suitable for
 local LAN or quick-tunnel smoke runs.
+The public URL must be the gateway origin only. If it contains a path, query
+string, fragment, or credentials, the preflight blocks and suggests the
+origin-only `--gateway-public-url` value.
 
 ```bash
 tools/mobile_gateway_terminal_smoke.py \

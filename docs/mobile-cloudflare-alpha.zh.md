@@ -58,6 +58,8 @@ ccb mobile serve \
 
 这个命令会输出短期 pairing code 和 claim endpoint。它不会监听公网地址。
 `--public-url` 只写入配对元数据。
+这里必须只填写 HTTPS origin，例如 `https://mobile.example.com`；不要包含
+path、query string、fragment 或用户名密码。
 
 在另一个终端启动 Cloudflare tunnel：
 
@@ -111,6 +113,9 @@ loopback origin 是否匹配，但不会启动 CCB runtime：
 Named tunnel 必须使用固定 loopback `--gateway-listen`，例如
 `127.0.0.1:8787`；默认动态端口 `127.0.0.1:0` 只适合本地 LAN 或 quick-tunnel
 smoke。
+public URL 必须只是 gateway origin。如果包含 path、query string、fragment
+或用户名密码，preflight 会阻断，并给出 origin-only 的
+`--gateway-public-url` 建议值。
 
 ```bash
 tools/mobile_gateway_terminal_smoke.py \
