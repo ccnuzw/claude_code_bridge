@@ -2343,6 +2343,49 @@ def test_materialize_claude_home_config_projects_inherited_skills_and_commands(t
     assert (layout.claude_dir / 'commands.ccb-projection.json').is_file()
 
 
+def test_materialize_claude_home_config_merges_profile_mcp_server_overrides(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-home'
+    target_home = tmp_path / 'managed-home'
+    source_home.mkdir(parents=True, exist_ok=True)
+    (source_home / '.claude.json').write_text(
+        json.dumps(
+            {
+                'mcpServers': {
+                    'agentmemory': {'command': 'agentmemory-old'},
+                    'browser-use': {'command': 'browser-use'},
+                    'playwright': {'command': 'playwright'},
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+
+    layout = materialize_claude_home_config(
+        target_home,
+        profile=ProviderProfileSpec(
+            inherit_memory=False,
+            mcp_servers={
+                'agentmemory': {'command': 'agentmemory-new', 'env': {'AGENTMEMORY_URL': 'http://localhost:3111'}},
+                'browser-use': {'enabled': False},
+                'codegraph': {'command': 'codegraph-mcp'},
+                'playwright': {'enabled': False},
+            },
+        ),
+        source_home=source_home,
+    )
+
+    payload = json.loads(layout.trust_path.read_text(encoding='utf-8'))
+    servers = payload['mcpServers']
+    assert sorted(servers) == ['agentmemory', 'codegraph']
+    assert servers['agentmemory'] == {
+        'command': 'agentmemory-new',
+        'env': {'AGENTMEMORY_URL': 'http://localhost:3111'},
+    }
+    assert servers['codegraph'] == {'command': 'codegraph-mcp'}
+
+
 def test_materialize_claude_home_config_skips_memory_without_project_context(tmp_path: Path) -> None:
     source_home = tmp_path / 'system-home'
     target_home = tmp_path / 'managed-home'
@@ -2614,6 +2657,54 @@ def test_materialize_claude_home_config_preserves_managed_auth_when_source_is_lo
     assert payload['theme'] == 'light'
     assert payload['hooks']['Stop'][0]['hooks'][0]['command'] == 'echo hook'
     assert payload['permissions']['allow'] == ['Bash(ls)']
+
+
+def test_materialize_claude_home_config_preserves_existing_enabled_plugins(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-home'
+    target_home = tmp_path / 'managed-home'
+    source_settings = source_home / '.claude' / 'settings.json'
+    source_settings.parent.mkdir(parents=True, exist_ok=True)
+    source_settings.write_text(
+        json.dumps(
+            {
+                'enabledPlugins': {
+                    'source-plugin@marketplace': True,
+                    'typescript-lsp@claude-plugins-official': False,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    target_settings = target_home / '.claude' / 'settings.json'
+    target_settings.parent.mkdir(parents=True, exist_ok=True)
+    target_settings.write_text(
+        json.dumps(
+            {
+                'enabledPlugins': {
+                    'local-only@marketplace': True,
+                    'typescript-lsp@claude-plugins-official': True,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+
+    layout = materialize_claude_home_config(
+        target_home,
+        profile=ProviderProfileSpec(inherit_memory=False),
+        source_home=source_home,
+    )
+
+    payload = json.loads(layout.settings_path.read_text(encoding='utf-8'))
+    assert payload['enabledPlugins'] == {
+        'local-only@marketplace': True,
+        'source-plugin@marketplace': True,
+        'typescript-lsp@claude-plugins-official': False,
+    }
 
 
 def test_materialize_claude_home_config_refreshes_source_auth_over_managed_auth(tmp_path: Path) -> None:

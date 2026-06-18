@@ -29,7 +29,7 @@ from storage.atomic import atomic_write_text
 from ..home_layout import ClaudeHomeLayout, claude_layout_for_home, claude_layout_from_session_data
 from .session_paths import read_session_payload, session_file_for_runtime_dir, state_dir_for_runtime_dir
 
-_CLAUDE_RUNTIME_SETTINGS_KEYS = ('hooks', 'permissions')
+_CLAUDE_RUNTIME_SETTINGS_KEYS = ('enabledPlugins', 'hooks', 'permissions')
 _CLAUDE_CCB_PERMISSION_PREFIX = 'Bash(ccb '
 _CLAUDE_AUTH_ENV_KEYS = ('ANTHROPIC_AUTH_TOKEN',)
 _CLAUDE_API_AUTH_ENV_KEYS = ('ANTHROPIC_API_KEY',)
@@ -494,6 +494,8 @@ def _projected_claude_json_payload(
             workspace_path=workspace_path,
         )
 
+    _merge_profile_mcp_servers(merged, profile=profile)
+
     if not _inherits_auth(profile):
         for key in _CLAUDE_JSON_AUTH_METADATA_KEYS:
             merged.pop(key, None)
@@ -529,6 +531,43 @@ def _project_claude_mcp_config(
         workspace_path=workspace_path,
     )
     _refresh_project_mcp_record(merged, target_key=target_key, selected=selected)
+
+
+def _merge_profile_mcp_servers(merged: dict[str, object], *, profile) -> None:
+    profile_servers = _profile_mcp_servers(profile)
+    if not profile_servers:
+        return
+
+    existing = merged.get('mcpServers')
+    servers = dict(existing) if isinstance(existing, dict) else {}
+    for raw_name, raw_config in profile_servers.items():
+        name = str(raw_name or '').strip()
+        if not name:
+            continue
+        if _mcp_server_disabled(raw_config):
+            servers.pop(name, None)
+            continue
+        payload = _clone_jsonish(raw_config)
+        if not isinstance(payload, dict):
+            continue
+        payload.pop('enabled', None)
+        servers[name] = payload
+
+    if servers:
+        merged['mcpServers'] = servers
+    else:
+        merged.pop('mcpServers', None)
+
+
+def _profile_mcp_servers(profile) -> dict[str, object]:
+    if profile is None:
+        return {}
+    raw = getattr(profile, 'mcp_servers', None)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _mcp_server_disabled(value: object) -> bool:
+    return isinstance(value, dict) and value.get('enabled') is False
 
 
 def _strip_claude_mcp_config(
@@ -770,6 +809,13 @@ def _merge_settings_payload(
     for key in _CLAUDE_RUNTIME_SETTINGS_KEYS:
         value = existing_payload.get(key)
         if value is not None:
+            if key == 'enabledPlugins':
+                enabled_plugins = _merge_enabled_plugins_payload(projected_payload.get('enabledPlugins'), value)
+                if enabled_plugins:
+                    merged[key] = enabled_plugins
+                else:
+                    merged.pop(key, None)
+                continue
             if key == 'hooks':
                 hooks = _merge_hooks_payload(projected_payload.get('hooks'), value)
                 if hooks:
@@ -788,9 +834,21 @@ def _merge_settings_payload(
     return None
 
 
+def _merge_enabled_plugins_payload(projected: object, existing: object) -> dict[str, object]:
+    existing_plugins = _settings_mapping_copy(existing)
+    projected_plugins = _settings_mapping_copy(projected)
+    if not existing_plugins:
+        return projected_plugins
+    if not projected_plugins:
+        return existing_plugins
+    merged = dict(existing_plugins)
+    merged.update(projected_plugins)
+    return merged
+
+
 def _merge_hooks_payload(projected: object, existing: object) -> dict[str, object]:
-    projected_hooks = _hooks_mapping_copy(projected)
-    existing_hooks = _hooks_mapping_copy(existing)
+    projected_hooks = _settings_mapping_copy(projected)
+    existing_hooks = _settings_mapping_copy(existing)
     if not projected_hooks:
         return existing_hooks
     if not existing_hooks:
@@ -820,7 +878,7 @@ def _merge_hooks_payload(projected: object, existing: object) -> dict[str, objec
     return merged
 
 
-def _hooks_mapping_copy(value: object) -> dict[str, object]:
+def _settings_mapping_copy(value: object) -> dict[str, object]:
     return dict(_clone_jsonish(value)) if isinstance(value, dict) else {}
 
 
