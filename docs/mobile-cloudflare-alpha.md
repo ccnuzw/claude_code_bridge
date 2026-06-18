@@ -135,6 +135,9 @@ credentials path with the values from `cloudflared tunnel create`.
 If your tunnel is not named `ccb-mobile`, add
 `--cloudflared-tunnel-name <name>`; the preflight checklist and the automated
 smoke will use that same tunnel name.
+The JSON also includes `named_tunnel_smoke_command`, a copyable command that
+preserves the relevant `cloudflared` binary, config path, tunnel name, fixed
+listen address, public URL, and route provider arguments.
 
 After the preflight passes, the development smoke can start
 `cloudflared tunnel run` for the named tunnel, start a disposable CCB gateway,
