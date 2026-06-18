@@ -113,6 +113,9 @@ starting a CCB runtime:
 For multi-ingress `cloudflared` configs, the preflight selects the ingress
 entry whose `hostname` matches `--gateway-public-url` and blocks if that
 origin does not point at the `--gateway-listen` port.
+Named tunnels must use a fixed loopback `--gateway-listen` such as
+`127.0.0.1:8787`; the default dynamic port `127.0.0.1:0` is only suitable for
+local LAN or quick-tunnel smoke runs.
 
 ```bash
 tools/mobile_gateway_terminal_smoke.py \

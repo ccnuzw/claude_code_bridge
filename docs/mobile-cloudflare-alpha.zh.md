@@ -108,6 +108,9 @@ loopback origin 是否匹配，但不会启动 CCB runtime：
 如果 `cloudflared` config 有多条 ingress，preflight 会选择 `hostname` 匹配
 `--gateway-public-url` 的那条，并在该 origin 没有指向 `--gateway-listen` 端口时
 阻断验证。
+Named tunnel 必须使用固定 loopback `--gateway-listen`，例如
+`127.0.0.1:8787`；默认动态端口 `127.0.0.1:0` 只适合本地 LAN 或 quick-tunnel
+smoke。
 
 ```bash
 tools/mobile_gateway_terminal_smoke.py \
