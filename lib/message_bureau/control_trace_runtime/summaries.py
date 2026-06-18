@@ -56,21 +56,38 @@ def attempt_summary(attempt) -> dict[str, object]:
 
 
 def reply_summary(reply) -> dict[str, object]:
+    artifact = _reply_artifact(reply)
+    decision_diagnostics = _decision_diagnostics(reply)
+    artifact_bytes = _artifact_bytes(artifact)
+    terminal_status = reply.terminal_status.value
+    artifact_reply_forced = bool(decision_diagnostics.get('artifact_reply_forced'))
+    empty_reply_artifact = artifact is not None and artifact_bytes == 0
     return {
         'reply_id': reply.reply_id,
         'message_id': reply.message_id,
         'attempt_id': reply.attempt_id,
         'agent_name': reply.agent_name,
-        'terminal_status': reply.terminal_status.value,
+        'terminal_status': terminal_status,
         'reply': reply.reply,
         'reply_preview': preview_text(reply.reply),
         'reply_size': len(reply.reply or ''),
+        'reply_artifact': artifact,
+        'reply_artifact_path': artifact.get('path') if artifact is not None else None,
+        'reply_artifact_bytes': artifact_bytes,
+        'reply_artifact_sha256': artifact.get('sha256') if artifact is not None else None,
+        'artifact_reply_forced': artifact_reply_forced,
+        'empty_reply_artifact': empty_reply_artifact,
+        'no_captured_reply': bool(artifact_reply_forced and empty_reply_artifact and terminal_status != 'completed'),
         'notice': reply_notice(reply),
         'notice_kind': reply_notice_kind(reply),
         'last_progress_at': reply_last_progress_at(reply),
         'heartbeat_silence_seconds': reply_heartbeat_silence_seconds(reply),
         'reason': reply.diagnostics.get('reason'),
         'status': reply.diagnostics.get('status'),
+        'completion_mode': decision_diagnostics.get('mode'),
+        'total_secs': decision_diagnostics.get('total_secs'),
+        'anchor_seen': decision_diagnostics.get('anchor_seen'),
+        'captured_reply_chars': decision_diagnostics.get('reply_chars'),
         'silence_on_success': bool(reply.diagnostics.get('silence_on_success')),
         'provider_turn_ref': reply.diagnostics.get('provider_turn_ref'),
         'finished_at': reply.finished_at,
@@ -147,6 +164,28 @@ def preview_text(value: str, *, limit: int = 120) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + '...'
+
+
+def _reply_artifact(reply) -> dict[str, object] | None:
+    artifact = getattr(reply, 'reply_artifact', None)
+    return dict(artifact) if isinstance(artifact, dict) else None
+
+
+def _decision_diagnostics(reply) -> dict[str, object]:
+    diagnostics = getattr(reply, 'diagnostics', None)
+    if not isinstance(diagnostics, dict):
+        return {}
+    payload = diagnostics.get('decision_diagnostics')
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _artifact_bytes(artifact: dict[str, object] | None) -> int | None:
+    if artifact is None:
+        return None
+    try:
+        return int(artifact.get('bytes') or 0)
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = [

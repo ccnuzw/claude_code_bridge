@@ -779,6 +779,10 @@ v7 线重点：
 - Kimi Hindsight 记忆改为 CCB 执行边界上的显式 opt-in：只有配置
   `.hindsight/kimi.json`、`.hindsight/codex.json`、`HINDSIGHT_API_URL` 或
   `HINDSIGHT_BANK_ID` 时才启用，失败时只记录 provider diagnostics，不阻塞任务。
+- CCB 物化 managed Codex home 时会保留可信 Codex command hook，包括
+  Hindsight Codex hooks。运维可通过 `CCB_CODEX_INHERITED_HOOK_EVENTS` 和
+  `CCB_CODEX_INHERITED_COMMAND_HOOK_MARKERS` 扩展 allowlist；任意 root hook
+  仍会被过滤。
 - Kimi bridge 和 `scripts/hindsight` helper 同时兼容 `HINDSIGHT_API_KEY` 与
   `HINDSIGHT_API_TOKEN`。
 - README 更明确展示支持的 provider surface，同时保持无关 provider 行为不变。
