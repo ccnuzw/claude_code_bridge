@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunsplit
 
 from ccbd.socket_client import CcbdClient
 from mobile_gateway import (
@@ -91,13 +91,23 @@ def revoke_mobile_device(context, command) -> dict[str, object]:
 
 
 def _public_gateway_url(value: str | None, *, fallback: str) -> str:
-    text = str(value or '').strip().rstrip('/')
+    text = str(value or '').strip()
     if not text:
         return fallback
     parsed = urlparse(text)
-    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
-        raise ValueError('--public-url must be an absolute http(s) URL')
-    return text
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc or not parsed.hostname:
+        raise ValueError('--public-url must be an absolute http(s) origin URL')
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError('--public-url port must be valid') from exc
+    if parsed.username or parsed.password:
+        raise ValueError('--public-url must not include credentials')
+    if parsed.path not in {'', '/'}:
+        raise ValueError('--public-url must not include a path')
+    if parsed.params or parsed.query or parsed.fragment:
+        raise ValueError('--public-url must not include params, query, or fragment')
+    return urlunsplit((parsed.scheme, parsed.netloc, '', '', ''))
 
 
 __all__ = [

@@ -60,7 +60,8 @@ ccb mobile serve \
 This command prints a short-lived pairing code and a claim endpoint. It does
 not bind a public listener. The public URL is pairing metadata only.
 Use the HTTPS origin only, such as `https://mobile.example.com`; do not include
-a path, query string, fragment, or credentials.
+a path, query string, fragment, or credentials. `ccb mobile serve` rejects
+non-origin public URLs before emitting pairing metadata.
 
 In another terminal, start the Cloudflare tunnel:
 

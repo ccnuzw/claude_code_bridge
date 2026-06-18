@@ -59,7 +59,8 @@ ccb mobile serve \
 这个命令会输出短期 pairing code 和 claim endpoint。它不会监听公网地址。
 `--public-url` 只写入配对元数据。
 这里必须只填写 HTTPS origin，例如 `https://mobile.example.com`；不要包含
-path、query string、fragment 或用户名密码。
+path、query string、fragment 或用户名密码。`ccb mobile serve` 会在输出 pairing
+metadata 前拒绝非 origin public URL。
 
 在另一个终端启动 Cloudflare tunnel：
 
