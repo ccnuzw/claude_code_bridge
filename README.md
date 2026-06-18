@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.10-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.11-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -643,6 +643,21 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.11</b> - Layout Percent And Codex MCP Overlays</summary>
+
+- Adds explicit pane split ratios in layout tokens, such as
+  `agent1:codex@30`, while preserving the existing even-split default when no
+  suffix is present.
+- Adds source-controlled per-agent Codex MCP overlays through
+  `provider_profile.mcp_servers`; same-name MCP servers override inherited
+  Codex config and different names are additive.
+- Preserves trusted Codex command hooks during managed Codex home projection,
+  improves sidebar Comms/Tips scrolling and resizing, and exposes more reply
+  artifact evidence in `ccb trace`.
+
+</details>
+
+<details>
 <summary><b>v7.6.10</b> - Z.ai Provider Support</summary>
 
 - Adds managed optional Z.ai CLI provider support with `provider = "zai"`,

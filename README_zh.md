@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.10-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.11-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -632,6 +632,19 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.11</b> - Layout Percent 与 Codex MCP Overlay</summary>
+
+- 新增显式 pane split 比例 layout token，例如 `agent1:codex@30`；没有
+  `@N` 后缀时继续保持原有 sibling panes 均分行为。
+- 新增通过 `provider_profile.mcp_servers` 配置 per-agent Codex MCP overlay；
+  同名 MCP server 覆盖继承配置，不同名 additive。
+- managed Codex home projection 现在会保留可信 Codex command hook，并改进
+  sidebar Comms/Tips 的滚动和拖拽调整，同时在 `ccb trace` 暴露更多 reply
+  artifact 证据。
+
+</details>
+
+<details>
 <summary><b>v7.6.10</b> - Z.ai Provider 支持</summary>
 
 - 新增 Z.ai CLI optional provider：支持 `provider = "zai"`、可见

@@ -1,5 +1,25 @@
 # Changelog
 
+## v7.6.11 (2026-06-18)
+
+### Layout Percent And Codex MCP Overlays
+
+- **Layout Percent Tokens Added**: layout leaves may now use an optional
+  `@N` suffix, such as `agent1:codex@30`, to request explicit sibling pane
+  split percentages while preserving the old even-split default when omitted.
+- **Codex MCP Overlays Added**: `provider_profile.mcp_servers` can now define
+  source-controlled per-agent Codex MCP server overlays. Same-name servers
+  override inherited Codex config; different names are additive.
+- **Codex Hook Projection Hardened**: managed Codex home materialization now
+  preserves trusted command hooks, including Hindsight Codex hooks, while
+  continuing to filter arbitrary root hooks.
+- **Sidebar And Trace Diagnostics Improved**: sidebar Comms/Tips panels gain
+  better scrolling and resize behavior, and `ccb trace` exposes reply artifact
+  evidence for empty or forced artifact replies.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.11.
+
 ## v7.6.10 (2026-06-17)
 
 ### Z.ai Provider Support
