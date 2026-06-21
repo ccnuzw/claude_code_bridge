@@ -1093,8 +1093,20 @@ def _agent_conversation_items(
                 'source': _optional_text(content_item.get('source')) or 'content',
             }
         )
-    for item in _iterable(view.get('comms')):
-        comm = _map(item)
+    comm_records = [_map(item) for item in _iterable(view.get('comms'))]
+    comm_records = [
+        item
+        for _, item in sorted(
+            enumerate(comm_records),
+            key=lambda indexed: (
+                _optional_text(indexed[1].get('created_at'))
+                or _optional_text(indexed[1].get('updated_at'))
+                or '9999',
+                indexed[0],
+            ),
+        )
+    ]
+    for comm in comm_records:
         if not _conversation_item_belongs_to_agent(comm, agent):
             continue
         body = (
@@ -1106,6 +1118,19 @@ def _agent_conversation_items(
         reply = _completion_reply_for_job(project_root, _optional_text(comm.get('id')))
         if reply:
             comm_id = str(comm.get('id') or f'comms-{len(items)}')
+            if body:
+                items.append(
+                    {
+                        'id': f'user-{comm_id}',
+                        'agent': agent,
+                        'kind': 'user_message',
+                        'title': 'You',
+                        'body': body,
+                        'format': _optional_text(comm.get('format')) or 'markdown',
+                        'source': 'mobile',
+                        'state': 'sent',
+                    }
+                )
             items.append(
                 {
                     'id': f'reply-{comm_id}',

@@ -170,7 +170,17 @@ class _FakeCcbdClientWithConversationComms(_FakeCcbdClient):
                 'target': 'mobile',
                 'status': 'completed',
                 'business_status': 'replied',
+                'created_at': '2026-06-18T00:00:02Z',
                 'body_preview': 'question from phone',
+            },
+            {
+                'id': 'job_mobile_old_reply',
+                'sender': 'user',
+                'target': 'mobile',
+                'status': 'completed',
+                'business_status': 'replied',
+                'created_at': '2026-06-18T00:00:01Z',
+                'body_preview': 'older question from phone',
             },
             {
                 'id': 'job_other_reply',
@@ -380,6 +390,16 @@ def test_agent_conversation_includes_completed_comms_reply_preview(tmp_path: Pat
         ),
         encoding='utf-8',
     )
+    (snapshot_dir / 'job_mobile_old_reply.json').write_text(
+        json.dumps(
+            {
+                'latest_decision': {
+                    'reply': 'older answer from mobile_probe',
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
     service = _service(
         _FakeCcbdClientWithConversationComms(),
         project_root=project_root,
@@ -404,10 +424,19 @@ def test_agent_conversation_includes_completed_comms_reply_preview(tmp_path: Pat
     assert [item['id'] for item in items] == [
         'status-mobile',
         'reply-content-1',
+        'user-job_mobile_old_reply',
+        'reply-job_mobile_old_reply',
+        'user-job_mobile_reply',
         'reply-job_mobile_reply',
     ]
-    assert items[2]['kind'] == 'agent_reply'
-    assert items[2]['body'] == 'answer from mobile_probe'
+    assert items[2]['kind'] == 'user_message'
+    assert items[2]['body'] == 'older question from phone'
+    assert items[3]['kind'] == 'agent_reply'
+    assert items[3]['body'] == 'older answer from mobile_probe'
+    assert items[4]['kind'] == 'user_message'
+    assert items[4]['body'] == 'question from phone'
+    assert items[5]['kind'] == 'agent_reply'
+    assert items[5]['body'] == 'answer from mobile_probe'
     assert 'wrong target' not in json.dumps(payload)
 
 
