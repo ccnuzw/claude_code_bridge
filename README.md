@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.13-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -712,6 +712,20 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.13</b> - Provider Profile Overlay Fixes</summary>
+
+- Codex plugin overrides now resolve in the intended order: inherited source
+  config, `provider_profile.plugins`, then `CCB_CODEX_PLUGIN_OVERRIDES_JSON` /
+  `CCB_CODEX_PLUGIN_OVERRIDES`.
+- Codex agents without an inherited `config.toml` now still materialize
+  `provider_profile.plugins` into managed `config.toml`.
+- Claude `provider_profile.mcp_servers` now works even when the source
+  `.claude.json` does not exist, and `enabled = false` clears stale managed MCP
+  servers from the agent trust file.
+
+</details>
+
+<details>
 <summary><b>v7.6.12</b> - Claude MCP And Hook Inheritance</summary>
 
 - Managed Claude agents now inherit Claude Code MCP configuration from the

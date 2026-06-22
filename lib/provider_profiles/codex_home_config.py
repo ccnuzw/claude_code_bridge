@@ -326,6 +326,7 @@ def _write_managed_config_stub(
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {}
+    _merge_codex_plugin_overrides(payload, profile=profile)
     _merge_codex_mcp_server_overrides(payload, profile=profile)
     _trust_managed_codex_project_paths(payload, project_root=project_root, workspace_path=workspace_path)
     rendered = _render_toml_document(payload) if payload else '# ccb agent-local codex config\n'
@@ -555,11 +556,10 @@ def _merge_codex_plugin_overrides(payload: dict[str, object], *, profile) -> Non
 
 
 def _profile_plugins(profile) -> dict[str, dict[str, object]]:
-    env_overrides = _profile_plugin_overrides_from_env(profile)
     raw = getattr(profile, 'plugins', {}) if profile is not None else {}
     if not isinstance(raw, dict):
-        return env_overrides
-    normalized: dict[str, dict[str, object]] = dict(env_overrides)
+        return _profile_plugin_overrides_from_env(profile)
+    normalized: dict[str, dict[str, object]] = {}
     for raw_name, raw_plugin in raw.items():
         name = str(raw_name or '').strip()
         if not name:
@@ -568,6 +568,12 @@ def _profile_plugins(profile) -> dict[str, dict[str, object]]:
             normalized[name] = _clone_mapping(raw_plugin)
         else:
             normalized[name] = {'enabled': bool(raw_plugin)}
+    for name, plugin in _profile_plugin_overrides_from_env(profile).items():
+        existing = normalized.get(name)
+        merged = _clone_mapping(existing) if isinstance(existing, dict) else {}
+        for key, value in plugin.items():
+            merged[str(key)] = _clone_payload(value)
+        normalized[name] = merged
     return normalized
 
 

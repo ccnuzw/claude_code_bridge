@@ -1,5 +1,24 @@
 # Changelog
 
+## v7.6.13 (2026-06-22)
+
+### Provider Profile Overlay Fixes
+
+- **Codex Plugin Overlay Precedence Fixed**: Codex plugin overrides now apply
+  in the intended order of inherited source config, `provider_profile.plugins`,
+  then `CCB_CODEX_PLUGIN_OVERRIDES_JSON` / `CCB_CODEX_PLUGIN_OVERRIDES` env
+  overrides.
+- **Codex Stub Config Plugin Overlays Fixed**: Codex agents without an
+  inherited `config.toml`, or with config inheritance disabled, now still
+  materialize `provider_profile.plugins` into the managed `config.toml`.
+- **Claude Profile MCP Without Source Trust Fixed**: Claude
+  `provider_profile.mcp_servers` now materializes even when the source
+  `.claude.json` does not exist, and `enabled = false` clears stale managed MCP
+  servers from the agent trust file.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.13.
+
 ## v7.6.12 (2026-06-18)
 
 ### Claude MCP And Hook Inheritance

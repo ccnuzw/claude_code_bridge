@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.13-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -698,6 +698,20 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.13</b> - Provider Profile Overlay 修复</summary>
+
+- Codex plugin override 现在按预期顺序解析：继承的 source config、
+  `provider_profile.plugins`，最后是
+  `CCB_CODEX_PLUGIN_OVERRIDES_JSON` / `CCB_CODEX_PLUGIN_OVERRIDES` 环境覆盖。
+- 没有继承 `config.toml` 的 Codex agent 现在也会把
+  `provider_profile.plugins` 写入 managed `config.toml`。
+- Claude `provider_profile.mcp_servers` 现在即使 source `.claude.json`
+  不存在也会生效，`enabled = false` 会清理 agent trust file 里的 stale
+  managed MCP server。
+
+</details>
+
+<details>
 <summary><b>v7.6.12</b> - Claude MCP 与 Hook 继承</summary>
 
 - managed Claude agent 现在会从 source `.claude.json` 继承 Claude Code MCP
