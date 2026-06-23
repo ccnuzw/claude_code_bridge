@@ -179,6 +179,7 @@ def test_project_focus_agent_selects_configured_window_and_pane(tmp_path: Path) 
         'namespace_epoch': 4,
     }
     assert backend.calls == [
+        ['select-window', '-t', 'ccb-test:ops'],
         ['select-pane', '-t', '%2'],
         ['display-message', '-p', '-t', '%3', '#{session_name}'],
         ['display-message', '-p', '-t', '%4', '#{session_name}'],
@@ -264,6 +265,7 @@ def test_project_focus_requests_sidebar_refresh_when_available(tmp_path: Path) -
     assert project_view.invalidated == 1
     assert project_view.refresh_requested == 1
     assert backend.calls == [
+        ['select-window', '-t', 'ccb-test:ops'],
         ['select-pane', '-t', '%2'],
     ]
 
@@ -324,7 +326,10 @@ def test_project_focus_agent_uses_pane_options_when_tmux_window_name_differs(tmp
 
     assert result['focused'] is True
     assert result['kind'] == 'agent'
-    assert backend.calls[0] == ['select-pane', '-t', '%2']
+    assert backend.calls[:2] == [
+        ['select-window', '-t', 'ccb-test:ops'],
+        ['select-pane', '-t', '%2'],
+    ]
 
 
 def test_project_focus_window_reports_missing_window(tmp_path: Path) -> None:

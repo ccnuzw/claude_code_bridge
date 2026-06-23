@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 
 
+DB_NAME = 'logs_2.sqlite'
 TRIGGER_NAME = 'ccb_drop_diagnostic_logs'
 TRIGGER_SQL = f'''
 CREATE TRIGGER {TRIGGER_NAME}
 BEFORE INSERT ON logs
-WHEN lower(NEW.level) IN ('trace', 'debug')
 BEGIN
     SELECT RAISE(IGNORE);
 END
@@ -22,7 +24,7 @@ def codex_diagnostic_logs_enabled() -> bool:
     return raw in {'1', 'true', 'yes', 'on'}
 
 
-def ensure_codex_diagnostic_log_filter(codex_home: Path) -> bool:
+def ensure_codex_diagnostic_log_filter(codex_home: Path, *, runtime_dir: Path | None = None) -> bool:
     """Ensure the managed Codex diagnostic-log policy is applied.
 
     Codex creates logs_2.sqlite lazily, so callers should treat False as "not
@@ -31,6 +33,7 @@ def ensure_codex_diagnostic_log_filter(codex_home: Path) -> bool:
     """
     if codex_diagnostic_logs_enabled():
         return remove_codex_diagnostic_log_filter(codex_home)
+    _ensure_codex_diagnostic_log_redirect(codex_home, runtime_dir=runtime_dir)
     return install_codex_diagnostic_log_filter(codex_home)
 
 
@@ -40,7 +43,7 @@ def install_codex_diagnostic_log_filter(codex_home: Path) -> bool:
     Returns True when the trigger is present after the call. Missing lazy-created
     Codex databases return False so long-lived callers can retry later.
     """
-    db_path = Path(codex_home).expanduser() / 'logs_2.sqlite'
+    db_path = Path(codex_home).expanduser() / DB_NAME
     if not db_path.is_file():
         return False
     try:
@@ -61,7 +64,8 @@ def install_codex_diagnostic_log_filter(codex_home: Path) -> bool:
 
 def remove_codex_diagnostic_log_filter(codex_home: Path) -> bool:
     """Remove CCB's Codex diagnostic-log filter when diagnostics are enabled."""
-    db_path = Path(codex_home).expanduser() / 'logs_2.sqlite'
+    _restore_codex_diagnostic_log_redirect(codex_home)
+    db_path = Path(codex_home).expanduser() / DB_NAME
     if not db_path.is_file():
         return True
     try:
@@ -79,7 +83,11 @@ def ensure_codex_diagnostic_log_filter_from_env() -> bool:
     raw = str(os.environ.get('CODEX_SQLITE_HOME') or os.environ.get('CODEX_HOME') or '').strip()
     if not raw:
         return False
-    return ensure_codex_diagnostic_log_filter(Path(raw))
+    runtime_dir = str(os.environ.get('CODEX_RUNTIME_DIR') or '').strip()
+    return ensure_codex_diagnostic_log_filter(
+        Path(raw),
+        runtime_dir=Path(runtime_dir) if runtime_dir else None,
+    )
 
 
 def install_codex_diagnostic_log_filter_from_env() -> bool:
@@ -113,6 +121,133 @@ def _logs_table_exists(conn: sqlite3.Connection) -> bool:
     return row is not None
 
 
+def _ensure_codex_diagnostic_log_redirect(codex_home: Path, *, runtime_dir: Path | None = None) -> bool:
+    home = Path(codex_home).expanduser()
+    home.mkdir(parents=True, exist_ok=True)
+    db_path = home / DB_NAME
+    target = _diagnostic_log_temp_db_path(home, runtime_dir=runtime_dir)
+    if db_path.is_symlink():
+        return True
+
+    for sidecar_name in (f'{DB_NAME}-wal', f'{DB_NAME}-shm'):
+        sidecar = home / sidecar_name
+        if sidecar.exists() or sidecar.is_symlink():
+            _move_path_to_backup(sidecar)
+    schema_sql = _read_logs_table_schema(db_path)
+    if db_path.exists():
+        _move_path_to_backup(db_path)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if schema_sql and not target.exists():
+        _initialize_logs_db(target, schema_sql=schema_sql)
+    try:
+        db_path.symlink_to(target)
+    except FileExistsError:
+        return db_path.is_symlink()
+    except OSError:
+        _restore_diagnostic_log_backups(home)
+        return False
+    return True
+
+
+def _restore_codex_diagnostic_log_redirect(codex_home: Path) -> None:
+    home = Path(codex_home).expanduser()
+    db_path = home / DB_NAME
+    if not db_path.is_symlink():
+        return
+    try:
+        db_path.unlink()
+    except FileNotFoundError:
+        pass
+    _restore_diagnostic_log_backups(home)
+
+
+def _restore_diagnostic_log_backups(home: Path) -> None:
+    db_path = home / DB_NAME
+    if not db_path.exists() and not db_path.is_symlink():
+        backup = _existing_backup_path(db_path)
+        if backup is not None:
+            try:
+                backup.rename(db_path)
+            except OSError:
+                pass
+    for sidecar_name in (f'{DB_NAME}-wal', f'{DB_NAME}-shm'):
+        sidecar = home / sidecar_name
+        backup = _existing_backup_path(sidecar)
+        if backup is None or sidecar.exists() or sidecar.is_symlink():
+            continue
+        try:
+            backup.rename(sidecar)
+        except OSError:
+            pass
+
+
+def _diagnostic_log_temp_db_path(codex_home: Path, *, runtime_dir: Path | None = None) -> Path:
+    raw_root = str(os.environ.get('CCB_CODEX_LOGS_TMPDIR') or '').strip()
+    if raw_root:
+        root = Path(raw_root).expanduser()
+    else:
+        uid = getattr(os, 'getuid', lambda: 0)()
+        root = Path(tempfile.gettempdir()) / f'ccb-codex-logs-{uid}'
+    digest_source = str(Path(codex_home).expanduser().resolve(strict=False))
+    if runtime_dir is not None:
+        digest_source = f'{digest_source}\n{Path(runtime_dir).expanduser().resolve(strict=False)}'
+    digest = hashlib.sha256(digest_source.encode('utf-8')).hexdigest()[:16]
+    return root / digest / DB_NAME
+
+
+def _read_logs_table_schema(db_path: Path) -> str | None:
+    if not db_path.is_file():
+        return None
+    try:
+        with sqlite3.connect(str(db_path), timeout=0.2) as conn:
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='logs' LIMIT 1"
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return str(row[0] or '').strip() or None
+
+
+def _initialize_logs_db(target: Path, *, schema_sql: str) -> None:
+    try:
+        with sqlite3.connect(str(target), timeout=0.2) as conn:
+            conn.execute(schema_sql)
+            conn.commit()
+    except sqlite3.Error:
+        return
+
+
+def _move_path_to_backup(path: Path) -> Path | None:
+    backup = _next_backup_path(path)
+    try:
+        path.rename(backup)
+    except OSError:
+        return None
+    return backup
+
+
+def _next_backup_path(path: Path) -> Path:
+    base = path.with_name(f'{path.name}.bak')
+    if not base.exists() and not base.is_symlink():
+        return base
+    for index in range(1, 1000):
+        candidate = path.with_name(f'{path.name}.bak.{index}')
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+    return path.with_name(f'{path.name}.bak.{int(time.time())}')
+
+
+def _existing_backup_path(path: Path) -> Path | None:
+    first = path.with_name(f'{path.name}.bak')
+    if first.exists() or first.is_symlink():
+        return first
+    backups = sorted(path.parent.glob(f'{path.name}.bak.*'))
+    return backups[0] if backups else None
+
+
 def _trigger_sql(conn: sqlite3.Connection) -> str | None:
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=? LIMIT 1",
@@ -131,14 +266,13 @@ def _trigger_sql_matches(sql: str | None) -> bool:
     return (
         f'create trigger {TRIGGER_NAME}' in normalized
         and 'before insert on logs' in normalized
-        and 'when lower(new.level) in' in normalized
-        and "'trace','debug'" in compact
         and 'raise(ignore)' in compact
     )
 
 
 __all__ = [
     'CodexDiagnosticLogFilterInstaller',
+    'DB_NAME',
     'TRIGGER_NAME',
     'codex_diagnostic_logs_enabled',
     'ensure_codex_diagnostic_log_filter',

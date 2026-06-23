@@ -97,7 +97,7 @@ def prepare_codex_home_overrides(
         'CODEX_HOME': str(layout.codex_home),
         'CODEX_SESSION_ROOT': str(layout.session_root),
     }
-    ensure_codex_diagnostic_log_filter(layout.codex_home)
+    ensure_codex_diagnostic_log_filter(layout.codex_home, runtime_dir=runtime_dir)
 
     if "WSL_DISTRO_NAME" in os.environ:
         # We are running inside WSL. The target executable might be a Windows binary (via interop).

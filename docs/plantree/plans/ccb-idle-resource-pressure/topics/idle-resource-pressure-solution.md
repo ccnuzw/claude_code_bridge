@@ -11,6 +11,44 @@ Date: 2026-06-23
 - Do not hide state from operators: replace noisy writes with metrics and
   explicit idle/suspended states.
 - Make all aggressive behavior opt-in before changing defaults.
+- Treat ask stability as non-negotiable: resource savings must not change
+  submit, queue, callback continuation, reply delivery, cancel, or resubmit
+  semantics.
+
+## Ask Stability Contract
+
+Any idle resource policy must preserve these behaviors:
+
+- Socket request handling stays hot. A project may reduce maintenance work while
+  idle, but the `ccbd` socket server must keep accepting submit/get/ps/cancel
+  requests without waiting for the next idle heartbeat interval.
+- Ask submission is an activity edge. Any accepted submit, resubmit, callback
+  continuation, reply delivery, cancel, or repair request immediately exits
+  deep idle and schedules an active maintenance pass.
+- Queue order remains authoritative. No idle policy may reorder accepted jobs,
+  skip queued jobs, or infer provider idleness from an empty pane while the
+  dispatcher has outstanding work for that target.
+- Callback edges are active work. A pending callback edge, child-completed edge
+  awaiting continuation submission, or continuation job awaiting delivery must
+  block provider suspend and deep-idle dispatcher throttling.
+- Reply delivery is active work. Pending `reply_delivery` jobs or unconsumed
+  reply heads must be treated like queued asks.
+- A suspended provider must be woken before dispatching the next job to that
+  provider. If wake fails, the job must fail or remain pending according to the
+  existing dispatcher semantics; the request must not be silently dropped.
+- `--silence` remains submit-only. The system may skip reply delivery for
+  success, but it must still persist terminal failure/blocker evidence.
+
+Minimum stable ask scenarios before enabling each slice beyond no-op write
+suppression:
+
+- plain `ask A -> B` while B is idle
+- queued asks to the same target preserve order
+- `ask --callback` chain `A -> B -> C -> B -> A` completes once without loops
+- `ask --silence` independent child work does not wait for a reply body
+- first ask after warm-idle/deep-idle/suspended state wakes the target or reports
+  a clear wake failure
+- cancellation/resubmit while idle still reaches the dispatcher immediately.
 
 ## Pressure Classes
 
@@ -106,6 +144,8 @@ Recommended change:
   - last socket request
   - pending ask queue depth
   - active jobs
+  - pending callback edges
+  - pending reply delivery heads or jobs
   - provider output movement
   - recent health transition
 - Derive mode:
@@ -124,6 +164,8 @@ Wake rules:
 
 - Any socket request queues immediate maintenance.
 - Any ask submission exits idle mode.
+- Any callback continuation, reply delivery, cancellation, resubmit, or repair
+  request exits idle mode.
 - Any provider output/event exits deep idle.
 - Any failure/recovery condition returns to active cadence.
 
@@ -192,6 +234,8 @@ Suspend policy:
   - no active job
   - queue depth is zero
   - no callback continuation waiting on that provider
+  - no pending reply delivery targeting that provider
+  - no active wake/recovery attempt
   - provider runtime health is stable
   - idle age exceeds configured threshold
 - Persist enough resume authority:
@@ -206,6 +250,8 @@ Resume policy:
 
 - On ask or focus request, transition `suspended -> waking`.
 - Start provider runtime using existing start/restore path.
+- Keep accepted jobs in dispatcher authority while waking; do not submit to the
+  provider transport until runtime is actionable.
 - If restore fails, surface a clear error and keep the job pending or fail
   according to current dispatcher semantics.
 
@@ -247,11 +293,17 @@ ccb cleanup --provider-state --older-than 30d
 Codex diagnostic SQLite guardrails:
 
 - The `logs_2.sqlite` diagnostic-log filter is a pressure mitigation, not a
-  session authority change. By default it suppresses high-frequency
-  `TRACE`/`DEBUG` rows while preserving higher-value diagnostic rows.
+  session authority change. By default managed Codex homes redirect this
+  rebuildable diagnostic DB to a temp path and install a trigger that blocks all
+  diagnostic inserts.
+- Existing `logs_2.sqlite`, `logs_2.sqlite-wal`, and `logs_2.sqlite-shm` files
+  are backed up before the symlink redirect is installed. The temp target is
+  scoped by Codex home and runtime directory so multiple agents do not share one
+  writable database path.
 - The filter must be reversible: when `CCB_CODEX_DIAGNOSTIC_LOGS` is enabled,
-  CCB removes its trigger from existing managed Codex homes instead of leaving
-  old suppression state behind.
+  CCB removes the symlink redirect, restores the backed-up managed DB when one
+  exists, and removes its trigger instead of leaving old suppression state
+  behind.
 - Trigger installation must be idempotent. If the expected trigger already
   exists, the installer must not drop/recreate it and must not bump SQLite
   schema state on every startup.
@@ -273,6 +325,9 @@ Acceptance check:
   - heartbeat persist writes
   - provider RSS by provider type
   - provider idle age
+  - ask submit latency and socket request queue wait
+  - wake latency for first ask after idle
+  - callback edge pending age and continuation submission count
 - Add a diagnostic command or project view field that shows idle mode.
 
 Risk: low.
@@ -291,6 +346,8 @@ Risk: low to medium. Main risk is stale diagnostic timestamps.
 - Add project activity tracker.
 - Run full maintenance only while active.
 - Use warm/deep idle intervals when safe.
+- Keep dispatcher callback repair, reply delivery repair, and job queue progress
+  on active cadence whenever any ask-related work is pending.
 
 Risk: medium. Main risk is slower detection of dead panes while idle.
 
@@ -307,6 +364,8 @@ Risk: medium. Main risk is crash recovery and stale runtime-root refs.
 - Implement opt-in Codex suspend first.
 - Add wake path on ask.
 - Add explicit sidebar/project-view status.
+- Gate suspend on dispatcher and message-bureau activity, not only provider pane
+  idleness.
 
 Risk: medium to high. Main risk is resume latency and provider-specific
 restore differences.
@@ -328,6 +387,12 @@ Automated tests:
 - Unit tests for runtime/helper debounce.
 - Unit tests for idle-mode transitions from active to warm-idle to deep-idle.
 - Integration test for ask waking a suspended provider.
+- Integration test for queued asks preserving order across idle wake.
+- Integration test for callback continuation across idle wake:
+  parent -> child -> grandchild -> child -> parent.
+- Integration test proving pending callback and reply-delivery work blocks
+  provider suspend.
+- Integration test for cancel/resubmit while project is deep-idle.
 - Regression test for `ccb kill`, `ccb -n`, callback continuation, and
   project restart.
 
@@ -338,6 +403,8 @@ Manual acceptance:
 - Confirm `/proc/<pid>/io` write deltas are near zero outside max-persist
   windows.
 - Submit an ask and confirm the provider wakes and completes.
+- Run the ask stability scenarios above with idle pacing enabled before turning
+  on provider suspend.
 
 ## Open Questions
 
@@ -348,3 +415,7 @@ Manual acceptance:
 - Should compressed old sessions remain transparent to existing session readers?
 - Should idle defaults be enabled globally or only for high-agent-count
   projects at first?
+- What is the maximum acceptable wake latency for the first ask after deep idle
+  or suspend?
+- Should pending callback/reply-delivery state fully block deep idle, or only
+  block provider suspend while keeping reduced control-plane heartbeat writes?

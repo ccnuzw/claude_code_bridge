@@ -33,6 +33,9 @@ project manually.
 - Reduce repeated idle writes to `.ccb/ccbd/*` and `.ccb/agents/*/*.json`.
 - Reduce memory and CPU from providers that are mounted but unused.
 - Preserve fast wake-up for the first new ask or UI action after an idle period.
+- Preserve ask correctness and callback stability: submit, queueing, callback
+  continuation, reply delivery, cancellation, and resubmit semantics must remain
+  authoritative while any idle policy is active.
 - Keep durable state boundaries explicit: recoverable runtime residue should be
   movable to tmpfs or removable; user/session/auth state must remain safe.
 - Provide observable counters so regressions are visible.
@@ -43,6 +46,7 @@ project manually.
 - Removing persistent provider sessions by default.
 - Full Python control-plane rewrite.
 - Making all runtime state in-memory only.
+- Trading ask correctness for lower idle resource usage.
 
 ## Reading Path
 
@@ -58,10 +62,14 @@ project manually.
 
 Local diagnosis on 2026-06-23 found:
 
-- Codex `logs_2.sqlite` TRACE/DEBUG pressure was real, but CCB-side filtering
-  reduced that path; idle pressure remains elsewhere.
+- Codex `logs_2.sqlite` write pressure was real. The `v7.6.14` trigger-only
+  mitigation was insufficient because it still kept the database on durable
+  storage and only filtered selected levels; the source hardening now redirects
+  the managed DB to a temp path and blocks diagnostic inserts by default.
 - A 10-second `/proc/<pid>/io` sample showed several project `ccbd/main.py`
   processes writing hundreds of KB to a few MB per 10 seconds while idle.
+- `state_5.sqlite*` was not a release blocker in the local release sample:
+  small aggregate size and no 15-second idle mtime/size movement were observed.
 - Recently touched files during idle were dominated by:
   - `.ccb/ccbd/lease.json`
   - `.ccb/ccbd/keeper.json`
@@ -75,4 +83,6 @@ Local diagnosis on 2026-06-23 found:
 
 ## Status
 
-Planning. No implementation has landed from this plan yet.
+Planning. Corrected Codex diagnostic SQLite hardening is implemented in the
+working tree after the partial `v7.6.14` mitigation; broader idle CPU, memory,
+JSON write, heartbeat, and provider suspend work remains in planning.
