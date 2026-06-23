@@ -1384,7 +1384,9 @@ def _agent_conversation_items(
             or _optional_text(comm.get('message'))
             or _optional_text(comm.get('body_preview'))
         )
-        reply = _completion_reply_for_job(project_root, _optional_text(comm.get('id')))
+        reply_dict = _completion_reply_for_job(project_root, _optional_text(comm.get('id')))
+        reply = str(reply_dict.get('body') or '')
+        reply_attachments = _attachment_records(reply_dict.get('attachments'))
         attachments = _attachment_records(comm.get('attachments'))
         if reply:
             comm_id = str(comm.get('id') or f'comms-{len(items)}')
@@ -1411,6 +1413,7 @@ def _agent_conversation_items(
                     'body': reply,
                     'format': 'markdown',
                     'source': 'completion_snapshot',
+                    'attachments': reply_attachments,
                 }
             )
             continue
@@ -1449,20 +1452,27 @@ def _conversation_item_belongs_to_agent(item: dict[str, object], agent: str) -> 
     return True
 
 
-def _completion_reply_for_job(project_root: Path, job_id: str | None) -> str:
+def _completion_reply_for_job(project_root: Path, job_id: str | None) -> dict[str, object]:
     if not job_id:
-        return ''
+        return {'body': '', 'attachments': []}
     path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{job_id}.json'
     try:
         payload = json.loads(path.read_text(encoding='utf-8'))
     except Exception:
-        return ''
+        return {'body': '', 'attachments': []}
     latest_decision = _map(payload.get('latest_decision'))
-    return (
+    body = (
         _optional_text(latest_decision.get('reply'))
         or _optional_text(payload.get('latest_reply_preview'))
         or ''
     )
+    
+    attachments = []
+    payload_obj = _map(latest_decision.get('payload'))
+    if 'attachments' in payload_obj:
+        attachments = _attachment_records(payload_obj.get('attachments'))
+        
+    return {'body': body, 'attachments': attachments}
 
 
 def _agent_status_summary(agent: dict[str, object]) -> str:
