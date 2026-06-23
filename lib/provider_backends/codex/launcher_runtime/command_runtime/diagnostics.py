@@ -127,19 +127,17 @@ def _ensure_codex_diagnostic_log_redirect(codex_home: Path, *, runtime_dir: Path
     db_path = home / DB_NAME
     target = _diagnostic_log_temp_db_path(home, runtime_dir=runtime_dir)
     if db_path.is_symlink():
+        _repair_preinitialized_log_db_target(db_path)
         return True
 
     for sidecar_name in (f'{DB_NAME}-wal', f'{DB_NAME}-shm'):
         sidecar = home / sidecar_name
         if sidecar.exists() or sidecar.is_symlink():
             _move_path_to_backup(sidecar)
-    schema_sql = _read_logs_table_schema(db_path)
     if db_path.exists():
         _move_path_to_backup(db_path)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    if schema_sql and not target.exists():
-        _initialize_logs_db(target, schema_sql=schema_sql)
     try:
         db_path.symlink_to(target)
     except FileExistsError:
@@ -148,6 +146,46 @@ def _ensure_codex_diagnostic_log_redirect(codex_home: Path, *, runtime_dir: Path
         _restore_diagnostic_log_backups(home)
         return False
     return True
+
+
+def _repair_preinitialized_log_db_target(db_path: Path) -> None:
+    target = db_path.resolve(strict=False)
+    if not target.is_file():
+        return
+    if not _log_db_looks_preinitialized_without_migration(target):
+        return
+    _move_db_family_to_backup(target)
+
+
+def _log_db_looks_preinitialized_without_migration(db_path: Path) -> bool:
+    try:
+        with sqlite3.connect(str(db_path), timeout=0.2) as conn:
+            if not _logs_table_exists(conn):
+                return False
+            return not _codex_log_migration_one_completed(conn)
+    except sqlite3.Error:
+        return False
+
+
+def _codex_log_migration_one_completed(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations' LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return False
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM _sqlx_migrations WHERE version=1 AND success LIMIT 1"
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
+def _move_db_family_to_backup(path: Path) -> None:
+    for candidate in (path.with_name(f'{path.name}-wal'), path.with_name(f'{path.name}-shm'), path):
+        if candidate.exists() or candidate.is_symlink():
+            _move_path_to_backup(candidate)
 
 
 def _restore_codex_diagnostic_log_redirect(codex_home: Path) -> None:
@@ -194,30 +232,6 @@ def _diagnostic_log_temp_db_path(codex_home: Path, *, runtime_dir: Path | None =
         digest_source = f'{digest_source}\n{Path(runtime_dir).expanduser().resolve(strict=False)}'
     digest = hashlib.sha256(digest_source.encode('utf-8')).hexdigest()[:16]
     return root / digest / DB_NAME
-
-
-def _read_logs_table_schema(db_path: Path) -> str | None:
-    if not db_path.is_file():
-        return None
-    try:
-        with sqlite3.connect(str(db_path), timeout=0.2) as conn:
-            row = conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='logs' LIMIT 1"
-            ).fetchone()
-    except sqlite3.Error:
-        return None
-    if row is None:
-        return None
-    return str(row[0] or '').strip() or None
-
-
-def _initialize_logs_db(target: Path, *, schema_sql: str) -> None:
-    try:
-        with sqlite3.connect(str(target), timeout=0.2) as conn:
-            conn.execute(schema_sql)
-            conn.commit()
-    except sqlite3.Error:
-        return
 
 
 def _move_path_to_backup(path: Path) -> Path | None:

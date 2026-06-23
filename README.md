@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.15-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.16-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -708,6 +708,18 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.16</b> - Codex SQLite Migration Recovery</summary>
+
+- Fixes the managed Codex `logs_2.sqlite` redirect so CCB no longer
+  pre-creates Codex-owned SQLite schema; Codex runs its own migrations first.
+- Installs the CCB diagnostic insert-block trigger only after Codex has created
+  the log database and `_sqlx_migrations` records.
+- Repairs bad temporary log databases left by the intermediate policy by moving
+  them aside and letting Codex recreate them through the normal migration path.
+
+</details>
+
+<details>
 <summary><b>v7.6.15</b> - Codex Diagnostics And Sidebar Focus</summary>
 
 - Redirects managed Codex `logs_2.sqlite` diagnostic writes to temporary

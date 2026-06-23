@@ -52,10 +52,11 @@ project manually.
 
 1. [roadmap.md](roadmap.md)
 2. [topics/idle-resource-pressure-solution.md](topics/idle-resource-pressure-solution.md)
-3. Related baseline:
+3. [topics/worker-execution-goal.md](topics/worker-execution-goal.md)
+4. Related baseline:
    [../../baseline/storage-and-state.md](../../baseline/storage-and-state.md),
    [../../baseline/runtime-flows.md](../../baseline/runtime-flows.md)
-4. Related performance plan:
+5. Related performance plan:
    [../ccb-runtime-performance/README.md](../ccb-runtime-performance/README.md)
 
 ## Current Evidence

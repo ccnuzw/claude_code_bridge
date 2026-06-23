@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## v7.6.16 (2026-06-23)
+
+### Codex SQLite Migration Recovery
+
+- **Codex Log Redirect Migration Fixed**: managed Codex `logs_2.sqlite`
+  redirect now leaves Codex-owned SQLite schema creation to Codex itself and
+  waits for `_sqlx_migrations` before installing the CCB diagnostic insert
+  trigger.
+- **Bad Intermediate Temp DBs Repaired**: temporary log databases left by the
+  bad intermediate policy are detected when `logs` exists without a successful
+  Codex migration record, backed up, and recreated by Codex on the normal
+  migration path.
+- **Diagnostic Fallbacks Preserved**: diagnostics restore and symlink fallback
+  behavior remain covered while the default path avoids precreating Codex's log
+  schema.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.16.
+
 ## v7.6.15 (2026-06-23)
 
 ### Codex Diagnostics And Sidebar Focus

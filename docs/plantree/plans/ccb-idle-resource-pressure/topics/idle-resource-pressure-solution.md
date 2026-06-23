@@ -294,12 +294,17 @@ Codex diagnostic SQLite guardrails:
 
 - The `logs_2.sqlite` diagnostic-log filter is a pressure mitigation, not a
   session authority change. By default managed Codex homes redirect this
-  rebuildable diagnostic DB to a temp path and install a trigger that blocks all
-  diagnostic inserts.
+  rebuildable diagnostic DB to a temp path. CCB must not create Codex-owned
+  SQLite schema in that target; Codex owns its migration path.
+- Trigger installation is a post-migration retry. CCB installs the insert-block
+  trigger only after Codex has created the `logs` table.
 - Existing `logs_2.sqlite`, `logs_2.sqlite-wal`, and `logs_2.sqlite-shm` files
   are backed up before the symlink redirect is installed. The temp target is
   scoped by Codex home and runtime directory so multiple agents do not share one
   writable database path.
+- A temp symlink target that contains `logs` without a successful Codex migration
+  record is treated as broken intermediate-state residue and moved aside so
+  Codex can recreate it through its own migration.
 - The filter must be reversible: when `CCB_CODEX_DIAGNOSTIC_LOGS` is enabled,
   CCB removes the symlink redirect, restores the backed-up managed DB when one
   exists, and removes its trigger instead of leaving old suppression state

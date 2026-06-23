@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.15-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.16-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -694,6 +694,18 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.16</b> - Codex SQLite Migration 恢复修复</summary>
+
+- 修复 managed Codex `logs_2.sqlite` redirect：CCB 不再预创建 Codex 自有
+  SQLite schema，改为等待 Codex 自己完成 migration。
+- 只有在 Codex 创建 log database 和 `_sqlx_migrations` 记录后，才安装 CCB
+  的 diagnostic insert-block trigger。
+- 对中间问题版本留下的异常临时 log database 做自愈：先挪到备份，再让
+  Codex 通过正常 migration 路径重新创建。
+
+</details>
+
+<details>
 <summary><b>v7.6.15</b> - Codex 诊断与 Sidebar Focus 修复</summary>
 
 - managed Codex 默认把 `logs_2.sqlite` 诊断写入重定向到临时存储，并阻断

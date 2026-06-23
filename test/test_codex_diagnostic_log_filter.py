@@ -15,16 +15,44 @@ def _create_logs_db(codex_home: Path) -> Path:
     codex_home.mkdir(parents=True, exist_ok=True)
     db_path = codex_home / DB_NAME
     with sqlite3.connect(str(db_path)) as conn:
+        _create_logs_table(conn)
+    return db_path
+
+
+def _create_logs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        '''
+        CREATE TABLE logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            level TEXT,
+            target TEXT
+        )
+        '''
+    )
+
+
+def _create_codex_migrated_logs_db(db_path: Path) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(db_path)) as conn:
         conn.execute(
             '''
-            CREATE TABLE logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                level TEXT,
-                target TEXT
+            CREATE TABLE _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
             )
             '''
         )
-    return db_path
+        conn.execute(
+            '''
+            INSERT INTO _sqlx_migrations(version, description, success, checksum, execution_time)
+            VALUES (1, 'create_logs', 1, X'', 0)
+            '''
+        )
+        _create_logs_table(conn)
 
 
 def test_install_codex_diagnostic_log_filter_drops_all_rows(tmp_path: Path) -> None:
@@ -97,9 +125,19 @@ def test_ensure_codex_diagnostic_log_filter_redirects_logs_db_to_temp(
     monkeypatch.delenv('CCB_CODEX_DIAGNOSTIC_LOGS', raising=False)
     monkeypatch.setenv('CCB_CODEX_LOGS_TMPDIR', str(logs_tmp))
 
+    assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is False
+
+    target = db_path.resolve(strict=False)
+    assert not target.exists()
+    assert db_path.is_symlink()
+    assert target.is_relative_to(logs_tmp)
+    assert (codex_home / f'{DB_NAME}.bak').is_file()
+    assert (codex_home / f'{DB_NAME}-wal.bak').is_file()
+    assert (codex_home / f'{DB_NAME}-shm.bak').is_file()
+
+    _create_codex_migrated_logs_db(db_path)
     assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is True
 
-    target = db_path.resolve(strict=True)
     with sqlite3.connect(str(db_path)) as conn:
         conn.execute("INSERT INTO logs(level, target) VALUES ('INFO', 'info-row')")
         rows = conn.execute('SELECT level, target FROM logs ORDER BY id').fetchall()
@@ -108,11 +146,6 @@ def test_ensure_codex_diagnostic_log_filter_redirects_logs_db_to_temp(
             (TRIGGER_NAME,),
         ).fetchone()
 
-    assert db_path.is_symlink()
-    assert target.is_relative_to(logs_tmp)
-    assert (codex_home / f'{DB_NAME}.bak').is_file()
-    assert (codex_home / f'{DB_NAME}-wal.bak').is_file()
-    assert (codex_home / f'{DB_NAME}-shm.bak').is_file()
     assert trigger == (TRIGGER_NAME,)
     assert rows == []
 
@@ -133,17 +166,40 @@ def test_ensure_codex_diagnostic_log_filter_redirects_before_lazy_db_creation(
     assert db_path.is_symlink()
     assert target.parent.is_relative_to(logs_tmp)
 
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute(
-            '''
-            CREATE TABLE logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                level TEXT,
-                target TEXT
-            )
-            '''
-        )
+    _create_codex_migrated_logs_db(db_path)
 
+    assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is True
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("INSERT INTO logs(level, target) VALUES ('INFO', 'info-row')")
+        rows = conn.execute('SELECT level, target FROM logs ORDER BY id').fetchall()
+
+    assert rows == []
+
+
+def test_ensure_codex_diagnostic_log_filter_repairs_preinitialized_symlink_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    codex_home = tmp_path / 'codex-home'
+    db_path = codex_home / DB_NAME
+    logs_tmp = tmp_path / 'tmp-logs'
+    target = logs_tmp / 'broken-target' / DB_NAME
+    codex_home.mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    db_path.symlink_to(target)
+    with sqlite3.connect(str(target)) as conn:
+        _create_logs_table(conn)
+    monkeypatch.delenv('CCB_CODEX_DIAGNOSTIC_LOGS', raising=False)
+    monkeypatch.setenv('CCB_CODEX_LOGS_TMPDIR', str(logs_tmp))
+
+    assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is False
+
+    assert db_path.is_symlink()
+    assert not target.exists()
+    assert (target.parent / f'{DB_NAME}.bak').is_file()
+
+    _create_codex_migrated_logs_db(db_path)
     assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is True
 
     with sqlite3.connect(str(db_path)) as conn:
@@ -187,7 +243,7 @@ def test_ensure_codex_diagnostic_log_filter_restores_backup_when_diagnostics_ena
         conn.execute("INSERT INTO logs(level, target) VALUES ('INFO', 'original-row')")
     monkeypatch.delenv('CCB_CODEX_DIAGNOSTIC_LOGS', raising=False)
     monkeypatch.setenv('CCB_CODEX_LOGS_TMPDIR', str(tmp_path / 'tmp-logs'))
-    assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is True
+    assert ensure_codex_diagnostic_log_filter(codex_home, runtime_dir=tmp_path / 'runtime') is False
     assert db_path.is_symlink()
 
     monkeypatch.setenv('CCB_CODEX_DIAGNOSTIC_LOGS', '1')

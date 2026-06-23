@@ -13,10 +13,14 @@ Date: 2026-06-23
 - Identified that the `v7.6.14` Codex `logs_2.sqlite` mitigation was partial:
   the trigger-only policy did not move writes off durable storage and preserved
   some diagnostic rows, so it could still leave measurable write pressure.
-- Implemented the corrected Codex diagnostic SQLite policy in the working tree:
-  managed `logs_2.sqlite` redirects to temp storage, existing DB/sidecars are
-  backed up, all diagnostic inserts are blocked by default, diagnostics mode can
+- Implemented and corrected the Codex diagnostic SQLite policy in the working
+  tree: managed `logs_2.sqlite` redirects to temp storage, existing DB/sidecars
+  are backed up, CCB no longer pre-creates Codex-owned SQLite schema, trigger
+  installation waits until Codex migration creates `logs`, diagnostics mode can
   restore the original DB, and symlink failure falls back to an in-place trigger.
+- Added self-healing for temp DBs created by the bad intermediate policy:
+  a symlink target with `logs` but no successful Codex migration record is moved
+  aside so Codex can recreate it through its own migration path.
 - Verified the corrected policy with `PYTHONPATH=lib pytest -q
   test/test_codex_diagnostic_log_filter.py
   test/test_codex_launcher_diagnostics_env.py test/test_v2_runtime_launch.py`
@@ -24,32 +28,42 @@ Date: 2026-06-23
   lib/provider_backends/codex/launcher_runtime/command_runtime/diagnostics.py
   lib/provider_backends/codex/launcher_runtime/command_runtime/home.py` and
   `git diff --check`.
+- Source runtime smoke under
+  `/home/bfly/yunwei/test_ccb2/codex-log-migration-smoke-20260623` passed:
+  `/home/bfly/yunwei/ccb_source/ccb_test config validate`, `ccb_test -s`, and
+  `ccb_test doctor` mounted one Codex agent without `table logs already exists`;
+  `logs_2.sqlite` pointed to temp storage, Codex migration records existed, the
+  CCB insert-block trigger was installed, and `ccb_test kill -f` stopped the
+  smoke runtime.
 - Confirmed `state_5.sqlite*` was not a release-blocking idle pressure path in
   local sampling; keep it under measurement rather than adding a speculative
   mitigation now.
 
 ## In Progress
 
-- Shape the implementation plan for an idle-aware CCB runtime policy.
+- Shape worker-guided execution for the remaining idle resource phases.
 
 ## Next
 
-1. Add an ask-stability gate for every idle optimization:
+1. Use [topics/worker-execution-goal.md](topics/worker-execution-goal.md) as
+   the worker contract for phased landing, tests, source runtime validation, and
+   plan-tree evidence updates.
+2. Add an ask-stability gate for every idle optimization:
    plain ask submit, queued ask, callback continuation, reply delivery, cancel,
    resubmit, and first ask after idle or suspend.
-2. Add measurement hooks for idle write bytes, runtime-store save count, helper
+3. Add measurement hooks for idle write bytes, runtime-store save count, helper
    manifest save count, provider process RSS, and provider idle age.
-3. Add content-equality and debounce guards around JSON runtime writes:
+4. Add content-equality and debounce guards around JSON runtime writes:
    `runtime.json`, `helper.json`, lifecycle records, and lease heartbeat.
-4. Introduce idle-mode heartbeat pacing:
+5. Introduce idle-mode heartbeat pacing:
    active interval, idle interval, deep-idle interval, and immediate wake on
    incoming socket requests.
-5. Move rebuildable runtime residue toward tmpfs:
+6. Move rebuildable runtime residue toward tmpfs:
    provider-runtime, FIFOs, bridge scratch state, activity snapshots, and
    transient pid/socket markers.
-6. Add provider idle suspend/resume for mounted-but-unused agents, starting with
+7. Add provider idle suspend/resume for mounted-but-unused agents, starting with
    an opt-in Codex policy.
-7. Add cleanup/compaction for provider-state:
+8. Add cleanup/compaction for provider-state:
    WAL checkpoint, session JSONL size policy, old cache pruning, and shared
    cache retention limits.
 
