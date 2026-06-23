@@ -349,6 +349,15 @@ ops = "agentroles.ccb_self:codex"
 `agentroles.ccb_self` 是稳定 package identity。运行时 agent name 通常是
 `ccb_self`，除非用户显式绑定成其他名字。
 
+同一个 role id 可以绑定到多个项目本地 agent 名。显式写法类似：
+
+```bash
+ccb roles add agentroles.ccb_self:codex --agent ccb_self_ops
+```
+
+多实例时不要用 role id 做 ask 目标；应直接指定本地 agent 名，例如
+`ccb_self` 或 `ccb_self_ops`。
+
 ### 5.7 Validate、Dry Run、Reload、Restart
 
 配置变更使用这个顺序：

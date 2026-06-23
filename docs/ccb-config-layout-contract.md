@@ -301,11 +301,21 @@ Contract:
 - `workspace_mode = "copy"` remains an advanced overlay-only mode until the
   compact leaf grammar has a first-class copy-mode spelling.
 - `[agents.<name>].role` may bind a configured agent to a reusable Role Pack
-  such as `ccb.archi`. The role id is stable package identity; the agent name
-  remains the project-local ask target. Role ids must use publisher-qualified
-  form such as `ccb.archi` or `seemseam.archi`.
+  such as `agentroles.archi`. The role id is stable package identity; the
+  agent name remains the project-local ask target. Role ids must use
+  publisher-qualified form such as `agentroles.archi` or `seemseam.archi`.
 - Role binding is not topology authority by itself. An agent with a role still
   must be referenced by `[windows]` to become configured and mounted.
+- Multiple configured agents may bind the same role id. This is the canonical
+  way to run several project-local instances of one Role Pack with distinct
+  names, providers, private memory, queues, panes, and provider homes.
+- Role id shorthand in `[windows]`, for example `agentroles.archi:codex`, is a
+  convenience for the role manifest's default agent name only. A second
+  instance of the same role must use an explicit agent leaf plus
+  `[agents.<name>].role`, or `ccb roles add <role-id>:<provider> --agent <name>`.
+- `ccb ask <role-id> ...` is only an alias when exactly one configured agent is
+  bound to that role. If multiple agents share the role, users must target the
+  project-local agent name explicitly.
 - Role assets are projected into managed provider homes as rebuildable role
   assets. Provider sessions, auth, runtime authority, mailbox state, and agent
   private memory must remain agent/project scoped.

@@ -153,6 +153,35 @@ main = "agentroles.mother:codex"
     assert str(account_home / '.roles' / 'installed') in message
 
 
+def test_load_project_config_allows_multiple_agents_bound_to_same_role(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-role-multi-instance'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        '''
+version = 2
+entry_window = "main"
+
+[windows]
+main = "archi_review:codex, archi_qa:claude"
+
+[agents.archi_review]
+role = "agentroles.archi"
+
+[agents.archi_qa]
+role = "agentroles.archi"
+''',
+    )
+
+    result = load_project_config(project_root)
+
+    assert result.config.windows[0].agent_names == ('archi_review', 'archi_qa')
+    assert result.config.agents['archi_review'].role == 'agentroles.archi'
+    assert result.config.agents['archi_qa'].role == 'agentroles.archi'
+    assert result.config.agents['archi_review'].provider == 'codex'
+    assert result.config.agents['archi_qa'].provider == 'claude'
+
+
 def test_load_project_config_accepts_kimi_and_deepseek_providers(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-native-providers'
     config_path = project_root / '.ccb' / 'ccb.config'
