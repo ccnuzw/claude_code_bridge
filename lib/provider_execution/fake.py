@@ -138,10 +138,6 @@ class FakeProviderAdapter:
                     finished_at=timestamp,
                     reply=reply_buffer or submission.reply,
                 )
-                if state.get('attachments'):
-                    new_payload = dict(decision.payload or {})
-                    new_payload['attachments'] = list(state['attachments'])
-                    decision = replace(decision, payload=new_payload)
                 break
 
         if not emitted and decision is None:
@@ -206,12 +202,16 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
         from datetime import datetime, timezone
         
         project_id = job.request.project_id
-        workspace_path = job.workspace_path
-        if not workspace_path:
-            return (f"FAKE_ERROR: no workspace_path to generate artifact for {ident}", [])
-        
-        project_root = Path(workspace_path).parents[4]
-        mobile_files_dir = project_root / '.ccb' / 'ccbd' / 'mobile' / 'files'
+        route_options = dict(getattr(job.request, 'route_options', None) or {})
+        mobile_files_dir_text = str(route_options.get('mobile_files_dir') or '').strip()
+        if mobile_files_dir_text:
+            mobile_files_dir = Path(mobile_files_dir_text)
+        else:
+            workspace_path = job.workspace_path
+            if not workspace_path:
+                return (f"FAKE_ERROR: no mobile file store to generate artifact for {ident}", [])
+            project_root = Path(workspace_path).parents[4]
+            mobile_files_dir = project_root / '.ccb' / 'ccbd' / 'mobile' / 'files'
         
         attachments = []
         

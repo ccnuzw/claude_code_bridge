@@ -7,6 +7,7 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import threading
 from typing import Callable, Mapping
 from uuid import uuid4
@@ -184,6 +185,7 @@ class MobileGatewayService:
         suffix = '/view'
         if route.startswith(prefix) and route.endswith(suffix):
             project_id = unquote(route[len(prefix):-len(suffix)].strip('/'))
+            self._authenticate(headers, required_scopes=('view',))
             return 200, self.project_view_payload(project_id)
         history_suffix = '/terminal-history'
         if route.startswith(prefix) and route.endswith(history_suffix):
@@ -265,6 +267,7 @@ class MobileGatewayService:
         limit = min(200, max(1, _query_int(query, 'limit') or 50))
         items = _agent_conversation_items(
             view_payload,
+            project_id=self._project_id,
             agent=target['agent'],
             namespace_epoch=int(target['namespace_epoch']),
             limit=limit,
@@ -511,6 +514,7 @@ class MobileGatewayService:
                         'idempotency_key': idempotency_key,
                         'format': message_format,
                         'attachments': attachments,
+                        'mobile_files_dir': str(self._mobile_files_dir()),
                     },
                     body_artifact=None,
                 )
@@ -847,18 +851,20 @@ class MobileGatewayService:
         return self._pairing_store
 
     def _mobile_file_dir(self, project_id: str, agent: str, file_id: str) -> Path:
+        return (
+            self._mobile_files_dir()
+            / _safe_path_segment(project_id)
+            / _safe_path_segment(agent)
+            / _safe_path_segment(file_id)
+        )
+
+    def _mobile_files_dir(self) -> Path:
         root = (
             self._mobile_dir
             if self._mobile_dir is not None
             else self._project_root / '.ccb' / 'ccbd' / 'mobile'
         )
-        return (
-            root
-            / 'files'
-            / _safe_path_segment(project_id)
-            / _safe_path_segment(agent)
-            / _safe_path_segment(file_id)
-        )
+        return root / 'files'
 
     def _capabilities(self) -> list[str]:
         values = list(_BASE_CAPABILITIES)
@@ -1318,6 +1324,7 @@ def _validate_agent_conversation_target(
 def _agent_conversation_items(
     view_payload: dict[str, object],
     *,
+    project_id: str,
     agent: str,
     namespace_epoch: int,
     limit: int,
@@ -1384,7 +1391,12 @@ def _agent_conversation_items(
             or _optional_text(comm.get('message'))
             or _optional_text(comm.get('body_preview'))
         )
-        reply_dict = _completion_reply_for_job(project_root, _optional_text(comm.get('id')))
+        reply_dict = _completion_reply_for_job(
+            project_root,
+            _optional_text(comm.get('id')),
+            project_id=project_id,
+            agent=agent,
+        )
         reply = str(reply_dict.get('body') or '')
         reply_attachments = _attachment_records(reply_dict.get('attachments'))
         attachments = _attachment_records(comm.get('attachments'))
@@ -1452,7 +1464,13 @@ def _conversation_item_belongs_to_agent(item: dict[str, object], agent: str) -> 
     return True
 
 
-def _completion_reply_for_job(project_root: Path, job_id: str | None) -> dict[str, object]:
+def _completion_reply_for_job(
+    project_root: Path,
+    job_id: str | None,
+    *,
+    project_id: str,
+    agent: str,
+) -> dict[str, object]:
     if not job_id:
         return {'body': '', 'attachments': []}
     path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{job_id}.json'
@@ -1471,8 +1489,53 @@ def _completion_reply_for_job(project_root: Path, job_id: str | None) -> dict[st
     payload_obj = _map(latest_decision.get('payload'))
     if 'attachments' in payload_obj:
         attachments = _attachment_records(payload_obj.get('attachments'))
-        
+    if not attachments:
+        attachments = _artifact_link_attachments(
+            body,
+            project_root=project_root,
+            project_id=project_id,
+            agent=agent,
+        )
     return {'body': body, 'attachments': attachments}
+
+
+def _artifact_link_attachments(
+    body: str,
+    *,
+    project_root: Path,
+    project_id: str,
+    agent: str,
+) -> list[dict[str, object]]:
+    attachments: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for file_id in _artifact_file_ids(body):
+        if file_id in seen:
+            continue
+        seen.add(file_id)
+        directory = (
+            project_root
+            / '.ccb'
+            / 'ccbd'
+            / 'mobile'
+            / 'files'
+            / _safe_path_segment(project_id)
+            / _safe_path_segment(agent)
+            / _safe_path_segment(file_id)
+        )
+        metadata = _read_file_metadata(directory)
+        if not metadata:
+            continue
+        attachments.extend(_attachment_records([metadata]))
+    return attachments
+
+
+def _artifact_file_ids(body: str) -> list[str]:
+    if not body:
+        return []
+    return [
+        match.group(1)
+        for match in re.finditer(r'ccb-artifact://([A-Za-z0-9._-]+)', body)
+    ]
 
 
 def _agent_status_summary(agent: dict[str, object]) -> str:
