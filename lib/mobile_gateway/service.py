@@ -75,6 +75,7 @@ class MobileGatewayService:
         mobile_dir: Path | None = None,
         pairing_store: MobileGatewayPairingStore | None = None,
         project_registry: MobileGatewayProjectRegistry | None = None,
+        mode: str = 'loopback_current_project',
         clock: Callable[[], str] | None = None,
         terminal_session_factory: Callable[[TerminalAttachTarget], object] | None = None,
         terminal_history_factory: Callable[[TerminalHistoryTarget], dict[str, object]] | None = None,
@@ -87,6 +88,7 @@ class MobileGatewayService:
             project_root=self._project_root,
             ccbd_client_factory=self._ccbd_client_factory,
         )
+        self._mode = str(mode or 'loopback_current_project').strip() or 'loopback_current_project'
         self._clock = clock or _utc_now
         self._terminal_session_factory = terminal_session_factory or create_tmux_terminal_session
         self._terminal_history_factory = terminal_history_factory or create_tmux_terminal_history
@@ -106,7 +108,7 @@ class MobileGatewayService:
                 'schema_version': _SCHEMA_VERSION,
                 'status': 'degraded',
                 'server_time': self._clock(),
-                'mode': 'loopback_current_project',
+                'mode': self._mode,
                 'project_id': self._project_id,
                 'capabilities': self._capabilities(),
                 'ccbd': {
@@ -118,7 +120,7 @@ class MobileGatewayService:
             'schema_version': _SCHEMA_VERSION,
             'status': 'ok',
             'server_time': self._clock(),
-            'mode': 'loopback_current_project',
+            'mode': self._mode,
             'project_id': self._project_id,
             'capabilities': self._capabilities(),
             'ccbd': _ccbd_health_summary(ccbd),
