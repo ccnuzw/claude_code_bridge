@@ -1404,6 +1404,18 @@ def _agent_conversation_items(
                 'source': _optional_text(content_item.get('source')) or 'content',
             }
         )
+    seen_item_ids = {str(item.get('id') or '') for item in items}
+    for item in _agent_history_conversation_items(
+        project_root,
+        project_id=project_id,
+        agent=agent,
+    ):
+        item_id = str(item.get('id') or '')
+        if item_id and item_id in seen_item_ids:
+            continue
+        items.append(item)
+        if item_id:
+            seen_item_ids.add(item_id)
     comm_records = [_map(item) for item in _iterable(view.get('comms'))]
     comm_records = [
         item
@@ -1438,9 +1450,12 @@ def _agent_conversation_items(
         if reply:
             comm_id = str(comm.get('id') or f'comms-{len(items)}')
             if body:
+                user_id = f'user-{comm_id}'
+                if user_id in seen_item_ids:
+                    continue
                 items.append(
                     {
-                        'id': f'user-{comm_id}',
+                        'id': user_id,
                         'agent': agent,
                         'kind': 'user_message',
                         'title': 'You',
@@ -1451,9 +1466,13 @@ def _agent_conversation_items(
                         'attachments': attachments,
                     }
                 )
+                seen_item_ids.add(user_id)
+            reply_id = f'reply-{comm_id}'
+            if reply_id in seen_item_ids:
+                continue
             items.append(
                 {
-                    'id': f'reply-{comm_id}',
+                    'id': reply_id,
                     'agent': agent,
                     'kind': 'agent_reply',
                     'title': _optional_text(comm.get('title')) or 'Agent reply',
@@ -1463,13 +1482,17 @@ def _agent_conversation_items(
                     'attachments': reply_attachments,
                 }
             )
+            seen_item_ids.add(reply_id)
             continue
         if not body:
             continue
         comm_id = str(comm.get('id') or f'comms-{len(items)}')
+        item_id = f'comms-{comm_id}'
+        if item_id in seen_item_ids:
+            continue
         items.append(
             {
-                'id': f'comms-{comm_id}',
+                'id': item_id,
                 'agent': agent,
                 'kind': 'comms_item',
                 'title': _optional_text(comm.get('title')) or 'Comms',
@@ -1479,7 +1502,136 @@ def _agent_conversation_items(
                 'attachments': attachments,
             }
         )
+        seen_item_ids.add(item_id)
     return items
+
+
+def _agent_history_conversation_items(
+    project_root: Path,
+    *,
+    project_id: str,
+    agent: str,
+) -> list[dict[str, object]]:
+    latest_by_job: dict[str, dict[str, object]] = {}
+    path = project_root / '.ccb' / 'agents' / agent / 'jobs.jsonl'
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except Exception:
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = _map(json.loads(line))
+        except Exception:
+            continue
+        job_id = _optional_text(record.get('job_id'))
+        if not job_id:
+            continue
+        if not _job_record_belongs_to_agent(record, agent):
+            continue
+        latest_by_job[job_id] = record
+
+    records = sorted(
+        latest_by_job.values(),
+        key=lambda item: (
+            _optional_text(item.get('created_at'))
+            or _optional_text(item.get('updated_at'))
+            or '',
+            _optional_text(item.get('job_id')) or '',
+        ),
+    )
+    items: list[dict[str, object]] = []
+    for record in records:
+        status = str(record.get('status') or '').strip().lower()
+        if status not in {'completed', 'cancelled', 'failed', 'incomplete'}:
+            continue
+        request = _map(record.get('request'))
+        body = _optional_text(request.get('body')) or ''
+        job_id = _optional_text(record.get('job_id')) or f'history-{len(items)}'
+        if body:
+            items.append(
+                {
+                    'id': f'user-{job_id}',
+                    'agent': agent,
+                    'kind': 'user_message',
+                    'title': 'You',
+                    'body': body,
+                    'format': 'markdown',
+                    'source': _history_source(record),
+                    'state': 'sent' if status == 'completed' else status,
+                    'attachments': [],
+                }
+            )
+        reply_dict = _completion_reply_from_history_job(
+            project_root,
+            record,
+            project_id=project_id,
+            agent=agent,
+        )
+        reply = str(reply_dict.get('body') or '')
+        if reply:
+            items.append(
+                {
+                    'id': f'reply-{job_id}',
+                    'agent': agent,
+                    'kind': 'agent_reply',
+                    'title': 'Agent reply',
+                    'body': reply,
+                    'format': 'markdown',
+                    'source': 'completion_snapshot',
+                    'attachments': _attachment_records(reply_dict.get('attachments')),
+                }
+            )
+    return items
+
+
+def _job_record_belongs_to_agent(record: dict[str, object], agent: str) -> bool:
+    request = _map(record.get('request'))
+    candidates = (
+        _optional_text(record.get('agent_name')),
+        _optional_text(record.get('target_name')),
+        _optional_text(request.get('to_agent')),
+    )
+    return agent in {item for item in candidates if item}
+
+
+def _history_source(record: dict[str, object]) -> str:
+    request = _map(record.get('request'))
+    route_options = _map(request.get('route_options'))
+    return _optional_text(route_options.get('source')) or 'desktop'
+
+
+def _completion_reply_from_history_job(
+    project_root: Path,
+    record: dict[str, object],
+    *,
+    project_id: str,
+    agent: str,
+) -> dict[str, object]:
+    job_id = _optional_text(record.get('job_id'))
+    terminal_decision = _map(record.get('terminal_decision'))
+    body = _optional_text(terminal_decision.get('reply')) or ''
+    reply_dict = _completion_reply_for_job(
+        project_root,
+        job_id,
+        project_id=project_id,
+        agent=agent,
+    )
+    if not body:
+        return reply_dict
+    attachments = _attachment_records(_map(terminal_decision.get('payload')).get('attachments'))
+    if not attachments:
+        attachments = _attachment_records(reply_dict.get('attachments'))
+    if not attachments:
+        attachments = _artifact_link_attachments(
+            body,
+            file_roots=_mobile_file_roots_for_job(project_root, agent, job_id or ''),
+            project_id=project_id,
+            agent=agent,
+        )
+    return {'body': body, 'attachments': attachments}
 
 
 def _agent_conversation_page(

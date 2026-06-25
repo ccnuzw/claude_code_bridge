@@ -668,6 +668,86 @@ def test_agent_conversation_pages_latest_then_older_items(tmp_path: Path) -> Non
     assert 'next_cursor' not in oldest_conversation
 
 
+def test_agent_conversation_pages_completed_job_history_beyond_project_view_limit(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo'
+    jobs_path = project_root / '.ccb' / 'agents' / 'mobile' / 'jobs.jsonl'
+    jobs_path.parent.mkdir(parents=True)
+    records = []
+    for index in range(56):
+        job_id = f'job_history_{index:02d}'
+        records.append(
+            {
+                'schema_version': 2,
+                'record_type': 'job_record',
+                'job_id': job_id,
+                'agent_name': 'mobile',
+                'target_name': 'mobile',
+                'provider': 'fake',
+                'request': {
+                    'project_id': 'proj-demo',
+                    'to_agent': 'mobile',
+                    'from_actor': 'user',
+                    'body': f'history question {index:02d}',
+                    'message_type': 'ask',
+                    'route_options': {},
+                },
+                'status': 'completed',
+                'terminal_decision': {
+                    'reply': f'history answer {index:02d}',
+                },
+                'created_at': f'2026-06-18T00:{index:02d}:00Z',
+                'updated_at': f'2026-06-18T00:{index:02d}:01Z',
+            }
+        )
+    jobs_path.write_text(
+        ''.join(f'{json.dumps(record)}\n' for record in records),
+        encoding='utf-8',
+    )
+    service = _service(
+        _FakeCcbdClient(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+
+    _, latest = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=50',
+        headers,
+    )
+    latest_conversation = latest['conversation']
+
+    assert latest_conversation['next_cursor']
+    assert any(
+        item['id'] == 'reply-job_history_55'
+        and item['body'] == 'history answer 55'
+        for item in latest_conversation['items']
+    )
+    assert all(item['id'] != 'reply-job_history_00' for item in latest_conversation['items'])
+
+    _, older = service.dispatch_get(
+        (
+            '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4'
+            f'&limit=200&cursor={latest_conversation["next_cursor"]}'
+        ),
+        headers,
+    )
+    older_items = older['conversation']['items']
+
+    assert any(
+        item['id'] == 'reply-job_history_00'
+        and item['body'] == 'history answer 00'
+        for item in older_items
+    )
+
+
 def test_agent_conversation_maps_artifact_links_to_download_attachments(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'
