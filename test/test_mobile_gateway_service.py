@@ -1482,6 +1482,10 @@ def test_terminal_websocket_resumes_after_transport_disconnect_with_matching_cur
         second_output = _websocket_read_until(resumed_sock, 'output')
         assert second_output['seq'] == 2
         assert len(sessions) == 2
+        _wait_for(
+            lambda: '"last_output_seq": 2'
+            in (tmp_path / 'mobile' / 'terminal-tokens.jsonl').read_text(encoding='utf-8')
+        )
 
         _websocket_send_json(resumed_sock, {'type': 'closed', 'reason': 'client_closed'})
         closed = _websocket_read_until(resumed_sock, 'closed')
