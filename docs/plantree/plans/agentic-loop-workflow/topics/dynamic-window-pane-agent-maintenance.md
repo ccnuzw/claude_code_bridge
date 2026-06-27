@@ -749,6 +749,19 @@ Evidence:
   review windows were created and removed back to `main`, and
   `plan-orchestrate` overflowed into `plan-orchestrate-2` before reverse
   unload removed the empty overflow page.
+- `scripts/dynamic_layout_smoke.py --flow arrange-window` now makes the manual
+  arrange proof repeatable. It hot-loads helpers into `plan-orchestrate`,
+  uses tmux only to disturb the window into a non-managed horizontal shape,
+  restores the window through `ccb layout arrange`, proves fixed columns,
+  preserves agent order and pane ids, verifies a post-arrange ask, and unloads
+  dynamic helpers back to static `frontdesk` plus `planner`. The latest
+  source-wrapper artifact is
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-latest.json`.
+- The default Ubuntu py3.11 fake-provider dynamic layout CI gate now runs
+  `arrange-window` together with `same-window-continuous` and
+  `window-class-continuous`; the CI-equivalent source-wrapper artifact
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-arrange-latest.json` passed
+  all three flows.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

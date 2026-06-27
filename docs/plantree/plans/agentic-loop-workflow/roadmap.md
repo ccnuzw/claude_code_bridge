@@ -768,13 +768,27 @@ Date: 2026-06-24
   columns and preserved `main`, separate review windows were created and
   removed back to one `main` window, and `plan-orchestrate-2` overflow was
   created, used, then removed after reverse unload.
+- Promoted manual rearrangement into the repeatable dynamic layout smoke
+  harness. `scripts/dynamic_layout_smoke.py --flow arrange-window` now starts
+  an explicit `[windows]` fake-provider project, hot-loads four helpers into
+  `plan-orchestrate`, intentionally disturbs the tmux window into a horizontal
+  layout, calls `ccb layout arrange --window plan-orchestrate --json`, verifies
+  managed fixed columns, preserved pane ids, preserved agent order, post-arrange
+  ask reachability, and reverse unload cleanup. Source-wrapper evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-latest.json` passed with
+  `arrange_window_disturb_restore=true`; focused dynamic layout regression
+  passed with `44 passed`. The Ubuntu py3.11 fake-provider CI gate now runs
+  `arrange-window` with the existing `same-window-continuous` and
+  `window-class-continuous` flows; source-wrapper CI-equivalent evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-arrange-latest.json` passed
+  all three flow checks.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
-   middle-removal cases, especially non-fake provider tolerance for
-   `layout arrange`.
+   middle-removal cases, especially opt-in Codex/Claude tolerance for the now
+   repeatable `arrange-window` flow.
 2. Decide the next public CLI surface for dynamic rearrangement beyond
    `layout arrange`: manual move/park/hide workflows still need separate
    commands and safety contracts.

@@ -223,6 +223,26 @@ def test_prepare_only_can_generate_single_agent_window_project(tmp_path: Path) -
     assert 'main = "main:fake"' in config.read_text(encoding="utf-8")
 
 
+def test_prepare_only_can_generate_arrange_window_project(tmp_path: Path) -> None:
+    module = _load_module()
+
+    payload = module.run_dynamic_layout_smoke(
+        test_root=tmp_path,
+        project_prefix="arrange-prepare",
+        ccb_test=Path(__file__),
+        provider="fake",
+        flows=("arrange-window",),
+        prepare_only=True,
+        reset=True,
+    )
+
+    assert payload["dynamic_layout_smoke_status"] == "prepared"
+    assert payload["flows"] == ["arrange-window"]
+    assert len(payload["prepared"]) == 1
+    config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
+    assert 'plan-orchestrate = "planner:fake"' in config.read_text(encoding="utf-8")
+
+
 def test_prepare_only_can_generate_same_window_continuous_project(tmp_path: Path) -> None:
     module = _load_module()
 
@@ -540,6 +560,165 @@ def test_multi_window_continuous_flow_adds_and_removes_windows(
     remove_names = [name for name, _command in calls if name.startswith("remove_helper")]
     assert add_names == ["add_helper1_review1", "add_helper2_review2", "add_helper3_review3"]
     assert remove_names == ["remove_helper3", "remove_helper2", "remove_helper1"]
+
+
+def test_arrange_window_flow_disturbs_and_restores_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    project_root = tmp_path / "project"
+    role_store = tmp_path / "roles"
+    calls: list[tuple[str, str]] = []
+    helpers = tuple(f"planner_helper{index}" for index in range(1, 5))
+    plan_agents = ("planner", *helpers)
+    pane_ids = ["%2", "%3", "%4", "%5", "%6"]
+    pane_map = dict(zip(plan_agents, pane_ids))
+
+    monkeypatch.setattr(
+        module,
+        "prepare_window_class_project",
+        lambda **_kwargs: {"project_root": str(project_root), "role_store": str(role_store)},
+    )
+
+    def plan_window_payload(*, observed: dict[str, object]) -> dict[str, object]:
+        return {
+            "dynamic_agent_count": len(helpers),
+            "namespace": {
+                "tmux_socket_path": str(tmp_path / "tmux.sock"),
+                "tmux_session_name": "ccb-test",
+            },
+            "windows": [
+                {
+                    "name": "main",
+                    "agent_names": ["frontdesk"],
+                    "observed": _observed_window(["%1"], ["frontdesk"]),
+                    "agents": [{"agent": "frontdesk", "pane_id": "%1"}],
+                },
+                {
+                    "name": "plan-orchestrate",
+                    "agent_names": list(plan_agents),
+                    "observed": observed,
+                    "agents": [
+                        {"agent": agent, "pane_id": pane_map[agent]}
+                        for agent in plan_agents
+                    ],
+                },
+            ],
+        }
+
+    fixed_plan = plan_window_payload(observed=_observed_fixed_columns(pane_ids, list(plan_agents)))
+    horizontal_plan = plan_window_payload(observed=_observed_window(pane_ids, list(plan_agents)))
+
+    def fake_run(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name.startswith("ask_planner_helper3"):
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "accepted job=job_helper3 target=planner_helper3\n[CCB_ASYNC_SUBMITTED job=job_helper3 target=planner_helper3]\n",
+                "stderr": "",
+            }
+        if name.startswith("watch_job_"):
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "watch_status: terminal\nstatus: completed\n",
+                "stderr": "",
+            }
+        return {"name": name, "returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+    def fake_run_json(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name.startswith("add_planner_helper"):
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "add_agent"}},
+            }
+        if name == "layout_before_arrange_disturb":
+            return {"name": name, "returncode": 0, "stdout": "{}\n", "stderr": "", "payload": fixed_plan}
+        if name == "layout_after_arrange_disturb":
+            return {"name": name, "returncode": 0, "stdout": "{}\n", "stderr": "", "payload": horizontal_plan}
+        if name == "arrange_plan_orchestrate":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "arrange_status": "ok",
+                    "layout_status": "ok",
+                    "reflowed_windows": ["plan-orchestrate"],
+                    "reflow_errors": {},
+                    **fixed_plan,
+                },
+            }
+        if name == "layout_after_arrange":
+            return {"name": name, "returncode": 0, "stdout": "{}\n", "stderr": "", "payload": fixed_plan}
+        if name.startswith("remove_planner_helper"):
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "remove_agent"}},
+            }
+        if name == "layout_after_arrange_cleanup":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 0,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["frontdesk"],
+                            "observed": _observed_window(["%1"], ["frontdesk"]),
+                            "agents": [{"agent": "frontdesk", "pane_id": "%1"}],
+                        },
+                        {
+                            "name": "plan-orchestrate",
+                            "agent_names": ["planner"],
+                            "observed": _observed_window(["%2"], ["planner"]),
+                            "agents": [{"agent": "planner", "pane_id": "%2"}],
+                        },
+                    ],
+                },
+            }
+        raise AssertionError(f"unexpected json command {name}")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_run_json", fake_run_json)
+
+    payload = module._run_arrange_window_flow(
+        test_root=tmp_path,
+        project_name="arrange-window",
+        provider="fake",
+        ccb_test=Path("ccb_test"),
+        provider_home=tmp_path / "home",
+        command_timeout_s=1,
+        reset=True,
+        keep_running=False,
+    )
+
+    assert payload["flow_status"] == "ok"
+    assert payload["checks"]["disturb_made_non_fixed"] is True
+    assert payload["checks"]["arrange_status_ok"] is True
+    assert payload["checks"]["arrange_fixed_columns"] is True
+    assert payload["checks"]["pane_ids_preserved"] is True
+    assert payload["checks"]["after_release_static_windows"] is True
+    assert ("disturb_plan_orchestrate_even_horizontal", f"tmux -S {tmp_path / 'tmux.sock'} select-layout -t ccb-test:plan-orchestrate even-horizontal") in calls
+    assert [name for name, _command in calls if name.startswith("remove_planner_helper")] == [
+        "remove_planner_helper4",
+        "remove_planner_helper3",
+        "remove_planner_helper2",
+        "remove_planner_helper1",
+    ]
 
 
 def test_window_class_continuous_flow_grows_to_overflow_page_and_cleans_up(
@@ -885,6 +1064,35 @@ def test_payload_helpers_extract_window_agents_and_panes() -> None:
     assert module._agent_panes(result) == {"main": "%1", "helper1": "%2"}
 
 
+def test_fixed_columns_accept_uneven_five_pane_rows() -> None:
+    module = _load_module()
+    result = {
+        "payload": {
+            "windows": [
+                {
+                    "name": "plan-orchestrate",
+                    "agent_names": ["planner", "helper1", "helper2", "helper3", "helper4"],
+                    "observed": {
+                        "panes": [
+                            {"pane_id": "%1", "ccb_agent": "planner", "pane_left": 25, "pane_top": 1, "pane_width": 66, "pane_height": 15},
+                            {"pane_id": "%3", "ccb_agent": "helper2", "pane_left": 25, "pane_top": 17, "pane_width": 66, "pane_height": 15},
+                            {"pane_id": "%5", "ccb_agent": "helper4", "pane_left": 25, "pane_top": 33, "pane_width": 66, "pane_height": 15},
+                            {"pane_id": "%2", "ccb_agent": "helper1", "pane_left": 94, "pane_top": 1, "pane_width": 66, "pane_height": 23},
+                            {"pane_id": "%4", "ccb_agent": "helper3", "pane_left": 94, "pane_top": 25, "pane_width": 66, "pane_height": 23},
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+
+    assert module._observed_panes_match_fixed_columns(
+        result,
+        "plan-orchestrate",
+        ("planner", "helper1", "helper2", "helper3", "helper4"),
+    )
+
+
 def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -> None:
     module = _load_module()
     payload = {
@@ -976,10 +1184,12 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert "--provider fake" in text
     assert "--flow same-window-continuous" in text
     assert "--flow window-class-continuous" in text
+    assert "--flow arrange-window" in text
     assert 'payload["dynamic_layout_smoke_status"] == "ok"' in text
-    assert 'payload["flows"] == ["same-window-continuous", "window-class-continuous"]' in text
+    assert 'payload["flows"] == ["same-window-continuous", "window-class-continuous", "arrange-window"]' in text
     assert 'payload["checks"]["same_window_continuous_1_to_6_to_1"] is True' in text
     assert 'payload["checks"]["window_class_continuous_1_to_8_to_1"] is True' in text
+    assert 'payload["checks"]["arrange_window_disturb_restore"] is True' in text
     assert 'checks["grew_to_six_order"] is True' in text
     assert 'checks["observed_grew_to_six_panes"] is True' in text
     assert 'checks["observed_grow_geometry"] is True' in text
@@ -993,6 +1203,10 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert 'window_class["page2_order"] is True' in text
     assert 'window_class["page2_removed_when_empty"] is True' in text
     assert 'window_class["after_page2_removed"] is True' in text
+    assert 'arrange["disturb_made_non_fixed"] is True' in text
+    assert 'arrange["arrange_status_ok"] is True' in text
+    assert 'arrange["arrange_fixed_columns"] is True' in text
+    assert 'arrange["pane_ids_preserved"] is True' in text
     step = text.split("Guard same-window continuous dynamic layout smoke", 1)[1].split("Guard workflow closure layout cleanup smoke", 1)[0]
     assert "--run" not in step
     assert "codex" not in step

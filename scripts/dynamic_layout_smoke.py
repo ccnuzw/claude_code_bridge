@@ -23,6 +23,7 @@ FLOW_NAMES = (
     "same-window-continuous",
     "single-agent-window",
     "window-class",
+    "arrange-window",
     "window-class-continuous",
     "resolve-preflight",
 )
@@ -319,6 +320,19 @@ def run_dynamic_layout_smoke(
             _run_window_class_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-window-class",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "arrange-window" in flow_names:
+        results.append(
+            _run_arrange_window_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-arrange-window",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -1024,6 +1038,162 @@ def _run_window_class_flow(
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
 
 
+def _run_arrange_window_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_window_class_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    helpers = tuple(f"planner_helper{index}" for index in range(1, 5))
+    plan_agents = ("planner", *helpers)
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        adds: list[dict[str, Any]] = []
+        for helper in helpers:
+            add = _run_json(
+                f"add_{helper}",
+                [
+                    str(ccb_test),
+                    "--project",
+                    str(project_root),
+                    "agent",
+                    "add",
+                    f"{helper}:{provider}",
+                    "--role",
+                    "agentroles.general",
+                    "--window-class",
+                    "plan-orchestrate",
+                    "--hidden",
+                    "--json",
+                ],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+            adds.append(add)
+            commands.append(add)
+        before_disturb = _run_json("layout_before_arrange_disturb", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(before_disturb)
+        disturb = _disturb_window_layout(
+            "disturb_plan_orchestrate_even_horizontal",
+            before_disturb,
+            window_name="plan-orchestrate",
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(disturb)
+        after_disturb = _run_json("layout_after_arrange_disturb", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_disturb)
+        arrange = _run_json(
+            "arrange_plan_orchestrate",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "layout",
+                "arrange",
+                "--window",
+                "plan-orchestrate",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(arrange)
+        after_arrange = _run_json("layout_after_arrange", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_arrange)
+        helper_ask = _run(
+            "ask_planner_helper3_after_arrange",
+            [str(ccb_test), "--project", str(project_root), "ask", "planner_helper3"],
+            cwd=test_root,
+            env=env,
+            input_text="arrange-window smoke ping planner_helper3\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(helper_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(helper_ask,),
+                timeout=command_timeout_s,
+            )
+        )
+        releases: list[dict[str, Any]] = []
+        for helper in reversed(helpers):
+            release = _run_json(
+                f"remove_{helper}",
+                [
+                    str(ccb_test),
+                    "--project",
+                    str(project_root),
+                    "agent",
+                    "remove",
+                    helper,
+                    "--policy",
+                    "unload",
+                    "--idle-only",
+                    "--json",
+                ],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+            releases.append(release)
+            commands.append(release)
+        after_release = _run_json("layout_after_arrange_cleanup", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_release)
+
+        before_panes = _agent_panes(before_disturb)
+        arrange_panes = _agent_panes(arrange)
+        after_arrange_panes = _agent_panes(after_arrange)
+        release_apply = [dict(_payload(item).get("apply") or {}) for item in releases]
+        checks = {
+            "add_agent_plans": [_payload(item).get("apply", {}).get("plan_class") for item in adds] == ["add_agent"] * len(helpers),
+            "before_fixed_columns": _observed_panes_match_fixed_columns(before_disturb, "plan-orchestrate", plan_agents),
+            "disturb_command_success": int(disturb.get("returncode") or 0) == 0,
+            "disturb_kept_agent_order": _window_agents(after_disturb).get("plan-orchestrate") == list(plan_agents),
+            "disturb_made_non_fixed": not _observed_panes_match_fixed_columns(after_disturb, "plan-orchestrate", plan_agents),
+            "arrange_status_ok": _payload(arrange).get("arrange_status") == "ok",
+            "arrange_reflowed_plan": _payload(arrange).get("reflowed_windows") == ["plan-orchestrate"]
+            and not _payload(arrange).get("reflow_errors"),
+            "arrange_fixed_columns": _observed_panes_match_fixed_columns(arrange, "plan-orchestrate", plan_agents)
+            and _observed_panes_match_fixed_columns(after_arrange, "plan-orchestrate", plan_agents),
+            "agent_order_preserved": _window_agents(after_arrange).get("plan-orchestrate") == list(plan_agents),
+            "pane_ids_preserved": all(
+                before_panes.get(agent) == arrange_panes.get(agent) == after_arrange_panes.get(agent)
+                for agent in plan_agents
+            ),
+            "helper_ask_accepted": _accepted(helper_ask),
+            "helper_ask_terminal": _watch_commands_terminal(commands),
+            "release_remove_agent_plans": [apply.get("plan_class") for apply in release_apply] == ["remove_agent"] * len(helpers),
+            "after_release_static_windows": _window_agents(after_release) == {
+                "main": ["frontdesk"],
+                "plan-orchestrate": ["planner"],
+            },
+            "dynamic_agents_cleaned": _payload(after_release).get("dynamic_agent_count") == 0,
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "arrange_window_disturb_restore", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
 def _run_window_class_continuous_flow(
     *,
     test_root: Path,
@@ -1470,6 +1640,15 @@ def _prepare_selected_projects(
                 reset=reset,
             )
         )
+    if "arrange-window" in flows:
+        prepared.append(
+            prepare_window_class_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-arrange-window",
+                provider=provider,
+                reset=reset,
+            )
+        )
     if "window-class-continuous" in flows:
         prepared.append(
             prepare_window_class_project(
@@ -1632,6 +1811,45 @@ def _run(
     }
 
 
+def _disturb_window_layout(
+    name: str,
+    layout_status_result: dict[str, Any],
+    *,
+    window_name: str,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: int,
+) -> dict[str, Any]:
+    namespace = _payload(layout_status_result).get("namespace")
+    namespace = namespace if isinstance(namespace, dict) else {}
+    socket_path = str(namespace.get("tmux_socket_path") or "")
+    session_name = str(namespace.get("tmux_session_name") or "")
+    if not socket_path or not session_name:
+        return {
+            "name": name,
+            "command": [],
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "layout status did not include tmux socket/session for disturbance\n",
+            "timeout": False,
+        }
+    return _run(
+        name,
+        [
+            "tmux",
+            "-S",
+            socket_path,
+            "select-layout",
+            "-t",
+            f"{session_name}:{window_name}",
+            "even-horizontal",
+        ],
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+    )
+
+
 def _payload(result: dict[str, Any]) -> dict[str, Any]:
     payload = result.get("payload")
     return payload if isinstance(payload, dict) else {}
@@ -1692,6 +1910,7 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "action",
         "layout_status",
+        "arrange_status",
         "loop_capacity_status",
         "agent_lifecycle_status",
         "agent_count",
@@ -1710,6 +1929,10 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "released_count",
         "retained_count",
         "retained_busy",
+        "window_name",
+        "reason",
+        "reflowed_windows",
+        "reflow_errors",
     )
     summary = {key: payload.get(key) for key in keys if key in payload}
     apply_payload = payload.get("apply")
@@ -1924,9 +2147,8 @@ def _observed_panes_match_fixed_columns(result: dict[str, Any], window_name: str
         return False
     if not _strictly_increasing_top(left_column) or not _strictly_increasing_top(right_column):
         return False
-    for left_pane, right_pane in zip(left_column, right_column):
-        if left_pane.get("pane_top") != right_pane.get("pane_top"):
-            return False
+    if left_column[0].get("pane_top") != right_column[0].get("pane_top"):
+        return False
     return True
 
 

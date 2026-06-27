@@ -85,6 +85,7 @@ jobs:
             --provider fake \
             --flow same-window-continuous \
             --flow window-class-continuous \
+            --flow arrange-window \
             --command-timeout 180 \
             --reset > "$RUNNER_TEMP/same-window-continuous-smoke.json"
           python - "$RUNNER_TEMP/same-window-continuous-smoke.json" <<'PY'
@@ -94,9 +95,10 @@ jobs:
 
           payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           assert payload["dynamic_layout_smoke_status"] == "ok"
-          assert payload["flows"] == ["same-window-continuous", "window-class-continuous"]
+          assert payload["flows"] == ["same-window-continuous", "window-class-continuous", "arrange-window"]
           assert payload["checks"]["same_window_continuous_1_to_6_to_1"] is True
           assert payload["checks"]["window_class_continuous_1_to_8_to_1"] is True
+          assert payload["checks"]["arrange_window_disturb_restore"] is True
           results = {item["flow"]: item for item in payload["results"]}
           result = results["same_window_continuous_1_to_6_to_1"]
           checks = result["checks"]
@@ -127,6 +129,15 @@ jobs:
           assert window_class["page2_removed_when_empty"] is True
           assert window_class["after_page2_removed"] is True
           assert window_class["dynamic_agents_cleaned"] is True
+          arrange = results["arrange_window_disturb_restore"]["checks"]
+          assert arrange["disturb_made_non_fixed"] is True
+          assert arrange["arrange_status_ok"] is True
+          assert arrange["arrange_reflowed_plan"] is True
+          assert arrange["arrange_fixed_columns"] is True
+          assert arrange["pane_ids_preserved"] is True
+          assert arrange["helper_ask_accepted"] is True
+          assert arrange["helper_ask_terminal"] is True
+          assert arrange["dynamic_agents_cleaned"] is True
           print(
               json.dumps(
                   {
@@ -134,6 +145,7 @@ jobs:
                       "flows": payload["flows"],
                       "same_window_checks": checks,
                       "window_class_checks": window_class,
+                      "arrange_checks": arrange,
                   },
                   sort_keys=True,
               )
