@@ -22,6 +22,7 @@ FLOW_NAMES = (
     "same-window",
     "same-window-continuous",
     "single-agent-window",
+    "move-agent",
     "window-class",
     "arrange-window",
     "window-class-continuous",
@@ -307,6 +308,19 @@ def run_dynamic_layout_smoke(
             _run_single_agent_window_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-single-agent-window",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "move-agent" in flow_names:
+        results.append(
+            _run_move_agent_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-move-agent",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -926,6 +940,161 @@ def _run_single_agent_window_flow(
         }
         status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
         return {"flow": "single_agent_window_release", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
+def _run_move_agent_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_same_window_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        add = _run_json(
+            "add_move_helper_to_main",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "add",
+                f"helper:{provider}",
+                "--role",
+                "agentroles.general",
+                "--window",
+                "main",
+                "--hidden",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(add)
+        before_move = _run_json("layout_before_move_agent", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(before_move)
+        pre_move_ask = _run(
+            "ask_helper_before_move",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper"],
+            cwd=test_root,
+            env=env,
+            input_text="move-agent smoke ping before move\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(pre_move_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(pre_move_ask,),
+                timeout=command_timeout_s,
+            )
+        )
+        move = _run_json(
+            "move_helper_to_review_window",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "move",
+                "helper",
+                "--window",
+                "review",
+                "--reason",
+                "dynamic layout move smoke",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(move)
+        after_move = _run_json("layout_after_move_agent", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_move)
+        post_move_ask = _run(
+            "ask_helper_after_move",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper"],
+            cwd=test_root,
+            env=env,
+            input_text="move-agent smoke ping after move\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(post_move_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(post_move_ask,),
+                timeout=command_timeout_s,
+            )
+        )
+        release = _run_json(
+            "remove_moved_helper",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "remove",
+                "helper",
+                "--policy",
+                "unload",
+                "--idle-only",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(release)
+        after_release = _run_json("layout_after_move_cleanup", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_release)
+        before_panes = _agent_panes(before_move)
+        after_panes = _agent_panes(after_move)
+        helper_pane = before_panes.get("helper")
+        move_apply = dict(_payload(move).get("apply") or {})
+        release_apply = dict(_payload(release).get("apply") or {})
+        checks = {
+            "add_agent_plan": _payload(add).get("apply", {}).get("plan_class") == "add_agent",
+            "before_move_order": _window_agents(before_move) == {"main": ["main", "helper"]},
+            "helper_pane_recorded_before_move": bool(helper_pane),
+            "pre_move_ask_accepted": _accepted(pre_move_ask),
+            "pre_move_ask_terminal": _watch_commands_terminal(commands),
+            "move_plan_class": move_apply.get("plan_class") == "move_agent",
+            "move_apply_status": move_apply.get("apply_status") == "applied",
+            "move_preserved_helper_pane": move_apply.get("namespace_moved_agents", {}).get("helper") == helper_pane
+            and after_panes.get("helper") == helper_pane,
+            "move_window_evidence": move_apply.get("namespace_moved_agent_windows", {}).get("helper") == "review",
+            "move_reflowed_windows": move_apply.get("namespace_reflowed_windows") == ["main", "review"],
+            "after_move_order": _window_agents(after_move) == {"main": ["main"], "review": ["helper"]},
+            "post_move_ask_accepted": _accepted(post_move_ask),
+            "post_move_ask_terminal": _watch_commands_terminal(commands),
+            "release_remove_agent_plan": release_apply.get("plan_class") == "remove_agent",
+            "release_removed_helper_pane": release_apply.get("namespace_removed_agents", {}).get("helper") == helper_pane,
+            "release_removed_review_window": release_apply.get("namespace_removed_windows") == ["review"],
+            "after_release_only_main": _window_agents(after_release) == {"main": ["main"]},
+            "dynamic_agents_cleaned": _payload(after_release).get("dynamic_agent_count") == 0,
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "move_agent_to_new_window", "flow_status": status, "checks": checks, "commands": commands}
     finally:
         if not keep_running:
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
@@ -1631,6 +1800,15 @@ def _prepare_selected_projects(
                 reset=reset,
             )
         )
+    if "move-agent" in flows:
+        prepared.append(
+            prepare_same_window_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-move-agent",
+                provider=provider,
+                reset=reset,
+            )
+        )
     if "window-class" in flows:
         prepared.append(
             prepare_window_class_project(
@@ -1946,6 +2124,10 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
             summary["apply"]["namespace_removed_agents"] = dict(apply_payload.get("namespace_removed_agents") or {})
         if apply_payload.get("namespace_removed_windows"):
             summary["apply"]["namespace_removed_windows"] = list(apply_payload.get("namespace_removed_windows") or ())
+        if apply_payload.get("namespace_moved_agents"):
+            summary["apply"]["namespace_moved_agents"] = dict(apply_payload.get("namespace_moved_agents") or {})
+        if apply_payload.get("namespace_moved_agent_windows"):
+            summary["apply"]["namespace_moved_agent_windows"] = dict(apply_payload.get("namespace_moved_agent_windows") or {})
         if apply_payload.get("namespace_reflowed_windows"):
             summary["apply"]["namespace_reflowed_windows"] = list(apply_payload.get("namespace_reflowed_windows") or ())
         if apply_payload.get("namespace_reflow_errors"):

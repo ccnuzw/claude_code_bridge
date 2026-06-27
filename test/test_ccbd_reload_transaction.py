@@ -82,6 +82,40 @@ def test_reload_transaction_updates_signatures_then_publishes_graph(tmp_path: Pa
     assert result.diagnostics['unload_or_replace_executed'] is False
 
 
+def test_reload_transaction_publishes_runtime_move_result(tmp_path: Path) -> None:
+    app = _started_app(tmp_path / 'repo-publish-move-success', BASE_CONFIG)
+    new_graph = _build_graph(app, ADD_AGENT_CONFIG, version=2)
+
+    result = publish_additive_reload_transaction(
+        app,
+        new_graph,
+        namespace=_namespace(app),
+        namespace_patch_result=NamespacePatchApplyResult(
+            status='applied',
+            moved_agents={'agent2': '%2'},
+            moved_agent_windows={'agent2': 'review'},
+            preserved_before={'agent1': '%1', 'agent2': '%2'},
+            preserved_after={'agent1': '%1', 'agent2': '%2'},
+        ),
+        runtime_mount_result=AdditiveRuntimeMountResult(
+            status='moved',
+            requested_agents=('agent2',),
+            moved_agents=('agent2',),
+            runtime_authority_moved_agents=('agent2',),
+            preserved_runtime_unchanged_agents=('agent1',),
+            diagnostics={
+                'graph_published': False,
+                'lease_or_lifecycle_written': False,
+            },
+        ),
+    )
+
+    assert result.status == 'published'
+    assert result.runtime_mount['status'] == 'moved'
+    assert result.runtime_mount['runtime_authority_moved_agents'] == ['agent2']
+    assert app.service_graph is new_graph
+
+
 def test_reload_transaction_blocks_namespace_patch_failure_without_publish(tmp_path: Path) -> None:
     app = _started_app(tmp_path / 'repo-namespace-fail', BASE_CONFIG)
     old_graph = app.service_graph

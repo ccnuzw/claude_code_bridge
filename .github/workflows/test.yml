@@ -84,6 +84,7 @@ jobs:
             --ccb-test "$GITHUB_WORKSPACE/ccb_test" \
             --provider fake \
             --flow same-window-continuous \
+            --flow move-agent \
             --flow window-class-continuous \
             --flow arrange-window \
             --command-timeout 180 \
@@ -95,8 +96,9 @@ jobs:
 
           payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           assert payload["dynamic_layout_smoke_status"] == "ok"
-          assert payload["flows"] == ["same-window-continuous", "window-class-continuous", "arrange-window"]
+          assert payload["flows"] == ["same-window-continuous", "move-agent", "window-class-continuous", "arrange-window"]
           assert payload["checks"]["same_window_continuous_1_to_6_to_1"] is True
+          assert payload["checks"]["move_agent_to_new_window"] is True
           assert payload["checks"]["window_class_continuous_1_to_8_to_1"] is True
           assert payload["checks"]["arrange_window_disturb_restore"] is True
           results = {item["flow"]: item for item in payload["results"]}
@@ -117,6 +119,17 @@ jobs:
           assert checks["observed_shrink_geometry"] is True
           assert checks["dynamic_agents_cleaned"] is True
           assert checks["ask_main_accepted"] is True
+          move = results["move_agent_to_new_window"]["checks"]
+          assert move["add_agent_plan"] is True
+          assert move["pre_move_ask_accepted"] is True
+          assert move["pre_move_ask_terminal"] is True
+          assert move["move_plan_class"] is True
+          assert move["move_preserved_helper_pane"] is True
+          assert move["move_window_evidence"] is True
+          assert move["post_move_ask_accepted"] is True
+          assert move["post_move_ask_terminal"] is True
+          assert move["release_removed_review_window"] is True
+          assert move["dynamic_agents_cleaned"] is True
           window_class = results["window_class_continuous_1_to_8_to_1"]["checks"]
           assert window_class["add_plan_sequence"] is True
           assert window_class["page1_order"] is True
@@ -144,6 +157,7 @@ jobs:
                       "dynamic_layout_smoke_status": payload["dynamic_layout_smoke_status"],
                       "flows": payload["flows"],
                       "same_window_checks": checks,
+                      "move_checks": move,
                       "window_class_checks": window_class,
                       "arrange_checks": arrange,
                   },

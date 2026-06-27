@@ -1049,6 +1049,12 @@ Current evidence:
   to a target window that contains exactly the moved agent; the namespace patch
   creates the target window, moves the preserved pane, kills the placeholder
   pane, restamps window evidence, and reflows only the source/target windows;
+- mounted movement is now proven by the repeatable fake-provider
+  `move-agent` smoke: helper is reachable before movement, retains its pane id
+  after moving from `main` to new `review`, remains reachable after movement,
+  and unload removes the empty target window. This smoke also guards the
+  transaction invariant that runtime `status=moved` is publish-ready, so tmux
+  namespace movement and runtime authority publication do not split;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1099,7 +1105,7 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
-- arbitrary cross-window move cycles that require removing the now-empty source
-  window or mixing moved panes with newly materialized panes in the same target
-  transaction;
+- repeated cross-window move cycles that require removing the now-empty source
+  window, and transactions that mix moved panes with newly materialized panes
+  in the same target window;
 - user-defined arbitrary window classes.

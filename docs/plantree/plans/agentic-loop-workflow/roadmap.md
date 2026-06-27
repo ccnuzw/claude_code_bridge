@@ -821,6 +821,19 @@ Date: 2026-06-24
   made the layout non-fixed, `layout arrange` restored fixed columns, pane ids
   and agent order were preserved, post-arrange ask reached the helper, and
   reverse unload returned to static `frontdesk` plus `planner`.
+- Promoted dynamic agent movement into the repeatable mounted smoke harness.
+  `scripts/dynamic_layout_smoke.py --flow move-agent` now hot-loads `helper`
+  into `main`, proves ask reachability, moves the preserved pane to a newly
+  materialized `review` window, proves ask reachability again, and unloads the
+  helper while removing the empty `review` window. The first real run exposed a
+  transaction gate bug where runtime `status=moved` was rejected before
+  publish; the gate now treats `moved` as publish-ready alongside
+  `mounted/noop/unloaded`. Focused tests passed with `41 passed`; source-wrapper
+  evidence in `/home/bfly/yunwei/test_ccb2/dynamic-layout-move-agent-latest.json`
+  passed with `move_agent_to_new_window=true`; the CI-equivalent fake flow
+  bundle in `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-move-latest.json`
+  passed `same-window-continuous`, `move-agent`,
+  `window-class-continuous`, and `arrange-window`.
 
 ## Next
 
@@ -829,9 +842,9 @@ Date: 2026-06-24
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
 2. Extend `ccb agent move` beyond the first existing-window and
-   move-to-new-window slices: add repeatable mounted fake-provider movement
-   smoke that proves ask reachability before and after movement, then support
-   repeated move cycles and removal of now-empty source windows when allowed.
+   move-to-new-window slices: support repeated move cycles, removal of
+   now-empty source windows when allowed, and opt-in real-provider movement
+   smokes after the fake mounted path remains stable.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

@@ -223,6 +223,26 @@ def test_prepare_only_can_generate_single_agent_window_project(tmp_path: Path) -
     assert 'main = "main:fake"' in config.read_text(encoding="utf-8")
 
 
+def test_prepare_only_can_generate_move_agent_project(tmp_path: Path) -> None:
+    module = _load_module()
+
+    payload = module.run_dynamic_layout_smoke(
+        test_root=tmp_path,
+        project_prefix="move-agent-prepare",
+        ccb_test=Path(__file__),
+        provider="fake",
+        flows=("move-agent",),
+        prepare_only=True,
+        reset=True,
+    )
+
+    assert payload["dynamic_layout_smoke_status"] == "prepared"
+    assert payload["flows"] == ["move-agent"]
+    assert len(payload["prepared"]) == 1
+    config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
+    assert 'main = "main:fake"' in config.read_text(encoding="utf-8")
+
+
 def test_prepare_only_can_generate_arrange_window_project(tmp_path: Path) -> None:
     module = _load_module()
 
@@ -560,6 +580,175 @@ def test_multi_window_continuous_flow_adds_and_removes_windows(
     remove_names = [name for name, _command in calls if name.startswith("remove_helper")]
     assert add_names == ["add_helper1_review1", "add_helper2_review2", "add_helper3_review3"]
     assert remove_names == ["remove_helper3", "remove_helper2", "remove_helper1"]
+
+
+def test_move_agent_flow_moves_helper_to_new_window_and_cleans_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    project_root = tmp_path / "project"
+    role_store = tmp_path / "roles"
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        module,
+        "prepare_same_window_project",
+        lambda **_kwargs: {"project_root": str(project_root), "role_store": str(role_store)},
+    )
+
+    def fake_run(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name == "ask_helper_before_move":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "accepted job=job_before target=helper\n[CCB_ASYNC_SUBMITTED job=job_before target=helper]\n",
+                "stderr": "",
+            }
+        if name == "ask_helper_after_move":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "accepted job=job_after target=helper\n[CCB_ASYNC_SUBMITTED job=job_after target=helper]\n",
+                "stderr": "",
+            }
+        if name.startswith("watch_job_"):
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "watch_status: terminal\nstatus: completed\n",
+                "stderr": "",
+            }
+        return {"name": name, "returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+    def fake_run_json(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name == "add_move_helper_to_main":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "add_agent"}},
+            }
+        if name == "layout_before_move_agent":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 1,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["main", "helper"],
+                            "observed": _observed_window(["%1", "%2"], ["main", "helper"]),
+                            "agents": [
+                                {"agent": "main", "pane_id": "%1"},
+                                {"agent": "helper", "pane_id": "%2"},
+                            ],
+                        }
+                    ],
+                },
+            }
+        if name == "move_helper_to_review_window":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "move_agent",
+                        "apply_status": "applied",
+                        "namespace_moved_agents": {"helper": "%2"},
+                        "namespace_moved_agent_windows": {"helper": "review"},
+                        "namespace_reflowed_windows": ["main", "review"],
+                    }
+                },
+            }
+        if name == "layout_after_move_agent":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 1,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["main"],
+                            "observed": _observed_window(["%1"], ["main"]),
+                            "agents": [{"agent": "main", "pane_id": "%1"}],
+                        },
+                        {
+                            "name": "review",
+                            "agent_names": ["helper"],
+                            "observed": _observed_window(["%2"], ["helper"]),
+                            "agents": [{"agent": "helper", "pane_id": "%2"}],
+                        },
+                    ],
+                },
+            }
+        if name == "remove_moved_helper":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "remove_agent",
+                        "namespace_removed_agents": {"helper": "%2"},
+                        "namespace_removed_windows": ["review"],
+                    }
+                },
+            }
+        if name == "layout_after_move_cleanup":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 0,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["main"],
+                            "observed": _observed_window(["%1"], ["main"]),
+                            "agents": [{"agent": "main", "pane_id": "%1"}],
+                        }
+                    ],
+                },
+            }
+        raise AssertionError(f"unexpected json command {name}")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_run_json", fake_run_json)
+
+    payload = module._run_move_agent_flow(
+        test_root=tmp_path,
+        project_name="move-agent",
+        provider="fake",
+        ccb_test=Path("ccb_test"),
+        provider_home=tmp_path / "home",
+        command_timeout_s=1,
+        reset=True,
+        keep_running=False,
+    )
+
+    assert payload["flow_status"] == "ok"
+    assert payload["checks"]["pre_move_ask_accepted"] is True
+    assert payload["checks"]["post_move_ask_accepted"] is True
+    assert payload["checks"]["move_preserved_helper_pane"] is True
+    assert payload["checks"]["move_window_evidence"] is True
+    assert payload["checks"]["release_removed_review_window"] is True
+    assert payload["checks"]["dynamic_agents_cleaned"] is True
+    assert [name for name, _command in calls if name.startswith("watch_job_")] == ["watch_job_before", "watch_job_after"]
 
 
 def test_arrange_window_flow_disturbs_and_restores_layout(
@@ -1119,6 +1308,8 @@ def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -
                                 "apply_status": "applied",
                                 "namespace_removed_agents": {"helper": "%2"},
                                 "namespace_removed_windows": ["review"],
+                                "namespace_moved_agents": {"moved": "%3"},
+                                "namespace_moved_agent_windows": {"moved": "review"},
                             },
                             "windows": [
                                 {
@@ -1158,6 +1349,8 @@ def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -
             "apply_status": "applied",
             "namespace_removed_agents": {"helper": "%2"},
             "namespace_removed_windows": ["review"],
+            "namespace_moved_agents": {"moved": "%3"},
+            "namespace_moved_agent_windows": {"moved": "review"},
         },
         "windows": [
             {
@@ -1183,11 +1376,13 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'" in text
     assert "--provider fake" in text
     assert "--flow same-window-continuous" in text
+    assert "--flow move-agent" in text
     assert "--flow window-class-continuous" in text
     assert "--flow arrange-window" in text
     assert 'payload["dynamic_layout_smoke_status"] == "ok"' in text
-    assert 'payload["flows"] == ["same-window-continuous", "window-class-continuous", "arrange-window"]' in text
+    assert 'payload["flows"] == ["same-window-continuous", "move-agent", "window-class-continuous", "arrange-window"]' in text
     assert 'payload["checks"]["same_window_continuous_1_to_6_to_1"] is True' in text
+    assert 'payload["checks"]["move_agent_to_new_window"] is True' in text
     assert 'payload["checks"]["window_class_continuous_1_to_8_to_1"] is True' in text
     assert 'payload["checks"]["arrange_window_disturb_restore"] is True' in text
     assert 'checks["grew_to_six_order"] is True' in text
@@ -1199,6 +1394,8 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert 'checks["shrunk_to_one_order"] is True' in text
     assert 'checks["observed_shrunk_to_one_pane"] is True' in text
     assert 'checks["observed_shrink_geometry"] is True' in text
+    assert 'move["move_preserved_helper_pane"] is True' in text
+    assert 'move["release_removed_review_window"] is True' in text
     assert 'window_class["page1_order"] is True' in text
     assert 'window_class["page2_order"] is True' in text
     assert 'window_class["page2_removed_when_empty"] is True' in text
