@@ -74,6 +74,20 @@ def print_start_help(*, file=None) -> None:
               ccb mobile serve       Start the loopback CCB Mobile gateway for the current project.
               ccb mobile devices     List paired mobile devices for the current project.
               ccb mobile revoke <id> Revoke one paired mobile device locally.
+              ccb agent add NAME:PROVIDER --role ROLE [--window NAME|--window-class CLASS] --hidden --json
+                                    Hot-load one runtime dynamic agent without rewriting ccb.config.
+              ccb agent remove NAME --policy park|unload --json
+                                    Park or unload one runtime dynamic agent.
+              ccb agent park NAME --json
+                                    Disable dispatch for a dynamic agent while preserving its pane.
+              ccb agent resume NAME --json
+                                    Re-enable dispatch for a parked dynamic agent.
+              ccb agent release NAME --idle-only --json
+                                    Safely release one dynamic agent through role policy.
+              ccb loop capacity ensure --loop-id ID --profile worker=1 --profile code_reviewer=1 --json
+                                    Plan dynamic loop workers from configured loop.role_profiles.
+              ccb loop run-once --loop-id ID --task TEXT --json
+                                    Run one worker/reviewer/orchestrator/round-checker round and write loop artifacts.
               ccb kill             Stop the current project's background runtime.
               ccb kill -f          Force cleanup project-owned runtime residue.
               ccb cleanup          Prune safe provider rebuildable caches after ccbd is stopped.
@@ -220,6 +234,39 @@ _COMMAND_HELP = {
             CCB-owned tmux/sidebar colors.
           - CCB-owned rich WezTerm follows this preference through its
             generated config.
+    """,
+    "agent": """
+        usage:
+          ccb agent status [--class CLASS] [--json]
+          ccb agent show <agent> [--json]
+          ccb agent add <name[:provider]> (--profile PROFILE | --role ROLE) [--window NAME|--window-class CLASS] [--hidden|--visible|--parked] [--json]
+          ccb agent hide <agent> [--json]
+          ccb agent park <agent> [--json]
+          ccb agent resume <agent> [--visible|--hidden] [--json]
+          ccb agent remove <agent> [--policy auto|hide|park|unload|kill] [--idle-only] [--force --reason TEXT] [--json]
+          ccb agent release <agent> [--policy auto|hide|park|unload] [--idle-only] [--reason TEXT] [--json]
+
+        Dynamic agent lifecycle:
+          ccb agent add helper:codex --role agentroles.general --hidden --json
+              Write a runtime lifecycle record and project the agent into the active config overlay.
+          ccb agent add reviewer --profile code_reviewer --hidden --json
+              Add from [loop.role_profiles.<profile>] in ccb.config.
+          ccb agent add planner2:codex --role agentroles.planner --window-class plan-orchestrate --hidden --json
+              Hot-load into an existing class window or create that window through reload.
+          ccb agent add worker1:codex --profile worker --loop-id round1 --node-id node1 --hidden --json
+              Place execution agents in node-<loop-id>-<node-id> windows.
+          ccb agent park planner2 --json
+              Keep the pane and context but reject new dispatches until resumed.
+          ccb agent resume planner2 --hidden --json
+              Re-enable dispatch without changing pane ownership.
+          ccb agent remove helper --policy park --json
+              Keep long-lived context discoverable while removing it from visible active work.
+          ccb agent remove helper --policy unload --idle-only --json
+              Remove the dynamic overlay when the agent is idle.
+          ccb agent release reviewer --idle-only --json
+              Apply role policy without exposing the destructive kill path.
+          ccb agent remove helper --policy kill --force --reason "operator reset" --json
+              Force destructive removal; requires an explicit reason.
     """,
     "inbox": """
         usage: ccb inbox [--detail] <agent_name>
@@ -371,6 +418,25 @@ _COMMAND_HELP = {
           - It does not configure Cloudflare Tunnel, lifecycle, or
             multi-project registry.
           - Stopping the gateway does not stop ccbd, provider panes, or tmux.
+    """,
+    "loop": """
+        usage:
+          ccb loop capacity <ensure|status|release> ...
+          ccb loop run-once --loop-id ID --task TEXT [--json]
+
+        Loop capacity:
+          ccb loop capacity ensure --loop-id round1 --profile worker=1 --profile code_reviewer=1 --json
+              Write a deterministic dynamic-node plan from configured loop.role_profiles.
+          ccb loop capacity status --loop-id round1 --json
+              Read the stored loop capacity plan.
+          ccb loop capacity release --loop-id round1 --idle-only --json
+              Mark planned dynamic nodes released.
+
+        One-round execution:
+          ccb loop run-once --loop-id round1 --task "Implement task" --json
+              Ensure one worker and one code_reviewer, submit work, collect review,
+              ask orchestrator for aggregation, release idle dynamic nodes, and
+              write `.ccb/runtime/loops/<loop-id>/` artifacts.
     """,
     "doctor": """
         usage: ccb doctor [ps|logs <agent>|storage] [--output [PATH]]

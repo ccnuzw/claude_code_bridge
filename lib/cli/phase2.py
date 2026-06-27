@@ -31,8 +31,13 @@ from cli.services.inbox import inbox_target
 from cli.services.daemon import KillSummary
 from cli.services.kill import kill_project
 from cli.services.logs import agent_logs
+from cli.services.loop_capacity import loop_capacity
+from cli.services.loop_run_once import loop_run_once
+from cli.services.loop_runner import loop_runner_once
 from cli.services.maintenance import maintenance_status
 from cli.services.mobile import mobile_devices_status, prepare_mobile_gateway, revoke_mobile_device
+from cli.services.plan_tasks import plan_task
+from cli.services.questions import question_command
 from cli.services.pend import pend_target
 from cli.services.ping import ping_target
 from cli.services.ps import ps_summary
@@ -81,7 +86,7 @@ def maybe_handle_phase2(
 
 def _command_requires_bootstrap_config(command) -> bool:
     kind = getattr(command, 'kind', None)
-    return kind not in {'cleanup', 'config-validate', 'kill', 'reload'}
+    return kind not in {'cleanup', 'config-validate', 'kill', 'loop-capacity', 'loop-run-once', 'loop-runner', 'plan-task', 'question', 'reload'}
 
 
 def _render_kill_without_anchor(command, *, cwd: Path | None, out: TextIO) -> int:
@@ -146,12 +151,17 @@ def _dispatch_services():
         inbox_target=inbox_target,
         kill_project=kill_project,
         list_fault_rules=list_fault_rules,
+        loop_capacity=loop_capacity,
+        loop_run_once=loop_run_once,
+        loop_runner_once=loop_runner_once,
         maintenance_status=maintenance_status,
         mobile_devices_status=mobile_devices_status,
         prepare_mobile_gateway=prepare_mobile_gateway,
         pend_target=pend_target,
         ping_target=ping_target,
+        plan_task=plan_task,
         ps_summary=ps_summary,
+        question_command=question_command,
         queue_target=queue_target,
         reload_config=reload_config,
         restart_agent=restart_agent,

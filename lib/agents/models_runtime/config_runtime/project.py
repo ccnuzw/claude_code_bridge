@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..names import SCHEMA_VERSION, AgentValidationError
+from .loop_capacity import LoopCapacityConfig
 from .maintenance import MaintenanceHeartbeatConfig
 from .topology import (
     SidebarSpec,
@@ -38,6 +39,7 @@ class ProjectConfig:
     source_path: str | None = None
     windows_explicit: bool | None = None
     maintenance_heartbeat: MaintenanceHeartbeatConfig | None = None
+    loop_capacity: LoopCapacityConfig | None = None
 
     def __post_init__(self) -> None:
         if self.version != SCHEMA_VERSION:
@@ -60,6 +62,7 @@ class ProjectConfig:
         sidebar = self.sidebar if self.sidebar is not None else default_sidebar_spec()
         sidebar_view = self.sidebar_view if self.sidebar_view is not None else default_sidebar_view_spec()
         maintenance_heartbeat = self.maintenance_heartbeat or MaintenanceHeartbeatConfig()
+        loop_capacity = self.loop_capacity or LoopCapacityConfig()
         windows = normalize_windows(
             self.windows,
             layout_spec=rendered_layout,
@@ -85,6 +88,7 @@ class ProjectConfig:
         object.__setattr__(self, 'sidebar_view', sidebar_view)
         object.__setattr__(self, 'windows_explicit', explicit_windows)
         object.__setattr__(self, 'maintenance_heartbeat', maintenance_heartbeat)
+        object.__setattr__(self, 'loop_capacity', loop_capacity)
         object.__setattr__(self, 'topology_signature_payload', signature_payload)
         object.__setattr__(self, 'topology_signature', topology_signature(signature_payload))
 
@@ -105,6 +109,17 @@ class ProjectConfig:
             'windows_explicit': self.windows_explicit,
             'maintenance': {
                 'heartbeat': self.maintenance_heartbeat.to_record(),
+            },
+            'loop': {
+                'capacity': {
+                    key: value
+                    for key, value in self.loop_capacity.to_record().items()
+                    if key != 'role_profiles'
+                },
+                'role_profiles': {
+                    name: profile.to_record()
+                    for name, profile in self.loop_capacity.role_profiles.items()
+                },
             },
             'topology_signature_payload': self.topology_signature_payload,
             'topology_signature': self.topology_signature,

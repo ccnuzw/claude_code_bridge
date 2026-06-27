@@ -114,6 +114,7 @@ def _agent_spec_from_record(record: dict) -> AgentSpec:
         description=record.get('description'),
         role=record.get('role'),
         watch_paths=tuple(record.get('watch_paths', [])),
+        dispatch_disabled=bool(record.get('dispatch_disabled', False)),
     )
 
 

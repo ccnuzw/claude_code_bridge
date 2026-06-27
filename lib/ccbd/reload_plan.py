@@ -242,11 +242,22 @@ def _build_operations(current_config, new_config) -> list[dict[str, object]]:
         old_record = _agent_record(current_config.agents[agent_name])
         new_record = _agent_record(new_config.agents[agent_name])
         if old_record != new_record:
+            changed_fields = _changed_fields(old_record, new_record)
+            if changed_fields == ['dispatch_disabled']:
+                operations.append(
+                    {
+                        'op': 'view_only_change',
+                        'agent': agent_name,
+                        'fields': changed_fields,
+                        'reason': 'existing agent dispatch availability changed without runtime replacement',
+                    }
+                )
+                continue
             operations.append(
                 {
                     'op': 'replace_agent',
                     'agent': agent_name,
-                    'fields': _changed_fields(old_record, new_record),
+                    'fields': changed_fields,
                     'reason': 'existing agent spec changed',
                 }
             )

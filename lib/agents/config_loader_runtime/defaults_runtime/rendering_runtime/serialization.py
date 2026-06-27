@@ -10,6 +10,7 @@ from agents.models import (
 )
 from provider_model_shortcuts import strip_provider_model_startup_args
 from provider_profiles import provider_api_env_keys
+from provider_profiles.models import ProviderProfileSpec
 
 
 def agent_spec_to_config_dict(spec) -> dict[str, object]:
@@ -57,6 +58,8 @@ def update_optional_agent_fields(payload: dict[str, object], spec) -> None:
         payload['role'] = spec.role
     if spec.watch_paths:
         payload['watch_paths'] = list(spec.watch_paths)
+    if bool(getattr(spec, 'dispatch_disabled', False)):
+        payload['dispatch_disabled'] = True
 
 
 def agent_spec_to_hybrid_overlay_dict(
@@ -126,10 +129,69 @@ def _provider_profile_config_dict(spec) -> dict[str, object] | None:
     return payload or None
 
 
+def loop_capacity_to_config_dict(loop_capacity) -> dict[str, object] | None:
+    if loop_capacity is None:
+        return None
+    capacity_record = loop_capacity.to_record()
+    role_profiles = dict(capacity_record.pop('role_profiles', {}) or {})
+    default_capacity = type(loop_capacity)()
+    default_record = default_capacity.to_record()
+    capacity_payload = {
+        key: value
+        for key, value in capacity_record.items()
+        if value != default_record.get(key)
+    }
+    payload: dict[str, object] = {}
+    if capacity_payload:
+        payload['capacity'] = capacity_payload
+    if role_profiles:
+        payload['role_profiles'] = {
+            name: _loop_role_profile_config_dict(profile)
+            for name, profile in loop_capacity.role_profiles.items()
+        }
+    return payload or None
+
+
+def _loop_role_profile_config_dict(profile) -> dict[str, object]:
+    payload: dict[str, object] = {
+        'role': profile.role,
+        'provider': profile.provider,
+        'max_instances': profile.max_instances,
+    }
+    if profile.model is not None:
+        payload['model'] = profile.model
+    if profile.thinking is not None:
+        payload['thinking'] = profile.thinking
+    if profile.workspace_mode.value != 'inplace':
+        payload['workspace_mode'] = profile.workspace_mode.value
+    if profile.workspace_group is not None:
+        payload['workspace_group'] = profile.workspace_group
+    if profile.startup_args:
+        payload['startup_args'] = list(profile.startup_args)
+    provider_profile_payload = _loop_provider_profile_config_dict(profile.provider_profile)
+    if provider_profile_payload is not None:
+        payload['provider_profile'] = provider_profile_payload
+    if profile.reuse != 'prefer_idle':
+        payload['reuse'] = profile.reuse
+    return payload
+
+
+def _loop_provider_profile_config_dict(profile) -> dict[str, object] | None:
+    default_profile = ProviderProfileSpec()
+    if profile == default_profile:
+        return None
+    return profile.to_record()
+
+
 def _config_startup_args(spec) -> tuple[str, ...]:
     if spec.model is None:
         return tuple(spec.startup_args)
     return strip_provider_model_startup_args(spec.provider, spec.startup_args, model=spec.model)
 
 
-__all__ = ['agent_spec_to_config_dict', 'agent_spec_to_hybrid_overlay_dict', 'update_optional_agent_fields']
+__all__ = [
+    'agent_spec_to_config_dict',
+    'agent_spec_to_hybrid_overlay_dict',
+    'loop_capacity_to_config_dict',
+    'update_optional_agent_fields',
+]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .render_runtime import (
+    render_agent_lifecycle,
     render_ack,
     render_ask,
     render_cancel,
@@ -15,9 +16,14 @@ from .render_runtime import (
     render_fault_list,
     render_inbox,
     render_kill,
+    render_layout,
     render_logs,
+    render_loop_capacity,
+    render_loop_run_once,
+    render_loop_runner,
     render_maintenance,
     render_mobile_serve,
+    render_plan_task,
     render_mapping,
     render_observer_notice,
     render_pend,
@@ -36,6 +42,7 @@ from .render_runtime import (
 
 __all__ = [
     'render_ack',
+    'render_agent_lifecycle',
     'render_ask',
     'render_cancel',
     'render_clear',
@@ -49,9 +56,14 @@ __all__ = [
     'render_fault_list',
     'render_inbox',
     'render_kill',
+    'render_layout',
     'render_logs',
+    'render_loop_capacity',
+    'render_loop_run_once',
+    'render_loop_runner',
     'render_maintenance',
     'render_mobile_serve',
+    'render_plan_task',
     'render_mapping',
     'render_observer_notice',
     'render_pend',

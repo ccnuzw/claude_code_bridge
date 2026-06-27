@@ -181,10 +181,10 @@ _AGENT_VISUALS_CONTRAST: tuple[TmuxPaneVisual, ...] = (
 )
 
 _CMD_VISUALS_LIGHT: tuple[TmuxPaneVisual, ...] = (
-    _visual(bg='#1e66f5', fg='#eff1f5'),
-    _visual(bg='#179299', fg='#eff1f5'),
-    _visual(bg='#209fb5', fg='#eff1f5'),
-    _visual(bg='#8839ef', fg='#eff1f5'),
+    _visual(bg='#5c5f77', fg='#eff1f5'),
+    _visual(bg='#6c6f85', fg='#eff1f5'),
+    _visual(bg='#7c7f93', fg='#eff1f5'),
+    _visual(bg='#8c8fa1', fg='#eff1f5'),
 )
 
 _AGENT_VISUALS_LIGHT: tuple[TmuxPaneVisual, ...] = (

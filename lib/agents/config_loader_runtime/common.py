@@ -25,6 +25,7 @@ ALLOWED_TOP_LEVEL_KEYS = {
     'tool_windows',
     'entry_window',
     'maintenance',
+    'loop',
 }
 ALLOWED_PROVIDER_PROFILE_KEYS = {
     'mode',
@@ -66,6 +67,7 @@ ALLOWED_AGENT_KEYS = {
     'description',
     'role',
     'watch_paths',
+    'dispatch_disabled',
 }
 
 

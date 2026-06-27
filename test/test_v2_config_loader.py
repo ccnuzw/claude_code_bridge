@@ -66,6 +66,32 @@ def test_load_valid_project_config(tmp_path: Path) -> None:
     assert result.config.maintenance_heartbeat.assessor == 'ccb_self'
 
 
+def test_load_project_config_supports_agent_dispatch_disabled(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-dispatch-disabled'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+default_agents = ["agent1"]
+layout = "agent1:codex"
+
+[agents.agent1]
+provider = "codex"
+target = "."
+workspace_mode = "inplace"
+restore = "auto"
+permission = "manual"
+dispatch_disabled = true
+""",
+    )
+
+    result = load_project_config(project_root)
+
+    assert result.config.agents['agent1'].dispatch_disabled is True
+    rendered = render_project_config_text(result.config)
+    assert 'dispatch_disabled = true' in rendered
+
+
 def test_load_project_config_resolves_role_store_from_account_home_inside_provider_home(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1094,6 +1120,171 @@ def test_load_project_config_rejects_agent_model_shortcut_mixed_with_startup_arg
 [agents.agent1]
 model = "gpt-5"
 startup_args = ["--model", "gpt-4.1"]
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='model cannot be combined with startup_args model flags'):
+        load_project_config(project_root)
+
+
+def test_load_project_config_supports_loop_role_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-loop-profiles'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    role_store = tmp_path / 'roles'
+    _write_installed_role(role_store, 'agentroles.coder', default_agent_name='coder')
+    _write_installed_role(role_store, 'agentroles.code_reviewer', default_agent_name='code_reviewer')
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        config_path,
+        """cmd; orchestrator:codex
+
+[loop.capacity]
+enabled = true
+max_nodes = 2
+default_lifetime = "current_round"
+name_template = "loop-{loop_id}-{profile}-{index}"
+reuse = "prefer_idle"
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+model = "gpt-5"
+thinking = "high"
+workspace_mode = "git-worktree"
+workspace_group = "worker_pool"
+max_instances = 1
+reuse = "prefer_idle"
+
+[loop.role_profiles.code_reviewer]
+role = "agentroles.code_reviewer"
+provider = "codex"
+model = "gpt-5"
+thinking = "medium"
+workspace_mode = "git-worktree"
+max_instances = 1
+""",
+    )
+
+    result = load_project_config(project_root)
+    capacity = result.config.loop_capacity
+    rendered = render_project_config_text(result.config)
+
+    assert capacity.enabled is True
+    assert capacity.max_nodes == 2
+    assert capacity.default_lifetime == 'current_round'
+    assert tuple(capacity.role_profiles) == ('worker', 'code_reviewer')
+    worker = capacity.role_profiles['worker']
+    assert worker.role == 'agentroles.coder'
+    assert worker.provider == 'codex'
+    assert worker.model == 'gpt-5'
+    assert worker.thinking == 'high'
+    assert worker.workspace_mode is WorkspaceMode.GIT_WORKTREE
+    assert worker.workspace_group == 'worker_pool'
+    assert worker.max_instances == 1
+    assert '[loop.capacity]' in rendered
+    assert '[loop.role_profiles.worker]' in rendered
+    assert 'role = "agentroles.coder"' in rendered
+    assert 'thinking = "high"' in rendered
+
+
+def test_load_project_config_rejects_unknown_loop_profile_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-loop-unknown-field'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    role_store = tmp_path / 'roles'
+    _write_installed_role(role_store, 'agentroles.coder', default_agent_name='coder')
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        config_path,
+        """cmd; orchestrator:codex
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+max_instances = 1
+provider_model = "gpt-5"
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='loop\\.role_profiles\\.worker contains unknown fields: provider_model'):
+        load_project_config(project_root)
+
+
+def test_load_project_config_rejects_missing_loop_profile_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-loop-missing-role'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    role_store = tmp_path / 'roles'
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        config_path,
+        """cmd; orchestrator:codex
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+max_instances = 1
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='role agentroles\\.coder is not installed in role store'):
+        load_project_config(project_root)
+
+
+def test_load_project_config_rejects_loop_capacity_exceeding_profile_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-loop-max-nodes'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    role_store = tmp_path / 'roles'
+    _write_installed_role(role_store, 'agentroles.coder', default_agent_name='coder')
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        config_path,
+        """cmd; orchestrator:codex
+
+[loop.capacity]
+enabled = true
+max_nodes = 2
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+max_instances = 1
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='max_nodes cannot exceed total loop\\.role_profiles max_instances'):
+        load_project_config(project_root)
+
+
+def test_load_project_config_rejects_loop_profile_model_startup_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-loop-model-conflict'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    role_store = tmp_path / 'roles'
+    _write_installed_role(role_store, 'agentroles.coder', default_agent_name='coder')
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        config_path,
+        """cmd; orchestrator:codex
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+model = "gpt-5"
+startup_args = ["--model", "gpt-4.1"]
+max_instances = 1
 """,
     )
 

@@ -90,7 +90,9 @@ def _latest_attempts_by_agent(dispatcher, message_id: str) -> dict[str, object]:
 
 
 def _ensure_agent_target_ready(dispatcher, agent_name: str) -> None:
-    dispatcher._registry.spec_for(agent_name)
+    spec = dispatcher._registry.spec_for(agent_name)
+    if bool(getattr(spec, 'dispatch_disabled', False)):
+        raise dispatcher._dispatch_rejected_error(f'agent {agent_name} is dispatch-disabled')
 
 
 def _drafts_for_agents(dispatcher, request: MessageEnvelope, targets) -> list[_JobDraft]:

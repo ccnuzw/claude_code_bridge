@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from cli.render import (
     render_ack,
+    render_agent_lifecycle,
     render_ask,
     render_cancel,
     render_clear,
@@ -17,9 +18,14 @@ from cli.render import (
     render_fault_list,
     render_inbox,
     render_kill,
+    render_layout,
     render_logs,
+    render_loop_capacity,
+    render_loop_run_once,
+    render_loop_runner,
     render_maintenance,
     render_mobile_serve,
+    render_plan_task,
     render_mapping,
     render_observer_notice,
     render_pend,
@@ -36,6 +42,7 @@ from cli.render import (
     write_lines,
 )
 from cli.services.ack import ack_reply
+from cli.services.agent_lifecycle import agent_lifecycle
 from cli.services.ask import exit_code_for_ask_status, submit_ask, watch_ask_job, write_ask_output
 from cli.services.cancel import cancel_job
 from cli.services.clear import clear_agent_context
@@ -47,9 +54,15 @@ from cli.services.diagnostics import export_diagnostic_bundle
 from cli.services.fault import arm_fault_rule, clear_fault_rule, list_fault_rules
 from cli.services.inbox import inbox_target
 from cli.services.kill import kill_project
+from cli.services.layout import layout_command
 from cli.services.logs import agent_logs
+from cli.services.loop_capacity import loop_capacity
+from cli.services.loop_run_once import loop_run_once
+from cli.services.loop_runner import loop_runner_once
 from cli.services.maintenance import maintenance_status
 from cli.services.mobile import mobile_devices_status, prepare_mobile_gateway, revoke_mobile_device
+from cli.services.plan_tasks import plan_task
+from cli.services.questions import question_command
 from cli.services.pend import pend_target
 from cli.services.ping import ping_target
 from cli.services.ps import ps_summary
@@ -67,6 +80,7 @@ from cli.services.watch import watch_target
 def build_phase2_dispatch_services(**overrides):
     payload = dict(
         ack_reply=ack_reply,
+        agent_lifecycle=agent_lifecycle,
         agent_logs=agent_logs,
         arm_fault_rule=arm_fault_rule,
         cancel_job=cancel_job,
@@ -79,18 +93,25 @@ def build_phase2_dispatch_services(**overrides):
         export_diagnostic_bundle=export_diagnostic_bundle,
         inbox_target=inbox_target,
         kill_project=kill_project,
+        layout_command=layout_command,
         list_fault_rules=list_fault_rules,
+        loop_capacity=loop_capacity,
+        loop_run_once=loop_run_once,
+        loop_runner_once=loop_runner_once,
         maintenance_status=maintenance_status,
         mobile_devices_status=mobile_devices_status,
+        plan_task=plan_task,
         prepare_mobile_gateway=prepare_mobile_gateway,
         pend_target=pend_target,
         ping_target=ping_target,
         ps_summary=ps_summary,
+        question_command=question_command,
         queue_target=queue_target,
         reload_config=reload_config,
         restart_agent=restart_agent,
         revoke_mobile_device=revoke_mobile_device,
         render_ack=render_ack,
+        render_agent_lifecycle=render_agent_lifecycle,
         render_ask=render_ask,
         render_cancel=render_cancel,
         render_clear=render_clear,
@@ -104,9 +125,14 @@ def build_phase2_dispatch_services(**overrides):
         render_fault_list=render_fault_list,
         render_inbox=render_inbox,
         render_kill=render_kill,
+        render_layout=render_layout,
         render_logs=render_logs,
+        render_loop_capacity=render_loop_capacity,
+        render_loop_run_once=render_loop_run_once,
+        render_loop_runner=render_loop_runner,
         render_maintenance=render_maintenance,
         render_mobile_serve=render_mobile_serve,
+        render_plan_task=render_plan_task,
         render_mapping=render_mapping,
         render_observer_notice=render_observer_notice,
         render_pend=render_pend,

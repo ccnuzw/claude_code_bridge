@@ -151,6 +151,47 @@ def test_start_agent_runtime_degrades_unresolved_stale_binding() -> None:
     assert runtime_service.restore_calls == []
 
 
+def test_start_agent_runtime_records_namespace_pane_without_provider_binding() -> None:
+    runtime_service = _RuntimeService()
+
+    execution = start_agent_runtime(
+        context=object(),
+        command=SimpleNamespace(restore=False),
+        runtime_service=runtime_service,
+        agent_name='agent1',
+        spec=SimpleNamespace(provider='fake-codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+        plan=SimpleNamespace(workspace_path='/tmp/ws'),
+        binding=None,
+        raw_binding=None,
+        stale_binding=False,
+        assigned_pane_id='%9',
+        style_index=0,
+        project_id='proj-1',
+        tmux_socket_path='/tmp/ccb.sock',
+        namespace_epoch=2,
+        ensure_agent_runtime_fn=lambda *args, **kwargs: RuntimeLaunchResult(launched=False, binding=None),
+        launch_binding_hint_fn=lambda **kwargs: None,
+        relabel_project_namespace_pane_fn=lambda **kwargs: None,
+        same_tmux_socket_path_fn=lambda left, right: left == right,
+        window_name='main',
+    )
+
+    assert execution.agent_result.action == 'attached'
+    assert execution.agent_result.runtime_ref == 'tmux:%9'
+    assert execution.agent_result.session_ref is None
+    assert execution.agent_result.terminal_backend == 'tmux'
+    assert execution.agent_result.pane_id == '%9'
+    assert execution.agent_result.active_pane_id == '%9'
+    assert execution.agent_result.tmux_socket_path == '/tmp/ccb.sock'
+    assert execution.agent_result.tmux_window_name == 'main'
+    assert execution.runtime_pane_id == '%9'
+    assert execution.project_socket_active_pane_id == '%9'
+    assert execution.socket_name == '/tmp/ccb.sock'
+    assert runtime_service.attach_calls[-1]['runtime_ref'] == 'tmux:%9'
+    assert runtime_service.attach_calls[-1]['pane_id'] == '%9'
+    assert runtime_service.attach_calls[-1]['tmux_window_name'] == 'main'
+
+
 def test_start_agent_runtime_reuses_binding_and_restores_when_requested() -> None:
     runtime_service = _RuntimeService()
     binding = _binding()

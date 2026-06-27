@@ -4,6 +4,8 @@ import importlib
 from pathlib import Path
 
 from agents.config_loader_runtime.role_lookup import RoleLookupError, installed_role_default_agent_name, looks_like_role_id, normalize_role_id
+from agents.config_loader_runtime.dynamic_agent_overlays import apply_dynamic_agent_overlays
+from agents.config_loader_runtime.loop_overlays import apply_loop_capacity_overlays
 from agents.models import LayoutLeaf, LayoutNode, normalize_agent_name, parse_layout_spec
 
 from ..common import (
@@ -17,7 +19,7 @@ from ..defaults import build_default_project_config
 from ..parsing import validate_project_config
 from ..paths import project_config_path, user_default_config_path
 
-_ALLOWED_HYBRID_TOP_LEVEL_KEYS = {'agents', 'maintenance'}
+_ALLOWED_HYBRID_TOP_LEVEL_KEYS = {'agents', 'maintenance', 'loop'}
 _HYBRID_HEADER_OWNED_AGENT_KEYS = {'provider', 'workspace_mode'}
 
 
@@ -274,6 +276,8 @@ def _merge_hybrid_overlay(
     }
     if 'maintenance' in overlay_document:
         merged['maintenance'] = overlay_document['maintenance']
+    if 'loop' in overlay_document:
+        merged['loop'] = overlay_document['loop']
     return merged
 
 
@@ -298,15 +302,19 @@ def _load_config_document(path: Path, *, project_root: Path | None = None) -> di
     return _parse_compact_config_document(primary_text, path=path, project_root=project_root)
 
 
-def load_project_config(project_root: Path) -> ConfigLoadResult:
+def load_project_config(project_root: Path, *, include_loop_overlays: bool = True) -> ConfigLoadResult:
     project_path = project_config_path(project_root)
     if project_path.exists():
+        config = validate_project_config(
+            _load_config_document(project_path, project_root=Path(project_root).expanduser().resolve()),
+            source_path=project_path,
+            project_root=project_root,
+        )
+        if include_loop_overlays:
+            config = apply_loop_capacity_overlays(config, project_root)
+            config = apply_dynamic_agent_overlays(config, project_root)
         return ConfigLoadResult(
-            config=validate_project_config(
-                _load_config_document(project_path, project_root=Path(project_root).expanduser().resolve()),
-                source_path=project_path,
-                project_root=project_root,
-            ),
+            config=config,
             source_path=project_path,
             source_kind=CONFIG_SOURCE_PROJECT,
             used_default=False,

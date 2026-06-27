@@ -7,7 +7,7 @@ from agents.models import LayoutLeaf, LayoutNode, normalize_agent_name, parse_la
 
 from ..project import build_default_project_config
 from .compact import can_render_compact
-from .serialization import agent_spec_to_hybrid_overlay_dict
+from .serialization import agent_spec_to_hybrid_overlay_dict, loop_capacity_to_config_dict
 
 
 def render_default_project_config_text() -> str:
@@ -15,9 +15,10 @@ def render_default_project_config_text() -> str:
 
 
 def render_project_config_text(config) -> str:
+    loop_payload = loop_capacity_to_config_dict(getattr(config, 'loop_capacity', None))
     if getattr(config, 'windows_explicit', False):
         return _render_windows_config_text(config)
-    if can_render_compact(config):
+    if can_render_compact(config) and not loop_payload:
         return f'{config.layout_spec}\n'
     hybrid_layout = _render_hybrid_layout(config)
     overlay_payload = _build_hybrid_overlay_payload(config)
@@ -116,9 +117,15 @@ def _build_hybrid_overlay_payload(config) -> dict[str, object] | None:
         )
         if overlay:
             overlay_agents[name] = overlay
-    if not overlay_agents:
+    loop_payload = loop_capacity_to_config_dict(getattr(config, 'loop_capacity', None))
+    if not overlay_agents and not loop_payload:
         return None
-    return {'agents': overlay_agents}
+    payload: dict[str, object] = {}
+    if overlay_agents:
+        payload['agents'] = overlay_agents
+    if loop_payload:
+        payload['loop'] = loop_payload
+    return payload
 
 
 def _render_windows_config_text(config) -> str:
@@ -147,6 +154,9 @@ def _build_windows_payload(config) -> dict[str, object]:
     agent_payload = _windows_agent_overlay_payload(config)
     if agent_payload:
         payload['agents'] = agent_payload
+    loop_payload = loop_capacity_to_config_dict(getattr(config, 'loop_capacity', None))
+    if loop_payload:
+        payload['loop'] = loop_payload
     return payload
 
 

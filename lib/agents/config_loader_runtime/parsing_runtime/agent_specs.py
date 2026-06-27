@@ -22,7 +22,7 @@ from provider_profiles import (
 
 from ..common import ALLOWED_AGENT_KEYS, ConfigValidationError
 from .agent_api import parse_agent_api_shortcut
-from .expectations import expect_mapping, expect_string, expect_string_list, expect_string_mapping
+from .expectations import expect_bool, expect_mapping, expect_string, expect_string_list, expect_string_mapping
 from .provider_profiles import parse_provider_profile
 
 
@@ -120,6 +120,11 @@ def build_agent_spec(agent_name: str, raw: dict[str, Any]) -> AgentSpec:
                 else None
             ),
             watch_paths=expect_string_list(raw.get('watch_paths', []), field_name=f'agents.{agent_name}.watch_paths'),
+            dispatch_disabled=(
+                expect_bool(raw['dispatch_disabled'], field_name=f'agents.{agent_name}.dispatch_disabled')
+                if raw.get('dispatch_disabled') is not None
+                else False
+            ),
         )
     except AgentValidationError as exc:
         raise ConfigValidationError(str(exc)) from exc

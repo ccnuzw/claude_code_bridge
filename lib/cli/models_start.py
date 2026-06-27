@@ -54,6 +54,106 @@ class ParsedMobileCommand:
 
 
 @dataclass(frozen=True)
+class ParsedAgentCommand:
+    project: str | None
+    action: str
+    agent_name: str | None = None
+    provider: str | None = None
+    profile: str | None = None
+    role: str | None = None
+    model: str | None = None
+    thinking: str | None = None
+    workspace_mode: str | None = None
+    window_name: str | None = None
+    window_class: str | None = None
+    loop_id: str | None = None
+    node_id: str | None = None
+    lifetime: str | None = None
+    visibility: str | None = None
+    role_class: str | None = None
+    policy: str | None = None
+    idle_only: bool = False
+    summary_policy: str | None = None
+    force: bool = False
+    reason: str | None = None
+    json_output: bool = False
+    kind: str = 'agent'
+
+
+@dataclass(frozen=True)
+class ParsedLayoutCommand:
+    project: str | None
+    action: str
+    panes: int
+    window_prefix: str = 'layout'
+    session_name: str | None = None
+    cleanup: bool = True
+    json_output: bool = False
+    kind: str = 'layout'
+
+
+@dataclass(frozen=True)
+class ParsedLoopCapacityCommand:
+    project: str | None
+    action: str
+    loop_id: str
+    profile_counts: tuple[tuple[str, int], ...] = ()
+    idle_only: bool = False
+    json_output: bool = False
+    kind: str = 'loop-capacity'
+
+
+@dataclass(frozen=True)
+class ParsedLoopRunOnceCommand:
+    project: str | None
+    loop_id: str | None = None
+    task: str | None = None
+    task_id: str | None = None
+    worker_profile: str = 'worker'
+    reviewer_profile: str = 'code_reviewer'
+    orchestrator: str = 'orchestrator'
+    round_checker: str = 'round_checker'
+    timeout_s: float | None = None
+    json_output: bool = False
+    kind: str = 'loop-run-once'
+
+
+@dataclass(frozen=True)
+class ParsedLoopRunnerCommand:
+    project: str | None
+    once: bool = True
+    timeout_s: float | None = None
+    json_output: bool = False
+    kind: str = 'loop-runner'
+
+
+@dataclass(frozen=True)
+class ParsedPlanTaskCommand:
+    project: str | None
+    action: str
+    plan_slug: str | None = None
+    title: str | None = None
+    task_id: str | None = None
+    artifact_kind: str | None = None
+    file_path: str | None = None
+    status: str | None = None
+    loop_id: str | None = None
+    result: str | None = None
+    json_output: bool = False
+    kind: str = 'plan-task'
+
+
+@dataclass(frozen=True)
+class ParsedQuestionCommand:
+    project: str | None
+    action: str
+    task_id: str | None = None
+    file_path: str | None = None
+    json_output: bool = False
+    kind: str = 'question'
+
+
+@dataclass(frozen=True)
 class ParsedCleanupCommand:
     project: str | None
     kind: str = 'cleanup'
@@ -104,16 +204,23 @@ class ParsedPingCommand:
 
 
 __all__ = [
+    'ParsedAgentCommand',
     'ParsedClearCommand',
     'ParsedCleanupCommand',
     'ParsedConfigValidateCommand',
     'ParsedDoctorCommand',
     'ParsedKillCommand',
+    'ParsedLayoutCommand',
     'ParsedLogsCommand',
+    'ParsedLoopCapacityCommand',
+    'ParsedLoopRunOnceCommand',
+    'ParsedLoopRunnerCommand',
     'ParsedMaintenanceCommand',
     'ParsedMobileCommand',
+    'ParsedPlanTaskCommand',
     'ParsedPingCommand',
     'ParsedPsCommand',
+    'ParsedQuestionCommand',
     'ParsedReloadCommand',
     'ParsedRestartCommand',
     'ParsedStartCommand',

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -234,6 +235,103 @@ def test_additive_reload_apply_add_agent_materializes_tmux_pane_before_mount(
     assert backend.pane_options['%3']['@ccb_window'] == 'main'
     assert calls[0]['namespace_agent_panes'] == {'agent3': '%3'}
     assert app.service_graph.registry.get('agent3').pane_id == '%3'
+
+
+def test_additive_reload_apply_dynamic_agent_overlay_materializes_tmux_pane_before_mount(
+    tmp_path: Path,
+) -> None:
+    app = _started_app(tmp_path / 'repo-add-dynamic-agent-real-patch', BASE_CONFIG)
+    backend = _PatchFakeBackend(socket_path=str(app.paths.ccbd_tmux_socket_path))
+    backend.add_window(app.paths.ccbd_tmux_session_name, 'main')
+    backend.sessions[app.paths.ccbd_tmux_session_name][0]['panes'].append('%2')
+    backend.pane_counter = 2
+    _seed_agent_pane(backend, '%1', project_id=app.project_id, window='main', agent='agent1')
+    _seed_agent_pane(backend, '%2', project_id=app.project_id, window='main', agent='agent2')
+    app.project_namespace = ProjectNamespaceController(
+        app.paths,
+        app.project_id,
+        clock=app.clock,
+        backend_factory=lambda socket_path=None: backend,
+    )
+    _seed_runtime(app.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
+    _write_dynamic_agent_state(
+        app.project_root,
+        agent='agent3',
+        provider='codex',
+        role='agentroles.general',
+    )
+    new_config = load_project_config(app.project_root).config
+    calls: list[dict[str, object]] = []
+
+    result = run_additive_reload_apply(
+        app,
+        new_config,
+        run_start_flow_fn=_mounting_start_flow(app, calls),
+    )
+
+    assert result.status == 'published'
+    assert result.plan_class == 'add_agent'
+    assert result.namespace_patch['agent_panes'] == {'agent3': '%3'}
+    assert result.runtime_mount['runtime_authority_written_agents'] == ['agent3']
+    assert backend.split_calls == [('%2', 'right', 50)]
+    assert backend.pane_options['%3']['@ccb_role'] == 'agent'
+    assert backend.pane_options['%3']['@ccb_slot'] == 'agent3'
+    assert backend.pane_options['%3']['@ccb_window'] == 'main'
+    assert calls[0]['namespace_agent_panes'] == {'agent3': '%3'}
+    assert app.service_graph.registry.get('agent3').pane_id == '%3'
+
+
+def test_additive_reload_apply_dynamic_agent_overlay_materializes_new_window_before_mount(
+    tmp_path: Path,
+) -> None:
+    app = _started_app(tmp_path / 'repo-add-dynamic-window-real-patch', BASE_CONFIG)
+    backend = _PatchFakeBackend(socket_path=str(app.paths.ccbd_tmux_socket_path))
+    backend.add_window(app.paths.ccbd_tmux_session_name, 'main')
+    backend.sessions[app.paths.ccbd_tmux_session_name][0]['panes'].append('%2')
+    backend.pane_counter = 2
+    _seed_agent_pane(backend, '%1', project_id=app.project_id, window='main', agent='agent1')
+    _seed_agent_pane(backend, '%2', project_id=app.project_id, window='main', agent='agent2')
+    app.project_namespace = ProjectNamespaceController(
+        app.paths,
+        app.project_id,
+        clock=app.clock,
+        backend_factory=lambda socket_path=None: backend,
+    )
+    _seed_runtime(app.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
+    before_agent1 = app.runtime_service._registry.get('agent1').to_record()
+    before_agent2 = app.runtime_service._registry.get('agent2').to_record()
+    _write_dynamic_agent_state(
+        app.project_root,
+        agent='agent3',
+        provider='codex',
+        role='agentroles.general',
+        window_name='review',
+    )
+    new_config = load_project_config(app.project_root).config
+    calls: list[dict[str, object]] = []
+
+    result = run_additive_reload_apply(
+        app,
+        new_config,
+        run_start_flow_fn=_mounting_start_flow(app, calls),
+    )
+
+    assert result.status == 'published'
+    assert result.plan_class == 'add_window'
+    assert result.namespace_patch['created_windows'] == ['review']
+    assert result.namespace_patch['sidebar_panes'] == {'review': '%3'}
+    assert result.namespace_patch['agent_panes'] == {'agent3': '%4'}
+    assert result.runtime_mount['runtime_authority_written_agents'] == ['agent3']
+    assert app.runtime_service._registry.get('agent1').to_record() == before_agent1
+    assert app.runtime_service._registry.get('agent2').to_record() == before_agent2
+    assert backend.pane_options['%1']['@ccb_slot'] == 'agent1'
+    assert backend.pane_options['%2']['@ccb_slot'] == 'agent2'
+    assert backend.pane_options['%4']['@ccb_slot'] == 'agent3'
+    assert backend.pane_options['%4']['@ccb_window'] == 'review'
+    assert calls[0]['namespace_agent_panes'] == {'agent3': '%4'}
+    assert app.service_graph.registry.get('agent3').pane_id == '%4'
 
 
 def test_additive_reload_apply_writes_bounded_handoff_during_apply_and_clears_after_success(
@@ -1224,6 +1322,37 @@ def _project(project_root: Path, config_text: str) -> Path:
 
 def _load_config(project_root: Path, config_text: str):
     return load_project_config(_project(project_root, config_text)).config
+
+
+def _write_dynamic_agent_state(
+    project_root: Path,
+    *,
+    agent: str,
+    provider: str,
+    role: str,
+    window_name: str | None = None,
+) -> None:
+    state_path = project_root / '.ccb' / 'runtime' / 'agents' / agent / 'lifecycle.json'
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                'schema_version': 1,
+                'record_type': 'ccb_dynamic_agent_lifecycle',
+                'agent_lifecycle_status': 'active',
+                'agent': agent,
+                'role': role,
+                'provider': provider,
+                'workspace_mode': 'inplace',
+                'target': '.',
+                'lifecycle_state': 'hidden',
+                'visibility_state': 'hidden',
+                'window_name': window_name,
+            },
+            sort_keys=True,
+        ),
+        encoding='utf-8',
+    )
 
 
 class _PatchFakeBackend:

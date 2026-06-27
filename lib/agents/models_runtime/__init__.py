@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from .config import AgentApiSpec, AgentSpec, MaintenanceHeartbeatConfig, ProjectConfig
+from .config import (
+    AgentApiSpec,
+    AgentSpec,
+    LoopCapacityConfig,
+    LoopRoleProfileSpec,
+    MaintenanceHeartbeatConfig,
+    ProjectConfig,
+)
 from .config_runtime.topology import (
     SidebarSpec,
     SidebarViewSpec,
@@ -25,7 +32,19 @@ from .enums import (
     normalize_runtime_binding_source,
     normalize_runtime_mode,
 )
-from .layout import LayoutLeaf, LayoutNode, LayoutParseError, build_balanced_layout, iter_layout_names, parse_layout_spec, prune_layout
+from .layout import (
+    DEFAULT_MAX_PANES_PER_WINDOW,
+    LayoutLeaf,
+    LayoutNode,
+    LayoutParseError,
+    PaneGrowthWindowPlan,
+    build_balanced_layout,
+    build_pane_growth_layout,
+    build_pane_growth_windows,
+    iter_layout_names,
+    parse_layout_spec,
+    prune_layout,
+)
 from .layout_plan import ProjectLayoutPlan, build_project_layout_plan, project_layout_signature, select_project_layout_targets
 from .names import (
     AGENT_NAME_PATTERN,
@@ -45,12 +64,16 @@ __all__ = [
     'AgentSpec',
     'AgentState',
     'AgentValidationError',
+    'DEFAULT_MAX_PANES_PER_WINDOW',
     'LayoutLeaf',
     'LayoutNode',
     'ProjectLayoutPlan',
     'LayoutParseError',
+    'LoopCapacityConfig',
+    'LoopRoleProfileSpec',
     'MaintenanceHeartbeatConfig',
     'PermissionMode',
+    'PaneGrowthWindowPlan',
     'ProjectConfig',
     'ProviderProfileSpec',
     'QueuePolicy',
@@ -67,6 +90,8 @@ __all__ = [
     'WorkspaceMode',
     'WindowSpec',
     'build_balanced_layout',
+    'build_pane_growth_layout',
+    'build_pane_growth_windows',
     'build_project_layout_plan',
     'is_layout_tool_alias',
     'iter_layout_names',

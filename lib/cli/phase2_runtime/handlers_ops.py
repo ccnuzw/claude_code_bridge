@@ -3,6 +3,16 @@ from __future__ import annotations
 import json
 
 
+def handle_agent(context, command, out, services) -> int:
+    payload = services.agent_lifecycle(context, command)
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return 0 if str(payload.get('agent_lifecycle_status') or '') in {'ok', 'active', 'removed'} else 1
+    services.write_lines(out, services.render_agent_lifecycle(payload))
+    return 0 if str(payload.get('agent_lifecycle_status') or '') in {'ok', 'active', 'removed'} else 1
+
+
 def handle_kill(context, command, out, services) -> int:
     summary = services.kill_project(context, command)
     services.write_lines(out, services.render_kill(summary))
@@ -24,6 +34,73 @@ def handle_clear(context, command, out, services) -> int:
 def handle_logs(context, command, out, services) -> int:
     summary = services.agent_logs(context, command)
     services.write_lines(out, services.render_logs(summary))
+    return 0
+
+
+def handle_loop_capacity(context, command, out, services) -> int:
+    payload = services.loop_capacity(context, command)
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return 0
+    services.write_lines(out, services.render_loop_capacity(payload))
+    return 0
+
+
+def handle_loop_run_once(context, command, out, services) -> int:
+    payload = services.loop_run_once(context, command, services)
+    exit_code = 0 if str(payload.get('loop_run_status') or '') == 'ok' else 1
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return exit_code
+    services.write_lines(out, services.render_loop_run_once(payload))
+    return exit_code
+
+
+def handle_loop_runner(context, command, out, services) -> int:
+    payload = services.loop_runner_once(context, command, services)
+    exit_code = 0 if str(payload.get('loop_runner_status') or '') in {'ok', 'idle', 'paused', 'blocked', 'terminal'} else 1
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return exit_code
+    services.write_lines(out, services.render_loop_runner(payload))
+    return exit_code
+
+
+def handle_layout(context, command, out, services) -> int:
+    payload = services.layout_command(context, command)
+    exit_code = 0 if str(payload.get('layout_status') or '') in {'planned', 'ok'} else 1
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return exit_code
+    services.write_lines(out, services.render_layout(payload))
+    return exit_code
+
+
+def handle_plan_task(context, command, out, services) -> int:
+    payload = services.plan_task(context, command)
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return 0
+    if str(getattr(command, 'action', '') or '') == 'breadcrumb':
+        out.write(str(payload.get('breadcrumb') or ''))
+        out.write('\n')
+        return 0
+    services.write_lines(out, services.render_plan_task(payload))
+    return 0
+
+
+def handle_question(context, command, out, services) -> int:
+    payload = services.question_command(context, command)
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return 0
+    services.write_lines(out, services.render_mapping(payload))
     return 0
 
 
@@ -114,6 +191,7 @@ def handle_restart(context, command, out, services) -> int:
 
 
 __all__ = [
+    'handle_agent',
     'handle_cleanup',
     'handle_clear',
     'handle_doctor',
@@ -121,10 +199,16 @@ __all__ = [
     'handle_fault_clear',
     'handle_fault_list',
     'handle_kill',
+    'handle_layout',
     'handle_logs',
+    'handle_loop_capacity',
+    'handle_loop_run_once',
+    'handle_loop_runner',
     'handle_maintenance',
     'handle_mobile',
+    'handle_plan_task',
     'handle_ps',
+    'handle_question',
     'handle_reload',
     'handle_restart',
 ]

@@ -63,7 +63,17 @@ def tmux_layout_for_start(
         ),
         tmux_backend=tmux_backend,
         root_pane_id=root_pane_id,
+        window_name=_legacy_layout_window_name(config),
     )
+
+
+def _legacy_layout_window_name(config) -> str | None:
+    if bool(getattr(config, 'windows_explicit', False)):
+        return None
+    windows = tuple(getattr(config, 'windows', ()) or ())
+    if len(windows) != 1:
+        return None
+    return str(getattr(windows[0], 'name', '') or '').strip() or None
 
 
 def project_socket_active_panes(

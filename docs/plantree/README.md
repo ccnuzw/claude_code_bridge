@@ -30,7 +30,7 @@ to resume across agents and sessions.
 | [readme-v7-redesign](plans/readme-v7-redesign/README.md) | In progress | Redesign public README content, screenshots, demo videos, and tmux onboarding for the v7 release line. |
 | [sidebar-tips-layout](plans/sidebar-tips-layout/README.md) | In progress | Add a three-panel sidebar layout with compact Comms and configurable tmux Tips. |
 | [sidebar-provider-activity](plans/sidebar-provider-activity/README.md) | Planning | Add provider-native activity evidence for accurate sidebar status, including Codex/Claude manual-pane state and API fault validation. |
-| [ccbd-agent-hot-reload](plans/ccbd-agent-hot-reload/README.md) | Planning | Dynamically load, unload, and later replace agents in a running daemon without breaking unrelated panes. |
+| [ccbd-agent-hot-reload](plans/ccbd-agent-hot-reload/README.md) | In progress | Dynamically load, unload, and later replace agents in a running daemon without breaking unrelated panes. |
 | [managed-tool-windows](plans/managed-tool-windows/README.md) | In progress | Add first-class non-agent tool windows and optional rich workbench surfaces that appear in sidebar without provider/agent rows. |
 | [windows-wezterm-native](plans/windows-wezterm-native/README.md) | Planning | Evaluate and stage a Windows-native WezTerm mux backend for current CCB without tmux-based communication. |
 | [python-rust-hybrid-performance](plans/python-rust-hybrid-performance/README.md) | In progress | Stage performance-oriented Rust helpers around the current Python control plane without a full rewrite. |
@@ -43,6 +43,7 @@ to resume across agents and sessions.
 | [source-runtime-isolation](plans/source-runtime-isolation/README.md) | Planning | Keep source editing, source-under-test validation, and installed-release work environments isolated from each other. |
 | [ccb-self-role](plans/ccb-self-role/README.md) | Planning | Design the `agentroles.ccb_self` maintenance role, its broad skills, CCB/tmux diagnostics tools, and self-contained recovery boundaries. |
 | [ccb-maintenance-heartbeat](plans/ccb-maintenance-heartbeat/README.md) | Planning | Add a generic CCB-owned maintenance heartbeat that independently diagnoses agent health and escalates risk, unknown, or unhealthy states to a semantic assessor, defaulting to `ccb_self`. |
+| [agentic-loop-workflow](plans/agentic-loop-workflow/README.md) | Planning | Design a state-machine-driven multi-agent workflow loop where `frontdesk` only handles user interaction while planner, broker, orchestrator, execution nodes, monitor, and plan steward roles advance work through scripted state transitions. |
 | [managed-provider-completion-reliability](plans/managed-provider-completion-reliability/README.md) | Planning | Track managed pane-backed provider completion terminalization, empty-reply guards, and timeout reliability fixes. |
 | [inter-agent-comm-reliability](plans/inter-agent-comm-reliability/README.md) | Planning | Track inter-agent message transport reliability proposals such as PR226-style persistent FIFO, ACK, large-payload spool, and cancel visibility for Linux, macOS, and WSL. |
 | [callback-continuation-safety](plans/callback-continuation-safety/README.md) | In progress | Prevent callback continuation jobs from being misinterpreted as new upstream callback work, especially in mixed Codex/Claude chains. |

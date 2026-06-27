@@ -93,8 +93,9 @@ def _fake_config(*, provider: str = 'fake') -> ProjectConfig:
     return ProjectConfig(version=2, default_agents=('demo',), agents={'demo': spec})
 
 
-def _provider_config(*providers: str) -> ProjectConfig:
+def _provider_config(*providers: str, dispatch_disabled: set[str] | None = None) -> ProjectConfig:
     agents: dict[str, AgentSpec] = {}
+    disabled = set(dispatch_disabled or set())
     for provider in providers:
         agents[provider] = AgentSpec(
             name=provider,
@@ -106,6 +107,7 @@ def _provider_config(*providers: str) -> ProjectConfig:
             restore_default=RestoreMode.AUTO,
             permission_default=PermissionMode.MANUAL,
             queue_policy=QueuePolicy.SERIAL_PER_AGENT,
+            dispatch_disabled=provider in disabled,
         )
     return ProjectConfig(version=2, default_agents=tuple(providers), agents=agents)
 
@@ -470,6 +472,57 @@ def test_dispatcher_broadcast_excludes_sender_and_only_targets_alive_agents(tmp_
 
     assert receipt.submission_id is not None
     assert [job.agent_name for job in receipt.jobs] == ['claude']
+
+
+def test_dispatcher_rejects_dispatch_disabled_single_target(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-dispatch-disabled-single'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', dispatch_disabled={'codex'})
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-18T00:00:00Z')
+
+    with pytest.raises(Exception, match='agent codex is dispatch-disabled'):
+        dispatcher.submit(
+            MessageEnvelope(
+                project_id=ctx.project_id,
+                to_agent='codex',
+                from_actor='user',
+                body='hello',
+                task_id='task-1',
+                reply_to=None,
+                message_type='ask',
+                delivery_scope=DeliveryScope.SINGLE,
+            )
+        )
+
+
+def test_dispatcher_broadcast_skips_dispatch_disabled_agents(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-dispatch-disabled-broadcast'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude', dispatch_disabled={'claude'})
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-18T00:00:00Z')
+
+    receipt = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='all',
+            from_actor='user',
+            body='broadcast',
+            task_id='task-1',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.BROADCAST,
+        )
+    )
+
+    assert receipt.submission_id is not None
+    assert [job.agent_name for job in receipt.jobs] == ['codex']
 
 
 def test_dispatcher_rejects_unknown_sender_agent(tmp_path: Path) -> None:

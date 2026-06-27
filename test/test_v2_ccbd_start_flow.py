@@ -90,6 +90,48 @@ def test_tmux_layout_for_start_uses_namespace_agent_panes_when_provided() -> Non
     assert layout.agent_panes == {'agent1': '%1', 'agent2': '%2', 'agent3': '%3'}
 
 
+def test_tmux_layout_for_start_labels_legacy_main_window() -> None:
+    from ccbd.start_flow_runtime.service_tmux import tmux_layout_for_start
+    from cli.services.tmux_start_layout import TmuxStartLayout
+
+    calls: dict[str, object] = {}
+
+    def _prepare_start_layout_impl(*args, **kwargs):
+        del args
+        calls['window_name'] = kwargs.get('window_name')
+        return TmuxStartLayout(cmd_pane_id=None, agent_panes={'main': '%1'})
+
+    deps = SimpleNamespace(
+        set_tmux_ui_active_fn=lambda active: calls.setdefault('ui_active', active),
+        build_project_layout_plan_fn=lambda *args, **kwargs: SimpleNamespace(target_agent_names=('main',)),
+        prepare_start_layout_impl=_prepare_start_layout_impl,
+        inside_tmux_impl=lambda: True,
+        prepare_tmux_start_layout_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('prepare_start_layout_impl should be used')
+        ),
+    )
+    prepared_agents = (SimpleNamespace(agent_name='main', binding=None),)
+
+    layout = tmux_layout_for_start(
+        deps,
+        SimpleNamespace(),
+        config=SimpleNamespace(
+            windows_explicit=False,
+            windows=(SimpleNamespace(name='main'),),
+        ),
+        prepared_agents=prepared_agents,
+        interactive_tmux_layout=True,
+        tmux_backend=SimpleNamespace(),
+        root_pane_id='%0',
+        namespace_agent_panes=None,
+        actions_taken=[],
+    )
+
+    assert calls['ui_active'] is True
+    assert calls['window_name'] == 'main'
+    assert layout.agent_panes == {'main': '%1'}
+
+
 def test_project_restart_panes_handler_schedules_in_place_pane_restart(monkeypatch) -> None:
     restarts: list[tuple[object, tuple[str, ...]]] = []
 

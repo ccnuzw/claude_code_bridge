@@ -40,6 +40,9 @@ def _prepare_env(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv('TERM', 'xterm-256color')
     monkeypatch.setenv('TERM_PROGRAM', 'WezTerm')
     monkeypatch.setenv('CCB_RICH_DOWNLOAD_BINARIES', '0')
+    monkeypatch.delenv('CCB_WORKBENCH_THEME', raising=False)
+    monkeypatch.delenv('CCB_TMUX_THEME_PROFILE', raising=False)
+    monkeypatch.delenv('CCB_SIDEBAR_THEME_PROFILE', raising=False)
     monkeypatch.delenv('TMUX', raising=False)
     return fake_bin
 

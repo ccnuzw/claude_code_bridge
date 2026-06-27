@@ -492,6 +492,103 @@ Contract:
 - `workspace_mode = "copy"` is the only mode that may create an explicit
   directory copy of the project tree.
 
+### 4.6 Loop Capacity Role Profiles
+
+Rich or hybrid `ccb.config` may define loop capacity policy under `[loop]`.
+This is source policy for dynamic execution nodes, not a configured agent set
+by itself.
+
+Example:
+
+```toml
+[loop.capacity]
+enabled = true
+max_nodes = 4
+default_lifetime = "current_round"
+name_template = "loop-{loop_id}-{profile}-{index}"
+reuse = "prefer_idle"
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+model = "gpt-5"
+thinking = "high"
+workspace_mode = "git-worktree"
+workspace_group = "worker_pool"
+max_instances = 2
+reuse = "prefer_idle"
+
+[loop.role_profiles.code_reviewer]
+role = "agentroles.code_reviewer"
+provider = "codex"
+model = "gpt-5"
+thinking = "medium"
+workspace_mode = "git-worktree"
+max_instances = 2
+```
+
+Contract:
+
+- `[loop.capacity]` controls script-driven loop capacity policy. It accepts:
+  - `enabled`
+  - `max_nodes`
+  - `default_lifetime`
+  - `name_template`
+  - `reuse`
+- `[loop.role_profiles.<profile>]` declares named capacity profiles. It
+  accepts:
+  - `role`
+  - `provider`
+  - `model`
+  - `thinking`
+  - `workspace_mode`
+  - `workspace_group`
+  - `startup_args`
+  - `provider_profile`
+  - `max_instances`
+  - `reuse`
+- Profile names use the same normalized agent-name grammar as generated agent
+  names.
+- `role` must be an installed Role Pack id in publisher-qualified form such as
+  `agentroles.coder`.
+- `provider` follows normal CCB provider naming. If `model` is set, the
+  provider must support the existing model shortcut path.
+- `model` is preserved as a user-facing field and must not be combined with a
+  provider model flag in `startup_args`.
+- `thinking` is a provider-neutral source-policy field and currently accepts
+  `low`, `medium`, or `high`. Provider-specific compilation belongs to the
+  future loop capacity runtime adapter; unsupported mappings must fail visibly
+  rather than being ignored.
+- `workspace_group` requires `workspace_mode = "git-worktree"`.
+- `provider_profile` follows the same source-configuration boundary as
+  `[agents.<name>.provider_profile]`; provider sessions and auth remain
+  agent/project scoped.
+- `max_nodes` and each profile's `max_instances` must be positive integers, and
+  `max_nodes` must not exceed the total profile capacity.
+- `name_template` must include `{loop_id}`, `{profile}`, and `{index}`, and the
+  rendered sample must be a valid agent name.
+- `default_lifetime` accepts `current_round`, `current_loop`, or
+  `manual_release`.
+- `reuse` accepts `prefer_idle`, `always_new`, or `pinned`.
+- Loop profiles do not mount agents by themselves. They become runtime agents
+  only when a CCB-owned command such as `ccb loop capacity ensure` resolves
+  them into generated or reused project-local agent instances.
+- Config rendering must preserve `[loop.capacity]` and
+  `[loop.role_profiles.*]` as source policy rather than expanding them into
+  `[agents]` tables.
+- Active loop capacity state is stored under the runtime-state root at
+  `runtime/loops/<loop-id>/capacity.json` and merged into project config
+  loading as a CCB-owned runtime overlay while the loop is `ensured`.
+- `config validate`, startup, and guarded reload see active loop-generated
+  agents from that overlay, but the user-authored `.ccb/ccb.config` file must
+  not be rewritten by `ensure`, `status`, or `release`.
+- `ccb loop capacity release --idle-only` marks loop-owned generated agents
+  released; released states are ignored by config loading so generated agents
+  do not become durable project intent.
+- Reload or apply failure must roll back or leave recoverable diagnostics; it
+  must not leave duplicate generated agents or silently convert loop capacity
+  into user-authored config.
+
 ## 5. Default Layout Contract
 
 Bootstrap must generate a balanced two-column layout over all visible panes.

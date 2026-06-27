@@ -94,26 +94,76 @@ Date: 2026-05-29
   restart trigger. Saving `.ccb/ccb.config` no longer interrupts the mounted
   daemon; explicit `ccb reload` or sidebar reload owns materializing the new
   panes/windows.
+- Added the dynamic agent overlay command surface on top of the explicit reload
+  transaction: `ccb agent add ... --window/--window-class/--loop-id/--node-id`
+  writes runtime lifecycle records without rewriting `.ccb/ccb.config`, then
+  uses guarded reload to append a pane or create a managed window when the
+  daemon is mounted.
+- Added safe dynamic agent release on top of the idle `remove_agent` reload
+  path: `ccb agent remove ... --policy unload --idle-only` and
+  `ccb agent release ... --policy auto|hide|park|unload` retain busy agents,
+  unload idle dynamic runtime authority, close only the target pane, clear the
+  active `pane_id` while preserving `last_pane_id`, and remove empty dynamic
+  windows.
+- Verified controlled mounted tmux dynamic lifecycle smokes from
+  `/home/bfly/yunwei/test_ccb2`: existing-window add/remove with busy retain,
+  new-window add/remove with empty-window cleanup, and a same-window
+  `1->6->1` dynamic agent cycle that preserved `%1:main` and returned
+  `known_agents` to `['main']`.
+- Added long-lived dynamic role parking semantics: `ccb agent hide`,
+  `ccb agent park`, and `ccb agent resume` now update dynamic lifecycle state;
+  `park` projects `dispatch_disabled=true`, publishes a config-only
+  `view_only_change`, preserves the existing pane/runtime context, rejects
+  direct dispatch, and `resume` re-enables dispatch without tmux mutation.
+- Verified the dispatch-disabled slice with `150 passed` across
+  `test/test_agent_lifecycle_cli.py`, `test/test_v2_config_loader.py`, and
+  `test/test_v2_ccbd_dispatcher.py`; reload-related focused tests passed with
+  `70 passed`. External source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/hotload-smoke-1782474327` proved existing-window
+  add, ask, park rejection, resume ask, new-window add, ask, idle release,
+  empty-window cleanup, and return to `known_agents: ['main']`.
+- Closed the startup-to-hotload pane identity bridge for compact configs and
+  structured/fake providers: legacy startup now stamps the logical default
+  window on tmux pane identity, and non-stale namespace-assigned panes are
+  written back to runtime authority even when the provider has no session
+  binding. Source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/hotload-real-1782476922` proved startup
+  `@ccb_window=main`, existing-window `add_agent`, new-window `add_window`,
+  and ask submission without manual pane seeding. Source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/hotload-unload-1782477435` proved explicit
+  `remove --policy unload --force` removes the dynamic pane, stops runtime
+  authority, removes empty dynamic windows, and returns the project to only
+  `main`.
+- Verified the no-manual-seeding same-window cycle after the compact startup
+  bridge fix in `/home/bfly/yunwei/test_ccb2/hotload-cycle-auto-1782482877`:
+  dynamic panes grew from `%1:main` to
+  `%1:main,%2:dyn1,%3:dyn2,%4:dyn3,%5:dyn4,%6:dyn5`, each dynamic agent
+  accepted ask submission, then `remove --policy unload --force` shrank the
+  window back to only `%1:main` with runtime authority showing only `main`.
 
 ## In Progress
 
-- Phase 6/7 explicit mutating reload remains in manual hardening: accepted
-  user-path classes and sidebar-initiated reload are implemented for view-only,
-  append-only add-agent/add-window, and idle remove-agent. Daemon-pushed
-  sidebar refresh is not signaled; busy draining, replacement, moves, arbitrary
-  layout reshapes, and background config watching remain deferred. The current
-  hardening target is real `test_ccb2` validation that save-edit-reload does
-  not restart other agents.
+- Phase 6/7 explicit mutating reload and dynamic lifecycle are in hardening:
+  accepted user-path classes are implemented for view-only, append-only
+  add-agent/add-window, idle remove-agent, runtime dynamic add, runtime dynamic
+  release, busy retain, empty dynamic-window cleanup, config-only park/resume
+  dispatch toggling, and compact-startup pane identity preservation. Full live
+  `codex`/`claude` provider smoke, daemon-pushed sidebar refresh, replacement,
+  moves, arbitrary layout reshapes, and background config watching remain
+  deferred.
 
 ## Next
 
-1. Run the automatic and manual additive reload matrix in
+1. Run full live-provider smoke for pane-backed `codex`/`claude` dynamic add
+   and release after confirming account/auth boundaries for the test project.
+2. Run or update the automatic and manual additive reload matrix in
    [topics/test-matrix.md](topics/test-matrix.md), including `test_ccb2`
-   screenshots for unchanged old panes and newly-mounted agents.
-2. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
+   evidence for unchanged old panes, newly-mounted agents, released dynamic
+   panes, and empty-window cleanup.
+3. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
    validation; avoid polling or steady-state scans.
-3. Add bounded draining follow-up for busy unload instead of stable rejection.
-4. Expose replacement only after unload semantics are safe; busy replacement
+4. Add bounded draining follow-up for busy unload instead of stable rejection.
+5. Expose replacement only after unload semantics are safe; busy replacement
    remains pending with explicit bounds.
 
 ## Deferred

@@ -1,0 +1,114 @@
+# Dynamic Pane Shrink And Release Goal
+
+## Goal
+
+Define and later land safe dynamic agent exit behavior: when a dynamic agent is
+released, CCB closes only that released agent's pane, compacts the remaining
+running panes, removes empty overflow windows, and preserves all still-running
+agent sessions.
+
+## Scope
+
+- Define shrink behavior from 6 panes down to 1 pane in one page.
+- Define overflow window collapse, especially 7->6 and 8->7->6.
+- Define busy release behavior: busy agents are retained and no pane is closed.
+- Define placeholder smoke tests first, then live dynamic-agent tests.
+- Keep remaining pane IDs and provider processes alive during compaction.
+
+## Non-Goals
+
+- Do not restart remaining agents to obtain a prettier layout.
+- Do not use shrink as a broad `.ccb/ccb.config` reload mechanism.
+- Do not allow arbitrary user drag/drop in this slice.
+- Do not release static config-owned agents before dynamic capacity ownership is
+  clearly separated from configured startup agents.
+
+## Shrink Model
+
+CCB maintains a logical ordered list per window class. On release:
+
+```text
+current_order = [a1, a2, a3, a4, a5, a6]
+release a4
+remaining_order = [a1, a2, a3, a5, a6]
+target_layout = growth-1-6(remaining_order)
+```
+
+The layout is recalculated from the remaining ordered list, not from numeric
+suffixes. That means a middle removal compacts the visual layout without
+renaming agents or changing pane ownership.
+
+Tail shrink sequence:
+
+| After release | Remaining panes | Target layout |
+| --- | --- | --- |
+| 6->5 | `p1 p2 p3 p4 p5` | `p1, p3, p5; p2, p4` |
+| 5->4 | `p1 p2 p3 p4` | `p1, p3; p2, p4` |
+| 4->3 | `p1 p2 p3` | `p1, p3; p2` |
+| 3->2 | `p1 p2` | `p1; p2` |
+| 2->1 | `p1` | `p1` |
+
+## Release Safety Contract
+
+Release must be guarded:
+
+1. Resolve the target by CCB identity metadata, not by visible pane position.
+2. Check ask/job/queue state.
+3. If target is busy, mark `retained_busy` and do not close the pane.
+4. If target is idle, request or record summary evidence when required.
+5. Stop/unload only the target provider session.
+6. Close only the target pane.
+7. Compact remaining panes without killing or respawning them.
+8. Update layout/runtime state after tmux operation succeeds.
+9. Remove an empty overflow window only after all panes in it are released.
+
+The remaining panes may be resized or moved within the same window, but their
+pane IDs, provider sessions, and CCB slot metadata must remain valid.
+
+## Testing Plan
+
+### Planner Tests
+
+- Build target layouts for tail shrink: 6->5->4->3->2->1.
+- Build target layouts for middle/head removal from six panes.
+- Verify overflow collapse:
+  - 8->7 keeps `frontdesk-dialog-2` with one pane.
+  - 7->6 removes `frontdesk-dialog-2`.
+
+### Placeholder Tmux Smoke
+
+- Create six placeholder panes, remove one pane at a time from tail to one.
+- Observe that only the target pane disappears.
+- Observe remaining pane titles and pane counts after each compaction.
+- Create eight panes, remove panes until page two becomes empty, then remove
+  the empty overflow window.
+
+### Live Dynamic-Agent Smoke
+
+- Ensure dynamic `worker + checker` agents.
+- Release an idle dynamic checker; remaining worker stays mounted and askable.
+- Attempt release of a busy worker; it is retained and layout does not change.
+- After busy worker completes, release succeeds and compacts.
+
+## First Landing Slice
+
+1. Add shrink planner logic over ordered names.
+2. Extend `ccb layout plan` to accept explicit names or removal candidates.
+3. Add isolated placeholder shrink smoke.
+4. Add read-only `layout status` against live tmux metadata.
+5. Only after these pass, wire dynamic capacity release to live pane cleanup.
+
+## Landed Evidence
+
+- Placeholder/fake-agent dynamic smoke now exercises continuous grow and shrink
+  in one isolated tmux session:
+  `ccb layout dynamic-smoke --panes 6 --window-prefix frontdesk-dialog --json`.
+- The single-page run observed `1,2,3,4,5,6,5,4,3,2,1`, with all retained
+  panes alive at each step and cleanup successful.
+- The paging run
+  `ccb layout dynamic-smoke --panes 8 --window-prefix frontdesk-dialog --json`
+  observed `1,2,3,4,5,6,7,8,7,6,5,4,3,2,1`; it created
+  `frontdesk-dialog-2` at page overflow and removed that page when shrinking
+  back to six.
+- Remaining gap: these are fake-agent panes. Live provider release still needs
+  busy/idle gates before wiring to dynamic capacity release.

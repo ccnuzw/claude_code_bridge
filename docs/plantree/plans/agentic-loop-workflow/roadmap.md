@@ -1,0 +1,423 @@
+# Agentic Loop Workflow Roadmap
+
+Date: 2026-06-24
+
+## Done
+
+- Accepted the product direction that `frontdesk` should be reduced to user
+  interaction, macro-task intake, confirmations, final reporting, and
+  unrecoverable escalation.
+- Accepted the Trellis-inspired principle that workflow state should live in
+  external files and be advanced through scripts, not through one agent's
+  conversation memory.
+- Accepted the Team Builder-inspired principle that teams, roles, handoffs,
+  termination conditions, and escalation rules should be declarative workflow
+  objects.
+- Accepted the simple-kernel/flexible-agent principle: workflow programs
+  should stay small, stable, deterministic, and recoverable, while agents
+  handle semantic planning, review, diagnosis, and complex documents. Scripts
+  commit or reject agent artifacts through hard constraints rather than trying
+  to encode all intelligence.
+- Recorded the initial role split: `frontdesk`, planner group, plan steward, loop
+  runner, orchestrator, execution nodes, inner monitor, recovery, and
+  plan-tree synchronization.
+- Accepted the non-goal that CCB should not copy Trellis' implicit subagent
+  flow. CCB should use explicit, visible, inspectable agents and CCB-owned
+  communication state.
+- Accepted the context-purity principle: multi-agent workflow value comes from
+  high-quality responsibility and granularity boundaries, not from agent count.
+  Short-term, fast-changing execution detail should be assigned to short-lived
+  workers or runtime artifacts and cleared after use; `frontdesk` and durable
+  plan-tree documents should carry only macro intent, decisions, blockers, and
+  evidence.
+- Accepted the naming correction from `main` to `frontdesk`: the user-facing
+  group is an intake/reporting boundary, not a primary authority or strongest
+  agent. The name must discourage implementation, state mutation, and hidden
+  orchestration behavior.
+- Accepted the stage-batched clarification model: planner produces candidate
+  questions for the current phase, a broker filters, merges, defaults, defers,
+  or marks them obsolete, and `frontdesk` only presents curated user-facing
+  question artifacts. The broker should not be a long-lived heavy-context role;
+  persistent state is the question queue and runtime artifacts, while semantic
+  broker work can be launched with fresh context per phase batch.
+- Accepted the v1 execution-node model: default nodes are flat
+  `worker + checker` units. Checker is an independent quality gate that designs
+  node-level verification and rejects hidden fallback, degradation, scope
+  shrinkage, or false success. Complex node-internal teams are deferred.
+- Accepted partial branch semantics: non-converged nodes freeze only their
+  dependent branch when safe, unrelated sibling work drains, and planner
+  receives a partial package instead of allowing loop-local degradation.
+- Accepted round-level verification: planner defines the verification contract,
+  orchestrator summarizes actual node/dependency state, and round checker
+  designs and executes the concrete whole-round verification plan.
+- Accepted the plan/runtime state split: durable task packets live under
+  `docs/plantree/plans/<plan-slug>/tasks/<task-id>/`, runtime loop lists live
+  under `.ccb/runtime/loops/`, and scripts own all authoritative status,
+  index, phase, owner, node, branch, ask, and round writes.
+- Accepted the orchestrator boundary: it is an ask-activated semantic
+  dispatcher that analyzes task complexity, chooses 1-4 nodes, slices work,
+  constrains `ask` dispatch, requests runtime capacity, and aggregates results.
+  It must not directly reload, unload, kill, or write runtime authority.
+- Reviewed the `mother` role's orchestrator RolePack blueprint and accepted it
+  as the V1 content plan for `agentroles.ccb_orchestrator`: single role,
+  default local name `orchestrator`, six generic skills, seven templates,
+  fixed-agent V1 operation, and explicit non-authority over reload, kill,
+  provider sessions, runtime files, checker override, and partial-to-done
+  conversion.
+- Accepted the dynamic capacity direction: users declare allowed
+  `loop.role_profiles` in config, including role, provider, model, thinking,
+  workspace, max instances, and reuse policy; `orchestrator` uses a fixed
+  `orchestrator-capacity` skill to call `ccb loop capacity
+  ensure/status/release` by profile and count.
+- Accepted the dynamic runtime layout direction: CCB should maintain logical
+  tmux windows and panes for dynamic agents through a runtime layout manager.
+  User-facing `frontend` and dialog experts live in `frontdesk-dialog`;
+  planner/broker/orchestrator/round checker live in `plan-orchestrate`;
+  each execution node receives its own `node-<loop-id>-<node-id>` window; and
+  diagnostics live in `runtime`.
+- Landed the first deterministic pane-growth slice in the current worktree:
+  `ccb layout plan` reports 1->6 pane layouts and overflow windows, while
+  `ccb layout smoke` creates placeholder panes in an isolated tmux session.
+  Verified from `/home/bfly/yunwei/test_ccb2` with
+  `/home/bfly/yunwei/ccb_source/ccb_test` for pane counts 1, 2, 3, 4, 5, 6,
+  7, and 8; 7 panes produced `frontdesk-dialog` with six panes plus
+  `frontdesk-dialog-2` with one pane, 8 panes produced a second window with two
+  panes, and smoke cleanup succeeded each run.
+- Accepted the dynamic release/shrink direction: dynamic agent exit should close
+  only the released idle target pane, compact remaining panes through tmux
+  move/resize operations, remove empty overflow windows, and retain busy agents
+  without layout mutation. See
+  [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md).
+- Accepted the dynamic lifecycle direction: long-lived interactive roles such
+  as frontend, planner, and orchestrator default to `hide` or `park`, while
+  short-lived worker/checker roles can unload only after evidence import and
+  idle checks. See
+  [topics/dynamic-agent-lifecycle-and-skills.md](topics/dynamic-agent-lifecycle-and-skills.md)
+  and
+  [decisions/012-long-lived-roles-park-before-unload.md](decisions/012-long-lived-roles-park-before-unload.md).
+- Landed the first continuous dynamic layout smoke in the current worktree:
+  `ccb layout dynamic-smoke` grows fake-agent panes in one isolated tmux session
+  and then shrinks them. Verified from `/home/bfly/yunwei/test_ccb2` with
+  source `ccb_test` for `1->6->1` and `1->8->1`; all retained panes stayed
+  alive, `frontdesk-dialog-2` was added at overflow and removed when shrinking
+  back to six, and cleanup succeeded.
+- Accepted the planner authority boundary: planner group owns semantic
+  requirements, acceptance criteria, verification contract, risk notes, and
+  readiness recommendations; `ccb plan` scripts own authoritative task status,
+  indexes, imported artifact records, and current-loop bindings.
+- Accepted the first plan-update landing direction: implement a narrow
+  `ccb plan task-create/task-artifact/task-status/task-show/task-list/breadcrumb`
+  slice before allowing autonomous planner-to-loop handoff.
+- Landed the first `ccb plan` task-packet command surface in the current
+  worktree. It creates durable task packets, imports planner artifacts with
+  digest metadata, enforces review before `ready`, renders breadcrumb handoff
+  text, and was externally smoke-tested through
+  `/home/bfly/yunwei/ccb_source/ccb_test` in
+  `/home/bfly/yunwei/test_ccb2/plan-task-smoke-v1`.
+- Accepted the round-checker separation model: `round_checker` remains an
+  independent post-round verifier, while planner rehydrates next-loop planning
+  from task packet and round evidence instead of retained conversation memory.
+- Extended the current `ccb loop run-once` slice to include a fixed
+  `round_checker` ask after orchestrator aggregation.
+- Ran an external fake-provider end-to-end smoke in
+  `/home/bfly/yunwei/test_ccb2/agentic-loop-full-smoke-v1`: planner task packet
+  reached `ready`, loop `loopfull2` completed worker/reviewer/orchestrator/
+  round_checker asks, dynamic worker/reviewer nodes were released, round
+  checker evidence was imported as `completion`, and the task reached `done`.
+- Accepted the full workflow-loop model: planner is a workflow-loop phase but
+  not part of the execution round; loop runner reads document/runtime state,
+  activates planner or execution roles, and stops on terminal, paused, or
+  limit states. See
+  [topics/complete-workflow-design.md](topics/complete-workflow-design.md) and
+  [decisions/009-loop-runner-activates-planner-and-stops.md](decisions/009-loop-runner-activates-planner-and-stops.md).
+- Completed a reviewer/coworker readiness review for the workflow-loop design.
+  Accepted the required pre-implementation clarifications: round writeback must
+  be idempotent and consistency-checked, `rework_node` must escalate to
+  `partial` or `replan_required` when bounded repair no longer applies, and
+  the next implementation should be a one-shot `loop runner --once` bridge
+  instead of a daemon.
+- Landed and verified
+  [goals/loop-runner-bridge-goal.md](goals/loop-runner-bridge-goal.md) in the
+  current worktree. The bridge now supports `task-bind-loop`,
+  `task-import-round`, `loop run-once --task-id`, and
+  `loop runner --once`; focused tests passed with `21 passed`, neighboring
+  CLI/router/render tests passed with `102 passed`, touched CLI modules passed
+  `py_compile`, and an external source-wrapper fake-provider smoke in
+  `/home/bfly/yunwei/test_ccb2/loop-runner-bridge-smoke-1782493619` proved
+  ready-task binding, one round execution, round result import, current-loop
+  cleanup, and generated worker/reviewer release. The smoke intentionally
+  imported `round_blocker` when fake `round_checker` output lacked an explicit
+  machine result, preserving the rule that scripts must not infer semantic
+  `pass`.
+- Completed the first `mother` RolePack design pass for the workflow role
+  catalog. Accepted P0 complete RolePack work for `ccb_planner`,
+  `ccb_plan_reviewer`, `ccb_clarification_broker`, `ccb_orchestrator`, and
+  `ccb_round_checker`; P1 simplified roles for `frontdesk`, `worker`, and
+  `checker`; and P2 boundary-only roles for risk, monitor, recovery, plan
+  steward, domain researcher, and spec checker. See
+  [history/mother-rolepack-design-2026-06-27.md](history/mother-rolepack-design-2026-06-27.md).
+- Landed the first workflow RolePack draft set in the current worktree:
+  shared authority rule and artifact templates, P0 RolePacks for
+  `agentroles.ccb_planner`, `agentroles.ccb_plan_reviewer`,
+  `agentroles.ccb_clarification_broker`, tightened
+  `agentroles.ccb_orchestrator`, `agentroles.ccb_round_checker`, and P1
+  simplified RolePacks for `agentroles.ccb_frontdesk`,
+  `agentroles.ccb_worker`, and `agentroles.ccb_checker`. Targeted verification
+  passed with `PYTHONPATH=lib pytest -q test/test_orchestrator_rolepack.py`
+  producing `7 passed`.
+- Landed the first workflow runner state-router slice in the current
+  worktree. `ccb plan` artifact imports now record actor/job provenance;
+  `ccb loop runner --once` routes `ready` to the existing execution bridge,
+  routes `draft`/`partial`/`replan_required` to one planner activation packet
+  and ask, and stops without provider activation for
+  `needs_clarification`/`blocked`/terminal states. Focused tests passed with
+  `34 passed`; source-wrapper smokes in `/home/bfly/yunwei/test_ccb2` covered
+  draft planner activation, paused clarification stop, and ready execution
+  bridge behavior with fake providers. See
+  [history/workflow-runner-state-router-2026-06-27.md](history/workflow-runner-state-router-2026-06-27.md).
+
+## In Progress
+
+- Shape the first architecture contract for a state-machine-driven agentic
+  loop that separates user-facing interaction, planning, orchestration,
+  execution, monitoring, recovery, and plan-tree maintenance.
+- Drive the first implementation goal for
+  [dynamic orchestrator capacity](goals/orchestrator-dynamic-capacity-goal.md):
+  `loop.role_profiles`, `orchestrator-capacity`, dynamic
+  `worker + code_reviewer` load/release, task dispatch, review, aggregation,
+  and real `/home/bfly/yunwei/test_ccb2` validation.
+- First config slice is implemented in the current worktree: project config can
+  parse, validate, record, and render `loop.capacity` and
+  `loop.role_profiles`; focused config-loader tests pass.
+- First command/state slice is implemented in the current worktree:
+  `ccb loop capacity ensure/status/release --json` writes and reads
+  deterministic loop capacity state under `.ccb/runtime/loops` through the
+  existing runtime-state path layout.
+- Runtime overlay slice is implemented in the current worktree: active
+  `capacity.json` records are merged into config loading, user
+  `.ccb/ccb.config` is not rewritten, and ensure/release tries guarded reload
+  when a daemon is mounted or defers materialization until next start when
+  unmounted.
+- Orchestrator RolePack slice is implemented in draft form:
+  `drafts/agentroles.ccb_orchestrator` includes `orchestrator-capacity`, CCB
+  adapter memory, and worker/checker templates; focused tests prove manifest
+  translation and skill projection.
+- Mounted fake-provider runtime smoke passed in
+  `/home/bfly/yunwei/test_ccb2/orchestrator-capacity-runtime-smoke`: dynamic
+  `worker + code_reviewer` ensure applied through guarded reload, generated
+  targets accepted ask/watch jobs, release removed idle nodes, and busy release
+  retained a running worker until terminal completion.
+- Deterministic `ccb loop run-once` slice is implemented and tested: it ensures
+  one worker/reviewer pair, dispatches worker/reviewer/orchestrator ask/watch
+  jobs, dispatches a fixed `round_checker` ask, releases idle generated nodes,
+  and writes `round.json`, `asks.jsonl`, `events.jsonl`, `breadcrumb.md`, and
+  reply artifacts. Execution/release failures after live capacity are recorded
+  in `round.json` and keep the command non-ok while still attempting idle
+  release.
+- External fake-provider run-once smoke passed in
+  `/home/bfly/yunwei/test_ccb2/orchestrator-capacity-runtime-smoke` with
+  isolated `HOME`, `CCB_SOURCE_HOME`, and `AGENT_ROLES_STORE`; post-run `ps`
+  showed only `orchestrator`.
+- A guarded real-provider semantic-smoke harness now exists at
+  `scripts/orchestrator_capacity_semantic_smoke.py`. Codex prepare/preflight
+  passed under
+  `/home/bfly/yunwei/test_ccb2/orchestrator-capacity-real-provider-smoke`, and
+  the generated project passed source `ccb_test config validate`. The harness
+  refuses to start real providers unless `CCB_ORCH_SMOKE_RUN_REAL=1` is set.
+- Planner role design is documented in
+  [topics/planner-role-design.md](topics/planner-role-design.md): V1 starts
+  with `planner + plan_reviewer`, batches clarification through broker, and
+  produces draft task artifacts plus readiness recommendation.
+- Plan-update script landing is implemented and documented in
+  [topics/plan-update-script-landing.md](topics/plan-update-script-landing.md)
+  and tracked by
+  [goals/planner-plan-script-goal.md](goals/planner-plan-script-goal.md).
+- Complete workflow design is documented in
+  [topics/complete-workflow-design.md](topics/complete-workflow-design.md):
+  it defines nested workflow/execution loops, planner activation triggers,
+  round result routing, stop conditions, authority ownership, and V1 command
+  gaps.
+- The active follow-through implementation goal is now fixed in
+  [goals/clarification-planner-followthrough-goal.md](goals/clarification-planner-followthrough-goal.md):
+  add the V1 `ccb question` artifact surface and the planner/broker/frontdesk/
+  reviewer path that can move a routed `draft`, `partial`, or
+  `replan_required` task toward script-owned `ready`.
+- Dynamic agent lifecycle and skill design is documented in
+  [topics/dynamic-agent-lifecycle-and-skills.md](topics/dynamic-agent-lifecycle-and-skills.md):
+  it defines lifecycle states, runtime records, profile-based and inline
+  role-based `ccb agent add ...` syntax, policy-based `remove`, loop capacity
+  policy extensions, and a generic `dynamic-agent-lifecycle` skill boundary.
+- Landed the first generic dynamic agent lifecycle CLI slice in the current
+  worktree:
+  `ccb agent status/show/add/remove --json`, runtime lifecycle records under
+  `.ccb/runtime/agents`, dynamic-agent config overlay, profile-based add,
+  inline `name:provider --role ...` add, policy-based remove, and kill safety
+  validation. Focused tests passed, and external source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/agent-lifecycle-real.o4yC4g` proved:
+  add while unmounted, config overlay includes `helper`, startup mounts
+  `main + helper`, `ask helper` completes through fake provider, `kill -f`
+  unmounts, `remove --policy unload --idle-only` removes the overlay, and
+  final `config validate` returns only `main`.
+- Mounted reload analysis is now pinned: existing `ccb reload` already supports
+  additive agent append from `ccb.config`, and the dynamic lifecycle overlay now
+  has a matching reload-apply test proving it materializes a tmux pane before
+  mounting runtime. External fake/fake-codex providers do not expose a preserved
+  tmux pane anchor in `ps`, so they cannot prove online pane split; the CLI now
+  reports the precise `namespace_patch_failed` anchor error instead of a generic
+  reload failure.
+- Landed the first true hot-load placement slice in the current worktree:
+  `ccb agent add ... --window NAME` can append a new dynamic agent to an
+  existing managed window or create a new managed window, `--window-class`
+  chooses or creates a class window, and `--loop-id/--node-id` places execution
+  agents in `node-<loop-id>-<node-id>`. Runtime lifecycle records now include
+  placement intent and applied pane/window evidence. Focused tests prove
+  parser, dry-run reload plans, existing-window `add_agent`, and new-window
+  `add_window`; controlled mounted tmux smokes in
+  `/home/bfly/yunwei/test_ccb2/agent-hot-pane-ident.otr4SM` and
+  `/home/bfly/yunwei/test_ccb2/agent-hot-window-ident.Xj9dR6` proved the new
+  agent mounts and accepts `ask` without changing preserved pane identity.
+- Extended the true hot-load slice to cover safe dynamic unload:
+  `remove --policy unload --idle-only` now records busy agents as
+  `retained_busy`, applies the guarded `remove_agent` reload path after the
+  target is idle, clears the active pane id while retaining `last_pane_id`,
+  unloads runtime authority, removes the overlay from projected config, and
+  removes empty dynamic windows. Focused tests passed, and controlled mounted
+  tmux smokes in `/home/bfly/yunwei/test_ccb2/agent-hot-remove-pty.2FIiGo` and
+  `/home/bfly/yunwei/test_ccb2/agent-hot-window-remove-pty.RqWVcE` proved
+  existing-window and new-window release without breaking the preserved `main`
+  pane.
+- Landed the first safe `agent release` command surface and same-window dynamic
+  cycle smoke. `ccb agent release <agent> --policy auto|hide|park|unload`
+  avoids the destructive `kill` path; auto release unloads short-lived
+  execution roles and parks unknown/long-lived roles. The mounted tmux cycle in
+  `/home/bfly/yunwei/test_ccb2/agent-hot-cycle-pty.Tu9DCH` proved dynamic
+  panes can grow from `1->6` and release back to `1` while preserving `%1:main`
+  and returning `known_agents` to `['main']`.
+- Landed the long-lived role park/resume slice. `ccb agent park <agent>` keeps
+  the pane/runtime context but projects `dispatch_disabled=true`, publishes a
+  config-only `view_only_change`, and causes direct `ask` dispatch to reject;
+  `ccb agent resume <agent>` clears that dispatch gate without tmux mutation.
+  Focused tests passed with `150 passed`, reload-focused tests passed with
+  `70 passed`, and the mounted source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/hotload-smoke-1782474327` proved
+  add/ask/park-reject/resume-ask/new-window-add/release cleanup end to end.
+- Landed the first clarification follow-through slice in the current worktree.
+  `ccb question` now imports candidate questions, broker/user question batches,
+  raw answers, normalized answers, and status refs with schema/path/provenance
+  checks. `user-batch-import` pauses draft tasks at `needs_clarification`,
+  `normalized-import` returns answered tasks to `draft`, runner paused
+  responses include question refs, and planner activation packets include
+  compact question/answer refs. The runner also activates `plan_reviewer` when
+  planner artifacts are present but review is missing, and the existing
+  `ccb plan` ready guard rejects `ready` until review is imported. Focused
+  tests passed with
+  `PYTHONPATH=lib pytest -q test/test_question_cli.py` producing `7 passed`;
+  neighboring plan/loop/rolepack tests passed with `34 passed`, and the
+  combined targeted regression set passed with `41 passed`; external
+  source-wrapper smoke passed in
+  `/home/bfly/yunwei/test_ccb2/question-followthrough-smoke-1782531830`,
+  with review guard smoke in
+  `/home/bfly/yunwei/test_ccb2/plan-review-guard-smoke-1782532093`.
+- Completed the Clarification And Planner Follow-Through V1 goal in the
+  current worktree. The full source-wrapper fake-provider smoke in
+  `/home/bfly/yunwei/test_ccb2/question-followthrough-e2e-smoke-1782532792`
+  covered draft planner activation, question import, clarification pause, raw
+  and normalized answers, planner reactivation with answer refs, planner
+  artifact imports, plan reviewer activation, review-backed `ready`, and ready
+  execution bridge. The final task status was `blocked` with
+  `round_result_source=missing_round_checker_result`, preserving the invariant
+  that scripts do not infer `pass` from fake provider text.
+
+## Next
+
+1. Prepare the external Agent Roles spec handoff for the workflow RolePack
+   drafts when working in the Agent Roles spec repository.
+2. Extend generic dynamic agent lifecycle beyond the landed V1:
+   full live-provider smoke for pane-backed `codex`/`claude` and richer status
+   diagnostics that distinguish configured/static, dynamic, loop-generated,
+   parked, dispatch-disabled, and failed-apply records.
+3. Define the first mutation slice for short-lived execution roles:
+   wire `ccb loop capacity release --policy auto` to the verified dynamic
+   lifecycle busy-retain and release behavior.
+4. Package the `dynamic-agent-lifecycle` skill and update
+   `orchestrator-capacity` to share the same lifecycle semantics.
+5. Define the V1 runtime layout manager command/state surface from
+   [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
+   expose `layout status`, enforce six-pane dialog/planning windows, allocate
+   one window per execution node, and release/retain panes through runtime
+   state.
+6. Implement the next true hot-load slices:
+    full live-provider smoke for pane-backed providers, better pane-identity
+    diagnostics at startup, and only later live reflow/1->6 pane rearrangement.
+7. Wire the verified deterministic layout planner and dynamic smoke behavior
+   into live dynamic capacity only after `layout status` can read current pane
+   metadata and release can distinguish idle from busy agents.
+8. Land live dynamic pane shrink/release from
+   [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
+   busy-retain behavior, idle target release, same-window compaction, and
+   overflow-window collapse without respawning surviving provider panes.
+9. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
+   surface for creating tasks, transitioning phases, recording artifacts,
+   blocking, finishing, and syncing to plan-tree.
+10. Continue the V1 `ccb loop capacity` path selected in
+   [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
+   run the guarded real-provider semantic smoke for
+   `agentroles.ccb_orchestrator` when real provider usage is intentionally
+   allowed; daemon-side transient capacity ownership remains deferred.
+11. Define the v1 team spec format for planner group, orchestrator, execution
+   node, recovery node, and monitor behavior.
+12. Define context-purity budgets for each role, including what may enter
+   `frontdesk`, planner group, orchestrator, execution nodes, monitor, runtime
+   artifacts, and long-term plan-tree.
+13. Define the v1 clarification command surface and artifact schema for
+   candidate questions, broker review, user display, raw answers, normalized
+   answers, deferred questions, and planner wakeup.
+14. Define the v1 execution-node and round-verification artifact schemas,
+   including node check plans, non-convergence reports, branch freeze records,
+   partial loop reports, verification contracts, and round verification plans.
+15. Map the design to existing CCB communication primitives: `ask`,
+   `--callback`, `--silence`, message bureau records, dispatcher jobs,
+   completion state, and queue/trace diagnostics.
+16. Identify the first implementation slice that can run with one planner, one
+   orchestrator, one execution node, and deterministic monitoring before
+   enabling dynamic multi-node fanout.
+17. Promote the `agentroles.ccb_orchestrator` draft from
+    [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-blueprint.md)
+    into the external Agent Roles catalog after negative prompts, content
+    boundary checks, and real-provider skill-use smoke pass.
+
+## V1 Readiness Blockers
+
+1. The authoritative state writer must be scripted before multiple agents are
+   allowed to chain transitions.
+2. Ready task to execution round binding must have per-task lock/lease
+   protection and idempotent round-result import.
+3. The full loop runner must have bounded termination and escalation
+   conditions before multi-round dynamic execution nodes are enabled.
+4. The inner monitor must be split into deterministic health checks and
+   optional semantic assessment before it can be trusted to escalate reliably.
+5. The plan-tree synchronization policy must prevent high-frequency loop noise
+   from entering committed Markdown.
+6. The ask/callback handoff contract must define how a child result advances
+   loop state without being mistaken for new upstream work.
+7. The execution state model must distinguish node status, branch status, and
+   round status before parallel node execution is enabled.
+8. Dynamic window/pane placement must be tracked in runtime state before CCB
+   can safely load many visible dialog, planning, and execution agents without
+   cluttering or losing panes.
+
+## Deferred
+
+- Fully dynamic multi-node execution fanout.
+- Full multi-round loop-runner-mediated dynamic agent load/unload beyond the
+  bounded `run-once` smoke.
+- Long-running loop runner daemon.
+- Automatic planner activation and clarification routing before the one-shot
+  runner bridge is proven.
+- User-defined arbitrary window classes and interactive drag/drop layout.
+- Exact tmux geometry restoration across restarts.
+- Multi-orchestrator arbitration.
+- Autonomous release publication.
+- Automatic destructive cleanup or broad repair.
+- UI-rich Team Builder editor for authoring workflow specs.
+- Cross-project reusable workflow marketplace.

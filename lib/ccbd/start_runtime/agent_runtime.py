@@ -6,6 +6,26 @@ from .agent_runtime_binding import resolve_runtime_binding_state
 from .agent_runtime_models import StartAgentExecution
 
 
+def _namespace_assigned_pane_id(
+    *,
+    assigned_pane_id: str | None,
+    stale_binding: bool,
+    tmux_socket_path: str | None,
+) -> str | None:
+    if stale_binding:
+        return None
+    pane_id = str(assigned_pane_id or '').strip()
+    if not pane_id or not pane_id.startswith('%'):
+        return None
+    if not str(tmux_socket_path or '').strip():
+        return None
+    return pane_id
+
+
+def _binding_attr(binding, field_name: str):
+    return getattr(binding, field_name, None) if binding is not None else None
+
+
 def start_agent_runtime(
     *,
     context,
@@ -50,27 +70,36 @@ def start_agent_runtime(
         relabel_project_namespace_pane_fn=relabel_project_namespace_pane_fn,
         same_tmux_socket_path_fn=same_tmux_socket_path_fn,
     )
+    namespace_pane_id = _namespace_assigned_pane_id(
+        assigned_pane_id=assigned_pane_id,
+        stale_binding=stale_binding,
+        tmux_socket_path=tmux_socket_path,
+    )
+    namespace_runtime_ref = f'tmux:{namespace_pane_id}' if namespace_pane_id else None
+    namespace_socket_path = str(tmux_socket_path or '').strip() or None
     attach_kwargs = dict(
         agent_name=agent_name,
         workspace_path=str(plan.workspace_path),
         backend_type=spec.runtime_mode.value,
-        runtime_ref=binding_state.runtime_ref,
+        runtime_ref=binding_state.runtime_ref or namespace_runtime_ref,
         session_ref=binding_state.session_ref,
         health=binding_state.health,
         provider=spec.provider,
-        runtime_root=getattr(binding_state.binding, 'runtime_root', None),
-        runtime_pid=getattr(binding_state.binding, 'runtime_pid', None),
-        terminal_backend=getattr(binding_state.binding, 'terminal', None),
-        pane_id=getattr(binding_state.binding, 'pane_id', None),
-        active_pane_id=getattr(binding_state.binding, 'active_pane_id', None),
-        pane_title_marker=getattr(binding_state.binding, 'pane_title_marker', None),
-        pane_state=getattr(binding_state.binding, 'pane_state', None),
-        tmux_socket_name=getattr(binding_state.binding, 'tmux_socket_name', None),
-        tmux_socket_path=getattr(binding_state.binding, 'tmux_socket_path', None),
-        tmux_window_name=window_name or getattr(binding_state.binding, 'tmux_window_name', None),
-        tmux_window_id=getattr(binding_state.binding, 'tmux_window_id', None),
-        session_file=getattr(binding_state.binding, 'session_file', None),
-        session_id=getattr(binding_state.binding, 'session_id', None),
+        runtime_root=_binding_attr(binding_state.binding, 'runtime_root'),
+        runtime_pid=_binding_attr(binding_state.binding, 'runtime_pid'),
+        terminal_backend=_binding_attr(binding_state.binding, 'terminal') or ('tmux' if namespace_pane_id else None),
+        pane_id=_binding_attr(binding_state.binding, 'pane_id') or namespace_pane_id,
+        active_pane_id=_binding_attr(binding_state.binding, 'active_pane_id') or namespace_pane_id,
+        pane_title_marker=_binding_attr(binding_state.binding, 'pane_title_marker'),
+        pane_state=_binding_attr(binding_state.binding, 'pane_state'),
+        tmux_socket_name=_binding_attr(binding_state.binding, 'tmux_socket_name'),
+        tmux_socket_path=_binding_attr(binding_state.binding, 'tmux_socket_path') or (
+            namespace_socket_path if namespace_pane_id else None
+        ),
+        tmux_window_name=window_name or _binding_attr(binding_state.binding, 'tmux_window_name'),
+        tmux_window_id=_binding_attr(binding_state.binding, 'tmux_window_id'),
+        session_file=_binding_attr(binding_state.binding, 'session_file'),
+        session_id=_binding_attr(binding_state.binding, 'session_id'),
         slot_key=agent_name,
         window_id=workspace_window_id,
         workspace_epoch=workspace_epoch,
@@ -122,9 +151,9 @@ def start_agent_runtime(
             failure_reason='stale_binding_unresolved' if binding_state.agent_action == 'degraded' else None,
         ),
         actions_taken=tuple(actions_taken),
-        socket_name=binding_state.socket_name,
-        runtime_pane_id=binding_state.runtime_pane_id,
-        project_socket_active_pane_id=binding_state.project_socket_active_pane_id,
+        socket_name=binding_state.socket_name or (namespace_socket_path if namespace_pane_id else None),
+        runtime_pane_id=binding_state.runtime_pane_id or namespace_pane_id,
+        project_socket_active_pane_id=binding_state.project_socket_active_pane_id or namespace_pane_id,
     )
 
 
