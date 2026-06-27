@@ -104,18 +104,91 @@ def test_build_tailnet_commands_reject_public_listen() -> None:
 
 def test_onboarding_not_installed_prints_install_and_phone_steps() -> None:
     output: list[str] = []
+    install_calls = 0
+
+    def _install() -> int:
+        nonlocal install_calls
+        install_calls += 1
+        return 0
 
     code = mobile_update.run_mobile_update_onboarding(
         detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(installed=False),
+        install_tailscale_fn=_install,
         print_fn=output.append,
     )
 
     text = "\n".join(output)
     assert code == 0
+    assert install_calls == 0
     assert "Tailscale was not found" in text
     assert mobile_update.TAILSCALE_DOWNLOAD_URL in text
+    assert "Skipping automatic install" in text
     assert "Install Tailscale on the phone" in text
     assert "Funnel and 0.0.0.0 listeners are not used" in text
+
+
+def test_onboarding_not_installed_can_install_after_prompt() -> None:
+    output: list[str] = []
+    prompts: list[str] = []
+    install_calls = 0
+
+    def _install() -> int:
+        nonlocal install_calls
+        install_calls += 1
+        return 0
+
+    code = mobile_update.run_mobile_update_onboarding(
+        detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(installed=False),
+        install_tailscale_fn=_install,
+        prompt_fn=lambda prompt: prompts.append(prompt) or "y",
+        print_fn=output.append,
+    )
+
+    text = "\n".join(output)
+    assert code == 0
+    assert prompts == ["Install Tailscale now? [y/N] "]
+    assert install_calls == 1
+    assert "curl -fsSL https://tailscale.com/install.sh | sh" in text
+    assert "official Tailscale install script" in text
+    assert "Tailscale install command completed" in text
+    assert "Then run `tailscale up`" in text
+
+
+def test_onboarding_not_installed_can_install_from_explicit_env() -> None:
+    output: list[str] = []
+    install_calls = 0
+
+    def _install() -> int:
+        nonlocal install_calls
+        install_calls += 1
+        return 0
+
+    code = mobile_update.run_mobile_update_onboarding(
+        detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(installed=False),
+        install_tailscale_fn=_install,
+        environ={"CCB_UPDATE_MOBILE_INSTALL_TAILSCALE": "1"},
+        print_fn=output.append,
+    )
+
+    text = "\n".join(output)
+    assert code == 0
+    assert install_calls == 1
+    assert "Installing because CCB_UPDATE_MOBILE_INSTALL_TAILSCALE=1 is set" in text
+    assert "Tailscale install command completed" in text
+
+
+def test_onboarding_not_installed_returns_install_failure() -> None:
+    output: list[str] = []
+
+    code = mobile_update.run_mobile_update_onboarding(
+        detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(installed=False),
+        install_tailscale_fn=lambda: 17,
+        prompt_fn=lambda _prompt: "yes",
+        print_fn=output.append,
+    )
+
+    assert code == 17
+    assert "Tailscale install command failed with exit code 17" in "\n".join(output)
 
 
 def test_onboarding_logged_out_prints_login_and_can_open_url() -> None:

@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 
@@ -13,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download"
 TAILSCALE_LOGIN_URL = "https://login.tailscale.com/start"
 DEFAULT_MOBILE_GATEWAY_LISTEN = "127.0.0.1:8787"
+TAILSCALE_LINUX_INSTALL_COMMAND = ("sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh")
 
 
 @dataclass(frozen=True)
@@ -38,11 +40,14 @@ class TailnetOnboardingCommands:
 def run_mobile_update_onboarding(
     *,
     detect_tailscale_fn: Callable[[], TailscaleStatus] | None = None,
+    install_tailscale_fn: Callable[[], int] | None = None,
     open_url_fn: Callable[[str], object] | None = None,
+    prompt_fn: Callable[[str], str] | None = None,
     environ: Mapping[str, str] | None = None,
     print_fn: Callable[[str], None] = print,
 ) -> int:
     detect_tailscale_fn = detect_tailscale_fn or detect_tailscale
+    install_tailscale_fn = install_tailscale_fn or install_tailscale
     env = os.environ if environ is None else environ
     open_url_fn = open_url_fn or webbrowser.open
     status = detect_tailscale_fn()
@@ -57,6 +62,15 @@ def run_mobile_update_onboarding(
         print_fn("❌ Tailscale was not found on PATH.")
         print_fn(f"   Install Tailscale: {TAILSCALE_DOWNLOAD_URL}")
         print_fn(f"   Suggested install: {_tailscale_install_hint()}")
+        install_result = _maybe_install_tailscale(
+            environ=env,
+            install_tailscale_fn=install_tailscale_fn,
+            open_url_fn=open_url_fn,
+            prompt_fn=prompt_fn,
+            print_fn=print_fn,
+        )
+        if install_result is not None and install_result != 0:
+            return install_result
         print_fn("   Then run `tailscale up` and re-run `ccb update mobile`.")
         print_fn("")
         _print_mobile_app_steps(print_fn)
@@ -148,6 +162,16 @@ def detect_tailscale(
     )
 
 
+def install_tailscale(
+    *,
+    run_fn: Callable[..., subprocess.CompletedProcess[object]] = subprocess.run,
+) -> int:
+    command = _tailscale_install_command()
+    if command is None:
+        return 2
+    return run_fn(command).returncode
+
+
 def build_tailnet_onboarding_commands(
     *,
     status: TailscaleStatus,
@@ -210,8 +234,79 @@ def _tailscale_install_hint() -> str:
     if system == "Darwin":
         return "brew install --cask tailscale  # or install from tailscale.com/download"
     if system == "Linux":
-        return "curl -fsSL https://tailscale.com/install.sh | sh"
+        return _shell_join(TAILSCALE_LINUX_INSTALL_COMMAND)
     return "install Tailscale from tailscale.com/download"
+
+
+def _tailscale_install_command() -> tuple[str, ...] | None:
+    if platform.system() == "Linux":
+        return TAILSCALE_LINUX_INSTALL_COMMAND
+    return None
+
+
+def _maybe_install_tailscale(
+    *,
+    environ: Mapping[str, str],
+    install_tailscale_fn: Callable[[], int],
+    open_url_fn: Callable[[str], object],
+    prompt_fn: Callable[[str], str] | None,
+    print_fn: Callable[[str], None],
+) -> int | None:
+    command = _tailscale_install_command()
+    if command is None:
+        if _confirm_tailscale_install(environ=environ, prompt_fn=prompt_fn):
+            open_url_fn(TAILSCALE_DOWNLOAD_URL)
+            print_fn("   Opened the Tailscale download page.")
+        else:
+            _print_install_confirmation_hint(print_fn)
+        return None
+
+    print_fn("   You can install Tailscale now from this command.")
+    print_fn("   This runs the official Tailscale install script and may ask for sudo.")
+    print_fn(f"   Command: {_shell_join(command)}")
+    if not _confirm_tailscale_install(environ=environ, prompt_fn=prompt_fn):
+        _print_install_confirmation_hint(print_fn)
+        return None
+
+    if _install_forced_by_env(environ):
+        print_fn("   Installing because CCB_UPDATE_MOBILE_INSTALL_TAILSCALE=1 is set.")
+    print_fn("   Installing Tailscale...")
+    result = install_tailscale_fn()
+    if result == 0:
+        print_fn("✅ Tailscale install command completed.")
+    else:
+        print_fn(f"❌ Tailscale install command failed with exit code {result}.")
+    return result
+
+
+def _confirm_tailscale_install(
+    *,
+    environ: Mapping[str, str],
+    prompt_fn: Callable[[str], str] | None,
+) -> bool:
+    if _install_forced_by_env(environ):
+        return True
+    force_value = _clean_text(environ.get("CCB_UPDATE_MOBILE_INSTALL_TAILSCALE"))
+    if force_value and force_value.lower() in {"0", "false", "no", "off"}:
+        return False
+    if prompt_fn is None and not sys.stdin.isatty():
+        return False
+    answer = prompt_fn("Install Tailscale now? [y/N] ") if prompt_fn else input("Install Tailscale now? [y/N] ")
+    return str(answer or "").strip().lower() in {"y", "yes"}
+
+
+def _install_forced_by_env(environ: Mapping[str, str]) -> bool:
+    return str(environ.get("CCB_UPDATE_MOBILE_INSTALL_TAILSCALE") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _print_install_confirmation_hint(print_fn: Callable[[str], None]) -> None:
+    print_fn("   Skipping automatic install.")
+    print_fn("   Re-run in an interactive terminal, or set CCB_UPDATE_MOBILE_INSTALL_TAILSCALE=1 to install.")
 
 
 def _print_mobile_app_steps(print_fn: Callable[[str], None]) -> None:
@@ -259,11 +354,13 @@ def _quote_shell_part(value: object) -> str:
 
 __all__ = [
     "DEFAULT_MOBILE_GATEWAY_LISTEN",
+    "TAILSCALE_LINUX_INSTALL_COMMAND",
     "TAILSCALE_DOWNLOAD_URL",
     "TAILSCALE_LOGIN_URL",
     "TailnetOnboardingCommands",
     "TailscaleStatus",
     "build_tailnet_onboarding_commands",
     "detect_tailscale",
+    "install_tailscale",
     "run_mobile_update_onboarding",
 ]
