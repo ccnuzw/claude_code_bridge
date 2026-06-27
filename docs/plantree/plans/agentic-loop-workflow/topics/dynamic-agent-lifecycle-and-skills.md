@@ -537,8 +537,11 @@ the same underlying runtime command surface.
    - import evidence before unload;
    - retain busy agents.
 7. Skill packaging:
-   - add `dynamic-agent-lifecycle` skill;
-   - update `orchestrator-capacity` to use the shared semantics.
+   - `dynamic-agent-lifecycle` skill has landed in the orchestrator CCB
+     adapter for non-loop dynamic agents;
+   - `orchestrator-capacity` now points non-loop helper/broker/diagnostic
+     work to `dynamic-agent-lifecycle` while keeping loop execution capacity
+     behind `ccb loop capacity`.
 8. Real workflow smoke:
    - start with one visible frontend;
    - dynamically load planner and orchestrator;

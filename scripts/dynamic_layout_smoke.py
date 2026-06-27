@@ -210,6 +210,48 @@ def run_dynamic_layout_smoke(
     }
 
 
+def run_dynamic_layout_provider_matrix(
+    *,
+    test_root: Path,
+    project_prefix: str,
+    ccb_test: Path,
+    providers: tuple[str, ...],
+    flows: tuple[str, ...] | None = None,
+    provider_home_mode: str = "source-home",
+    command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S,
+    prepare_only: bool = False,
+    reset: bool = False,
+    keep_running: bool = False,
+) -> dict[str, Any]:
+    provider_names = _normalize_providers(providers)
+    results = []
+    for provider in provider_names:
+        results.append(
+            run_dynamic_layout_smoke(
+                test_root=test_root,
+                project_prefix=f"{project_prefix}-{_provider_slug(provider)}",
+                ccb_test=ccb_test,
+                provider=provider,
+                flows=flows,
+                provider_home_mode=provider_home_mode,
+                command_timeout_s=command_timeout_s,
+                prepare_only=prepare_only,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    checks = {str(item.get("provider") or ""): item.get("dynamic_layout_smoke_status") in {"ok", "prepared"} for item in results}
+    status = "prepared" if prepare_only and all(checks.values()) else ("ok" if all(checks.values()) else "failed")
+    return {
+        "dynamic_layout_smoke_status": status,
+        "providers": list(provider_names),
+        "provider_home_mode": provider_home_mode,
+        "flows": list(_normalize_flows(flows)),
+        "checks": checks,
+        "provider_results": results,
+    }
+
+
 def _run_multi_node_flow(
     *,
     test_root: Path,
@@ -580,6 +622,20 @@ def _normalize_flows(flows: tuple[str, ...] | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(flows))
 
 
+def _normalize_providers(providers: tuple[str, ...] | None) -> tuple[str, ...]:
+    selected = []
+    for provider in providers or ("fake",):
+        text = str(provider or "").strip()
+        if text and text not in selected:
+            selected.append(text)
+    return tuple(selected or ("fake",))
+
+
+def _provider_slug(provider: str) -> str:
+    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(provider or "provider")).strip("-")
+    return slug or "provider"
+
+
 def _provider_home(*, test_root: Path, mode: str) -> Path:
     if mode == "source-home":
         return test_root.expanduser().resolve(strict=False) / "source_home"
@@ -707,12 +763,18 @@ def compact_smoke_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "dynamic_layout_smoke_status": payload.get("dynamic_layout_smoke_status"),
         "provider": payload.get("provider"),
+        "providers": payload.get("providers"),
         "provider_home_mode": payload.get("provider_home_mode"),
         "flows": payload.get("flows"),
         "preflight": payload.get("preflight"),
         "prepared": payload.get("prepared"),
         "checks": payload.get("checks"),
         "results": [_compact_flow_result(item) for item in payload.get("results", []) if isinstance(item, dict)],
+        "provider_results": [
+            compact_smoke_payload(item)
+            for item in payload.get("provider_results", [])
+            if isinstance(item, dict)
+        ],
     }
 
 
@@ -887,7 +949,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test-root", type=Path, default=DEFAULT_TEST_ROOT)
     parser.add_argument("--project-prefix", default="dynamic-layout-smoke")
     parser.add_argument("--ccb-test", type=Path, default=DEFAULT_CCB_TEST)
-    parser.add_argument("--provider", default="fake")
+    parser.add_argument("--provider", action="append", dest="providers", help="Provider to run; repeat for a guarded provider matrix. Defaults to fake.")
     parser.add_argument("--flow", action="append", choices=FLOW_NAMES, help="Flow to run; repeat to run multiple flows. Defaults to all flows.")
     parser.add_argument("--provider-home-mode", choices=("source-home", "real-home"), default="source-home")
     parser.add_argument("--command-timeout", type=int, default=DEFAULT_COMMAND_TIMEOUT_S)
@@ -897,18 +959,33 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--full-output", action="store_true", help="Print complete command stdout and JSON payloads.")
     args = parser.parse_args(argv)
 
-    payload = run_dynamic_layout_smoke(
-        test_root=args.test_root,
-        project_prefix=args.project_prefix,
-        ccb_test=args.ccb_test,
-        provider=args.provider,
-        flows=tuple(args.flow or ()),
-        provider_home_mode=args.provider_home_mode,
-        command_timeout_s=args.command_timeout,
-        prepare_only=args.prepare_only,
-        reset=args.reset,
-        keep_running=args.keep_running,
-    )
+    providers = _normalize_providers(tuple(args.providers or ()))
+    if len(providers) == 1:
+        payload = run_dynamic_layout_smoke(
+            test_root=args.test_root,
+            project_prefix=args.project_prefix,
+            ccb_test=args.ccb_test,
+            provider=providers[0],
+            flows=tuple(args.flow or ()),
+            provider_home_mode=args.provider_home_mode,
+            command_timeout_s=args.command_timeout,
+            prepare_only=args.prepare_only,
+            reset=args.reset,
+            keep_running=args.keep_running,
+        )
+    else:
+        payload = run_dynamic_layout_provider_matrix(
+            test_root=args.test_root,
+            project_prefix=args.project_prefix,
+            ccb_test=args.ccb_test,
+            providers=providers,
+            flows=tuple(args.flow or ()),
+            provider_home_mode=args.provider_home_mode,
+            command_timeout_s=args.command_timeout,
+            prepare_only=args.prepare_only,
+            reset=args.reset,
+            keep_running=args.keep_running,
+        )
     printable = payload if args.full_output else compact_smoke_payload(payload)
     print(json.dumps(printable, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if payload.get("dynamic_layout_smoke_status") in {"ok", "prepared"} else 1

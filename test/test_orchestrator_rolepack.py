@@ -48,7 +48,10 @@ ROLE_EXPECTATIONS = {
     },
     'agentroles.ccb_orchestrator': {
         'default': 'orchestrator',
-        'skill': 'adapters/ccb/skills/orchestrator-capacity',
+        'skills': (
+            'adapters/ccb/skills/orchestrator-capacity',
+            'adapters/ccb/skills/dynamic-agent-lifecycle',
+        ),
         'templates': (
             'templates/capacity-request.json',
             'templates/worker-ask.md',
@@ -78,15 +81,19 @@ def role_root(role_id: str) -> Path:
     return WORKFLOW_DRAFTS / role_id
 
 
-def test_orchestrator_rolepack_translates_capacity_skill() -> None:
+def test_orchestrator_rolepack_translates_ccb_skills() -> None:
     manifest = load_role_manifest(ORCHESTRATOR_ROLE)
+    expected_skills = [
+        'adapters/ccb/skills/orchestrator-capacity',
+        'adapters/ccb/skills/dynamic-agent-lifecycle',
+    ]
 
     assert manifest.id == 'agentroles.ccb_orchestrator'
     assert manifest.default_agent_name == 'orchestrator'
     assert {'codex', 'claude', 'qwen', 'zai'} <= set(manifest.providers)
     assert manifest.manifest['memory']['files'] == ['memory.md', 'adapters/ccb/memory.md']
-    assert manifest.manifest['skills']['codex'] == ['adapters/ccb/skills/orchestrator-capacity']
-    assert manifest.manifest['skills']['qwen'] == ['adapters/ccb/skills/orchestrator-capacity']
+    assert manifest.manifest['skills']['codex'] == expected_skills
+    assert manifest.manifest['skills']['qwen'] == expected_skills
 
 
 def test_orchestrator_capacity_skill_declares_command_boundary() -> None:
@@ -123,6 +130,41 @@ def test_orchestrator_capacity_skill_declares_command_boundary() -> None:
     assert 'Use this skill only from an execution-ready loop round' in skill
     assert 'replan_required' in skill
     assert 'replan_needed' not in skill
+    assert 'dynamic-agent-lifecycle' in skill
+
+
+def test_dynamic_agent_lifecycle_skill_declares_non_loop_command_boundary() -> None:
+    skill = (
+        ORCHESTRATOR_ROLE
+        / 'adapters'
+        / 'ccb'
+        / 'skills'
+        / 'dynamic-agent-lifecycle'
+        / 'SKILL.md'
+    ).read_text(encoding='utf-8')
+
+    assert 'ccb agent status --json' in skill
+    assert 'ccb agent show <agent> --json' in skill
+    assert 'ccb agent add <name>:<provider>' in skill
+    assert '--window-class <class>' in skill
+    assert 'ccb agent park <agent> --json' in skill
+    assert 'ccb agent resume <agent> --hidden --json' in skill
+    assert 'ccb agent release <agent> --idle-only --json' in skill
+    assert 'ccb layout status --json' in skill
+    assert 'agent_kind' in skill
+    assert 'ownership_class' in skill
+    assert 'dispatch_state' in skill
+    assert 'pane_identity_source' in skill
+    assert 'failed_apply' in skill
+    assert 'retained_busy' in skill
+    assert 'namespace_reflowed_windows' in skill
+    assert 'source=loop' in skill
+    assert 'orchestrator-capacity' in skill
+    assert 'Never edit `.ccb/ccb.config`' in skill
+    assert 'call raw `ccb reload`' in skill
+    assert 'call raw `ccb kill`' in skill
+    assert 'run `tmux`' in skill
+    assert 'remove --policy kill' in skill
 
 
 def test_orchestrator_capacity_template_keeps_placement_ccb_owned() -> None:
@@ -151,9 +193,11 @@ def test_workflow_rolepacks_translate_and_project_role_skills() -> None:
         assert manifest.default_agent_name == expectation['default']
         assert {'codex', 'claude', 'qwen', 'zai'} <= set(manifest.providers)
         assert manifest.manifest['memory']['files'] == ['memory.md', 'adapters/ccb/memory.md']
-        assert manifest.manifest['skills']['codex'] == [expectation['skill']]
-        assert manifest.manifest['skills']['qwen'] == [expectation['skill']]
-        assert (manifest.root / expectation['skill'] / 'SKILL.md').is_file()
+        expected_skills = tuple(expectation.get('skills') or (expectation['skill'],))
+        assert manifest.manifest['skills']['codex'] == list(expected_skills)
+        assert manifest.manifest['skills']['qwen'] == list(expected_skills)
+        for skill in expected_skills:
+            assert (manifest.root / skill / 'SKILL.md').is_file()
 
 
 def test_workflow_rolepacks_include_common_authority_rule_and_templates() -> None:
@@ -232,6 +276,9 @@ def test_orchestrator_rolepack_projects_capacity_skill_to_codex_home(tmp_path: P
     projected = target_home / 'skills' / 'orchestrator-capacity' / 'SKILL.md'
     assert projected.is_file()
     assert 'ccb loop capacity ensure' in projected.read_text(encoding='utf-8')
+    dynamic_projected = target_home / 'skills' / 'dynamic-agent-lifecycle' / 'SKILL.md'
+    assert dynamic_projected.is_file()
+    assert 'ccb agent add <name>:<provider>' in dynamic_projected.read_text(encoding='utf-8')
 
 
 def test_planner_rolepack_projects_planner_skill_to_codex_home(tmp_path: Path, monkeypatch) -> None:

@@ -139,7 +139,11 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
   distinguished without reading raw lifecycle files.
 - `ccb agent status --json` and `ccb agent show --json` now mirror the same
   ownership/apply diagnostics for configured and dynamic lifecycle records.
-- Remaining gap: package the stable command vocabulary as a
-  dynamic-agent-lifecycle skill before orchestrator role instructions depend on
-  it, and promote the guarded provider smokes into standard release
-  regressions.
+- The stable command vocabulary is now packaged as
+  `dynamic-agent-lifecycle` in the orchestrator draft RolePack, with loop
+  execution capacity still routed through `orchestrator-capacity`.
+- The guarded provider smokes now have a standard repeated-`--provider`
+  matrix entrypoint and have passed for Codex+Claude on `window-class`.
+- Remaining gap: promote the provider matrix smoke into a standard guarded
+  release regression and extend startup/mount diagnostics with the same pane
+  identity vocabulary.

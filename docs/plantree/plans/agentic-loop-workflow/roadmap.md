@@ -505,57 +505,69 @@ Date: 2026-06-24
   `104 passed`, and another fake explicit-window smoke in
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-status-helper-1782565815-window-class`
   stayed green.
+- Packaged the verified command vocabulary into the orchestrator draft
+  RolePack as `dynamic-agent-lifecycle` and kept `orchestrator-capacity` as the
+  loop-only worker/checker capacity boundary. The orchestrator CCB adapter now
+  projects both skills, and `orchestrator-capacity` explicitly points non-loop
+  helpers, brokers, planner/frontdesk companions, and diagnostics to
+  `dynamic-agent-lifecycle`.
+- Added a standard provider-matrix entrypoint to
+  `scripts/dynamic_layout_smoke.py`: repeat `--provider` to run the same
+  selected flow across providers with one command while preserving the old
+  single-provider output shape. The guarded real matrix command passed for
+  `--provider codex --provider claude --flow window-class` in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-matrix-real-1782567263-*`.
+  Both providers hot-loaded three helpers into `plan-orchestrate`, unloaded
+  middle `planner_helper2`, reflowed only `plan-orchestrate`, preserved
+  surviving panes, accepted asks to surviving helpers, and cleaned up to
+  `state: unmounted`.
 
 ## Next
 
-1. Package the script-friendly command surface into a
-   `dynamic-agent-lifecycle` skill and make orchestrator usage prefer
-   `layout status --json` / `agent status --json` over raw daemon internals.
-2. Promote the repeatable workflow closure smoke and the autonomous
+1. Promote the provider-matrix dynamic layout smoke, repeatable workflow
+   closure smoke, and autonomous
    layout-cleanup gate into the standard guarded regression path once the
    release gate shape is selected.
-3. Package the `dynamic-agent-lifecycle` skill and update
-   `orchestrator-capacity` to share the same lifecycle semantics.
-4. Define the V1 runtime layout manager command/state surface from
+2. Define the V1 runtime layout manager command/state surface from
    [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
    expose a script-friendly placement command/skill wrapper for generic
    non-loop dynamic agents while keeping loop execution capacity behind
    `ccb loop capacity`.
-5. Implement the next true hot-load slices:
-    extend pane-identity diagnostics into startup/mount reports, add standard
-    regression entrypoints for the guarded provider smokes, and only later
-    richer live reflow beyond the proven same-window and explicit-window-class
-    middle-removal cases.
-6. Wire the verified deterministic layout planner and dynamic smoke behavior
+3. Implement the next true hot-load slices:
+   extend pane-identity diagnostics into startup/mount reports, add standard
+   regression entrypoints for the guarded provider smokes, and only later
+   richer live reflow beyond the proven same-window and explicit-window-class
+   middle-removal cases.
+4. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.
-7. Land live dynamic pane shrink/release from
+5. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and
    overflow-window collapse without respawning surviving provider panes.
-8. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
+6. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.
-9. Continue the V1 `ccb loop capacity` path selected in
+7. Continue the V1 `ccb loop capacity` path selected in
    [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
    run the guarded real-provider semantic smoke for
    `agentroles.ccb_orchestrator` when real provider usage is intentionally
    allowed; daemon-side transient capacity ownership remains deferred.
-10. Define the v1 team spec format for planner group, orchestrator, execution
+8. Define the v1 team spec format for planner group, orchestrator, execution
    node, recovery node, and monitor behavior.
-11. Define context-purity budgets for each role, including what may enter
+9. Define context-purity budgets for each role, including what may enter
    `frontdesk`, planner group, orchestrator, execution nodes, monitor, runtime
    artifacts, and long-term plan-tree.
-12. Define the v1 clarification command surface and artifact schema for
+10. Define the v1 clarification command surface and artifact schema for
    candidate questions, broker review, user display, raw answers, normalized
    answers, deferred questions, and planner wakeup.
-13. Define the v1 execution-node and round-verification artifact schemas,
+11. Define the v1 execution-node and round-verification artifact schemas,
    including node check plans, non-convergence reports, branch freeze records,
    partial loop reports, verification contracts, and round verification plans.
-14. Map the design to existing CCB communication primitives: `ask`,
+12. Map the design to existing CCB communication primitives: `ask`,
    `--callback`, `--silence`, message bureau records, dispatcher jobs,
    completion state, and queue/trace diagnostics.
-15. Identify the first implementation slice that can run with one planner, one
+13. Identify the first implementation slice that can run with one planner, one
    orchestrator, one execution node, and deterministic monitoring before
    enabling dynamic multi-node fanout.
 

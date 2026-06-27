@@ -132,6 +132,10 @@ Use it to confirm loop-owned panes are reported with `source=loop` and the
 expected `loop_id`/`node_id`. Do not use layout status to choose agent names,
 write placement, or repair tmux state.
 
+For non-loop temporary helpers, brokers, planner/frontdesk companions, or
+diagnostic agents, use the `dynamic-agent-lifecycle` skill instead of this
+loop-capacity skill.
+
 ## Release
 
 After the worker/checker branch is drained, release only idle loop-owned

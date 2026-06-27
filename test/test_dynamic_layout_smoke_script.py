@@ -136,6 +136,60 @@ def test_main_passes_command_timeout_to_runner(monkeypatch: pytest.MonkeyPatch) 
     assert captured["command_timeout_s"] == 123
 
 
+def test_main_runs_repeated_providers_as_matrix(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+    calls = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs)
+        return {
+            "dynamic_layout_smoke_status": "ok",
+            "provider": kwargs["provider"],
+            "flows": list(kwargs["flows"]),
+            "checks": {"window_class_middle_release": True},
+            "results": [],
+        }
+
+    monkeypatch.setattr(module, "run_dynamic_layout_smoke", fake_runner)
+
+    assert module.main(["--provider", "codex", "--provider", "claude", "--flow", "window-class"]) == 0
+    assert [(call["provider"], call["project_prefix"]) for call in calls] == [
+        ("codex", "dynamic-layout-smoke-codex"),
+        ("claude", "dynamic-layout-smoke-claude"),
+    ]
+    assert calls[0]["flows"] == ("window-class",)
+
+
+def test_provider_matrix_payload_compacts_provider_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+
+    def fake_runner(**kwargs):
+        return {
+            "dynamic_layout_smoke_status": "ok",
+            "provider": kwargs["provider"],
+            "provider_home_mode": kwargs["provider_home_mode"],
+            "flows": ["window-class"],
+            "checks": {"window_class_middle_release": True},
+            "results": [],
+        }
+
+    monkeypatch.setattr(module, "run_dynamic_layout_smoke", fake_runner)
+
+    payload = module.run_dynamic_layout_provider_matrix(
+        test_root=tmp_path,
+        project_prefix="matrix",
+        ccb_test=Path(__file__),
+        providers=("codex", "claude", "codex"),
+        flows=("window-class",),
+    )
+    compact = module.compact_smoke_payload(payload)
+
+    assert payload["dynamic_layout_smoke_status"] == "ok"
+    assert payload["providers"] == ["codex", "claude"]
+    assert compact["provider_results"][0]["provider"] == "codex"
+    assert compact["provider_results"][1]["provider"] == "claude"
+
+
 def test_run_records_timeout_without_raising(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_module()
 

@@ -648,6 +648,18 @@ Evidence:
   without switching field names. Focused tests cover static configured agents,
   active dynamic agents, parked dispatch-disabled agents, deferred apply
   records, and failed-apply detection.
+- The orchestrator draft RolePack now includes `dynamic-agent-lifecycle` for
+  non-loop dynamic agents while `orchestrator-capacity` remains loop-only. The
+  skill documents allowed `ccb agent ... --json` and read-only
+  `ccb layout status --json` commands, forbidden raw state/tmux/reload/kill
+  actions, ownership/apply fields, safe park/resume/release behavior, and
+  failure reporting.
+- `scripts/dynamic_layout_smoke.py` now supports repeated `--provider` values
+  for a guarded provider matrix. The real Codex+Claude matrix passed in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-matrix-real-1782567263-*` for
+  `--flow window-class`, with both providers proving hot add, middle unload,
+  explicit-window reflow, survivor pane preservation, ask reachability, and
+  cleanup.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

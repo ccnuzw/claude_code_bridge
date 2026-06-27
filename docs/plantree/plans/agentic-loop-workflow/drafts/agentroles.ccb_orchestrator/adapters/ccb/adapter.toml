@@ -3,6 +3,6 @@ host = "ccb"
 default_agent_name = "orchestrator"
 supported_providers = ["codex", "claude", "gemini", "opencode", "kimi", "mimo", "qwen", "zai", "droid"]
 memory = ["adapters/ccb/memory.md"]
-skills = ["adapters/ccb/skills/orchestrator-capacity"]
+skills = ["adapters/ccb/skills/orchestrator-capacity", "adapters/ccb/skills/dynamic-agent-lifecycle"]
 permission_default = "ask"
 recommended_workspace_mode = "inplace"
