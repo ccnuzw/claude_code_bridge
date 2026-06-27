@@ -100,7 +100,7 @@ def test_orchestrator_capacity_skill_declares_command_boundary() -> None:
 
     assert 'ccb loop capacity ensure --loop-id <id>' in skill
     assert 'ccb loop capacity status --loop-id <id> --json' in skill
-    assert 'ccb loop capacity release --loop-id <id> --idle-only --json' in skill
+    assert 'ccb loop capacity release --loop-id <id> --policy auto --json' in skill
     assert 'loop_capacity_status = "ensured"' in skill
     assert 'apply.apply_status = "applied"' in skill
     assert 'Do not use `ccb loop run-once`' in skill

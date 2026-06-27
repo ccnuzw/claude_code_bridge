@@ -63,6 +63,11 @@ recoverable workflow loops.
   `/home/bfly/yunwei/agent-roles-spec`, installing them through CCB's Role
   store, and proving planner/broker/frontdesk/reviewer/orchestrator artifact
   collaboration.
+- [goals/workflow-closure-smoke-goal.md](goals/workflow-closure-smoke-goal.md):
+  repeatable source-wrapper smoke for the complete fake-provider workflow
+  closure, including planner/broker/frontdesk/reviewer transitions, ready
+  execution, dynamic worker/checker release with `--policy auto`, and the
+  current explicit-windows follow-up finding.
 - [topics/architecture.md](topics/architecture.md): proposed role topology,
   loop lifecycle, handoff rules, and failure escalation model.
 - [topics/complete-workflow-design.md](topics/complete-workflow-design.md):

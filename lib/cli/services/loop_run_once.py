@@ -149,7 +149,7 @@ def loop_run_once(context, command, services=None) -> dict[str, object]:
         try:
             release_payload = deps.loop_capacity(
                 context,
-                SimpleNamespace(action='release', loop_id=loop_id, idle_only=True),
+                SimpleNamespace(action='release', loop_id=loop_id, policy='auto', idle_only=False),
             )
         except Exception as exc:
             release_error = _failure_record(stage='release', exc=exc)
@@ -414,6 +414,8 @@ def _capacity_summary(payload: dict[str, object]) -> dict[str, object]:
         'agent_count': payload.get('agent_count'),
         'released_count': payload.get('released_count'),
         'retained_count': payload.get('retained_count'),
+        'release_policy': payload.get('release_policy'),
+        'idle_only': payload.get('idle_only'),
         'apply': dict(apply) if isinstance(apply, dict) else apply,
     }
 

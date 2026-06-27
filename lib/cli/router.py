@@ -430,8 +430,8 @@ _COMMAND_HELP = {
               Write a deterministic dynamic-node plan from configured loop.role_profiles.
           ccb loop capacity status --loop-id round1 --json
               Read the stored loop capacity plan.
-          ccb loop capacity release --loop-id round1 --idle-only --json
-              Mark planned dynamic nodes released.
+          ccb loop capacity release --loop-id round1 --policy auto --json
+              Release idle loop-owned dynamic nodes and retain busy nodes.
 
         One-round execution:
           ccb loop run-once --loop-id round1 --task "Implement task" --json

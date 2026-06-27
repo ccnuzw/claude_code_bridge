@@ -206,6 +206,9 @@ def test_loop_capacity_parser_supports_scriptable_json_commands() -> None:
         ['loop', 'capacity', 'release', '--loop-id', 'round1', '--idle-only', '--json']
     ) == ParsedLoopCapacityCommand(project=None, action='release', loop_id='round1', idle_only=True, json_output=True)
     assert parser.parse(
+        ['loop', 'capacity', 'release', '--loop-id', 'round1', '--policy', 'auto', '--json']
+    ) == ParsedLoopCapacityCommand(project=None, action='release', loop_id='round1', policy='auto', json_output=True)
+    assert parser.parse(
         [
             'loop',
             'run-once',
@@ -269,7 +272,8 @@ def test_loop_run_once_writes_round_artifacts_and_releases_capacity(
                 'apply': {'apply_status': 'applied', 'action': 'add_agent'},
             }
         if capacity_command.action == 'release':
-            assert capacity_command.idle_only is True
+            assert capacity_command.policy == 'auto'
+            assert capacity_command.idle_only is False
             return {
                 'loop_capacity_status': 'released',
                 'loop_id': capacity_command.loop_id,
@@ -277,6 +281,8 @@ def test_loop_run_once_writes_round_artifacts_and_releases_capacity(
                 'agent_count': 2,
                 'released_count': 2,
                 'retained_count': 0,
+                'release_policy': 'auto',
+                'idle_only': True,
                 'agents': [
                     {'name': 'loop-round1-worker-1', 'profile': 'worker', 'state': 'released'},
                     {'name': 'loop-round1-code_reviewer-1', 'profile': 'code_reviewer', 'state': 'released'},
@@ -357,6 +363,8 @@ def test_loop_run_once_writes_round_artifacts_and_releases_capacity(
     asks = [json.loads(line) for line in (loop_dir / 'asks.jsonl').read_text(encoding='utf-8').splitlines()]
     events = [json.loads(line) for line in (loop_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
     assert round_payload['loop_run_status'] == 'ok'
+    assert round_payload['capacity']['release']['release_policy'] == 'auto'
+    assert round_payload['capacity']['release']['idle_only'] is True
     assert [ask['purpose'] for ask in asks] == ['worker', 'reviewer', 'aggregate', 'round_checker']
     assert [event['kind'] for event in events] == [
         'loop_run_started',
@@ -404,6 +412,8 @@ def test_loop_run_once_task_id_binds_ready_task_and_reads_handoff(
                 'agent_count': 2,
                 'released_count': 2,
                 'retained_count': 0,
+                'release_policy': 'auto',
+                'idle_only': True,
                 'agents': [],
                 'apply': {'apply_status': 'applied', 'action': 'remove_agent'},
             }
@@ -737,6 +747,8 @@ def test_loop_run_once_records_failure_and_releases_after_watch_error(
                 'agent_count': 2,
                 'released_count': 2,
                 'retained_count': 0,
+                'release_policy': 'auto',
+                'idle_only': True,
                 'agents': [
                     {'name': 'loop-round1-worker-1', 'profile': 'worker', 'state': 'released'},
                     {'name': 'loop-round1-code_reviewer-1', 'profile': 'code_reviewer', 'state': 'released'},
@@ -780,6 +792,8 @@ def test_loop_run_once_records_failure_and_releases_after_watch_error(
         'error': 'watch transport failed',
     }
     assert payload['capacity']['release']['loop_capacity_status'] == 'released'
+    assert payload['capacity']['release']['release_policy'] == 'auto'
+    assert payload['capacity']['release']['idle_only'] is True
     assert calls == [
         ('capacity', 'ensure'),
         ('ask', 'loop-round1-worker-1'),
@@ -905,9 +919,23 @@ def test_loop_capacity_ensure_status_release_json_contract(
     assert result == 0
     assert err == ''
     assert released['loop_capacity_status'] == 'released'
+    assert released['release_policy'] == 'idle-only'
+    assert released['idle_only'] is True
     assert released['released_count'] == 2
     assert released['apply']['apply_status'] == 'deferred_until_start'
     assert [agent['state'] for agent in released['agents']] == ['released', 'released']
+
+    result, rerelease, err = _run_phase2(
+        ['loop', 'capacity', 'release', '--loop-id', 'round1', '--policy', 'auto', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0
+    assert err == ''
+    assert rerelease['loop_capacity_status'] == 'released'
+    assert rerelease['release_policy'] == 'auto'
+    assert rerelease['idle_only'] is True
+    assert rerelease['released_count'] == 2
 
     state = json.loads(Path(str(released['state_path'])).read_text(encoding='utf-8'))
     events = [
@@ -915,7 +943,7 @@ def test_loop_capacity_ensure_status_release_json_contract(
         for line in Path(str(released['events_path'])).read_text(encoding='utf-8').splitlines()
     ]
     assert state['loop_capacity_status'] == 'released'
-    assert [event['event'] for event in events] == ['ensure', 'release']
+    assert [event['event'] for event in events] == ['ensure', 'release', 'release']
 
     validate_out = StringIO()
     validate_err = StringIO()
@@ -1007,13 +1035,15 @@ def test_loop_capacity_release_retains_busy_agents(
     )
 
     result, released, err = _run_phase2(
-        ['loop', 'capacity', 'release', '--loop-id', 'round1', '--idle-only', '--json'],
+        ['loop', 'capacity', 'release', '--loop-id', 'round1', '--policy', 'auto', '--json'],
         cwd=project_root,
     )
 
     assert result == 0
     assert err == ''
     assert released['loop_capacity_status'] == 'ensured'
+    assert released['release_policy'] == 'auto'
+    assert released['idle_only'] is True
     assert released['released_count'] == 1
     assert released['retained_count'] == 1
     assert released['retained'] == [
@@ -1052,13 +1082,14 @@ def test_loop_capacity_release_retains_busy_agents(
 
     monkeypatch.setattr(loop_capacity_module, 'AgentRuntimeStore', IdleRuntimeStore)
     result, final_release, err = _run_phase2(
-        ['loop', 'capacity', 'release', '--loop-id', 'round1', '--idle-only', '--json'],
+        ['loop', 'capacity', 'release', '--loop-id', 'round1', '--policy', 'auto', '--json'],
         cwd=project_root,
     )
 
     assert result == 0
     assert err == ''
     assert final_release['loop_capacity_status'] == 'released'
+    assert final_release['release_policy'] == 'auto'
     assert final_release['retained_count'] == 0
     final_worker = next(agent for agent in final_release['agents'] if agent['name'] == 'loop-round1-worker-1')
     assert final_worker['state'] == 'released'

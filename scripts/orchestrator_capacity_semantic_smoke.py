@@ -793,7 +793,7 @@ Hard requirements:
 - Parse the returned agent names; do not invent names from the template.
 - Ask the returned worker with `command ask --callback "$WORKER_AGENT"` and then stop until resumed.
 - After the worker callback resumes you, ask the returned reviewer with `command ask --callback "$REVIEWER_AGENT"` and then stop until resumed.
-- After the reviewer callback resumes you, run `ccb loop capacity status --loop-id {loop_id} --json`, then `ccb loop capacity release --loop-id {loop_id} --idle-only --json`, then final status if useful.
+- After the reviewer callback resumes you, run `ccb loop capacity status --loop-id {loop_id} --json`, then `ccb loop capacity release --loop-id {loop_id} --policy auto --json`, then final status if useful.
 
 Worker request:
 - Reply with exactly one small result: `status: done` and one evidence line.

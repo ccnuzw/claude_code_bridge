@@ -99,8 +99,7 @@ def _status_capacity(context, command) -> dict[str, object]:
 
 
 def _release_capacity(context, command) -> dict[str, object]:
-    if not bool(getattr(command, 'idle_only', False)):
-        raise ValueError('loop capacity release currently requires --idle-only')
+    policy = _normalize_release_policy(command)
     loop_id = _normalize_loop_id(command.loop_id)
     state_path = _state_path(context, loop_id)
     state = _load_state(state_path)
@@ -115,8 +114,14 @@ def _release_capacity(context, command) -> dict[str, object]:
             'agents': [],
             'agent_count': 0,
             'released_count': 0,
+            'release_policy': policy,
+            'idle_only': True,
         }
-        _append_event(context, loop_id, {'event': 'release-missing', 'loop_id': loop_id, 'agent_count': 0})
+        _append_event(
+            context,
+            loop_id,
+            {'event': 'release-missing', 'loop_id': loop_id, 'agent_count': 0, 'release_policy': policy},
+        )
         return payload
 
     previous = json.loads(json.dumps(state))
@@ -161,6 +166,8 @@ def _release_capacity(context, command) -> dict[str, object]:
     state['released_count'] = sum(1 for agent in agents if str(agent.get('state') or '') == 'released')
     state['retained_count'] = retained_count
     state['retained'] = retained
+    state['release_policy'] = policy
+    state['idle_only'] = True
     state['state_path'] = str(state_path)
     state['events_path'] = str(_events_path(context, loop_id))
     _write_state(context, loop_id, state)
@@ -173,6 +180,7 @@ def _release_capacity(context, command) -> dict[str, object]:
             'agent_count': len(agents),
             'released_count': state['released_count'],
             'retained_count': retained_count,
+            'release_policy': policy,
         },
     )
     try:
@@ -187,6 +195,15 @@ def _release_capacity(context, command) -> dict[str, object]:
         raise
     _write_state(context, loop_id, state)
     return dict(state)
+
+
+def _normalize_release_policy(command) -> str:
+    policy = str(getattr(command, 'policy', None) or 'auto').strip().lower()
+    if policy not in {'auto', 'idle-only'}:
+        raise ValueError(f'unsupported loop capacity release policy: {policy}')
+    if bool(getattr(command, 'idle_only', False)):
+        return 'idle-only'
+    return policy
 
 
 def _release_gates(context, raw_agents: tuple[object, ...]) -> dict[str, dict[str, object]]:

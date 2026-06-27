@@ -341,6 +341,21 @@ Date: 2026-06-24
   invalid `normalized-answers.jsonl` placeholder enum in both external Roles
   and local draft templates. CCB source now carries provider-local `ask` assets
   for the full workflow provider set, including Gemini, Qwen, and Z.ai.
+- Completed the repeatable Workflow Closure Smoke goal in the current
+  worktree. `scripts/workflow_closure_smoke.py` now prepares an isolated
+  fake-provider source-wrapper project, installs the local workflow RolePacks,
+  drives `ccb plan`, `ccb question`, and `ccb loop runner --once` through
+  planner activation, clarification pause, normalized answers, planner
+  reactivation, plan-reviewer gate, review-backed `ready`, execution bridge,
+  round evidence import, and `release --policy auto` cleanup. Focused tests
+  passed with `35 passed`; `git diff --check` and touched-file `py_compile`
+  passed; external Agent Roles focused tests passed with `5 passed`; and the
+  real smoke in
+  `/home/bfly/yunwei/test_ccb2/workflow-closure-smoke-178255c` returned
+  `workflow_smoke_status: ok`, `release_policy: auto`, `retained_count: 0`,
+  and no dynamic worker/checker in `ps`. The fake-provider final task status
+  remains intentionally `blocked` with
+  `round_result_source=missing_round_checker_result`.
 
 ## Next
 
@@ -348,9 +363,8 @@ Date: 2026-06-24
    full live-provider smoke for pane-backed `codex`/`claude` and richer status
    diagnostics that distinguish configured/static, dynamic, loop-generated,
    parked, dispatch-disabled, and failed-apply records.
-2. Define the first mutation slice for short-lived execution roles:
-   wire `ccb loop capacity release --policy auto` to the verified dynamic
-   lifecycle busy-retain and release behavior.
+2. Promote the repeatable workflow closure smoke into the standard guarded
+   regression path once the release gate shape is selected.
 3. Package the `dynamic-agent-lifecycle` skill and update
    `orchestrator-capacity` to share the same lifecycle semantics.
 4. Define the V1 runtime layout manager command/state surface from

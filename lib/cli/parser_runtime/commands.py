@@ -315,6 +315,7 @@ def parse_loop(tokens: list[str], *, project: str | None, error_type) -> ParsedL
     if action == 'release':
         parser = argparse.ArgumentParser(prog='ccb loop capacity release', add_help=False)
         parser.add_argument('--loop-id', required=True)
+        parser.add_argument('--policy', default='auto', choices=('auto', 'idle-only'))
         parser.add_argument('--idle-only', dest='idle_only', action='store_true')
         parser.add_argument('--json', dest='json_output', action='store_true')
         namespace = parse_args(parser, rest, error_message='invalid loop capacity release command', error_type=error_type)
@@ -322,6 +323,7 @@ def parse_loop(tokens: list[str], *, project: str | None, error_type) -> ParsedL
             project=project,
             action=action,
             loop_id=str(namespace.loop_id),
+            policy=str(namespace.policy),
             idle_only=bool(namespace.idle_only),
             json_output=bool(namespace.json_output),
         )

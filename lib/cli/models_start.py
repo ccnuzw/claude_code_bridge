@@ -98,6 +98,7 @@ class ParsedLoopCapacityCommand:
     action: str
     loop_id: str
     profile_counts: tuple[tuple[str, int], ...] = ()
+    policy: str = 'auto'
     idle_only: bool = False
     json_output: bool = False
     kind: str = 'loop-capacity'
