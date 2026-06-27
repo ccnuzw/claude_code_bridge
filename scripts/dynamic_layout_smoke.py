@@ -18,6 +18,7 @@ DEFAULT_COMMAND_TIMEOUT_S = int(os.environ.get("CCB_DYNAMIC_LAYOUT_SMOKE_COMMAND
 REAL_RUN_ENV = "CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL"
 FLOW_NAMES = (
     "multi-node",
+    "multi-window-continuous",
     "same-window",
     "same-window-continuous",
     "single-agent-window",
@@ -260,6 +261,19 @@ def run_dynamic_layout_smoke(
                 keep_running=keep_running,
             )
         )
+    if "multi-window-continuous" in flow_names:
+        results.append(
+            _run_multi_window_continuous_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-multi-window-continuous",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
     if "same-window" in flow_names:
         results.append(
             _run_same_window_flow(
@@ -478,6 +492,119 @@ def _run_multi_node_flow(
         }
         status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
         return {"flow": "multi_node_capacity", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
+def _run_multi_window_continuous_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_same_window_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    targets = tuple((f"helper{index}", f"review{index}") for index in range(1, 4))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        for helper, window in targets:
+            commands.append(
+                _run_json(
+                    f"add_{helper}_{window}",
+                    [
+                        str(ccb_test),
+                        "--project",
+                        str(project_root),
+                        "agent",
+                        "add",
+                        f"{helper}:{provider}",
+                        "--role",
+                        "agentroles.general",
+                        "--window",
+                        window,
+                        "--hidden",
+                        "--json",
+                    ],
+                    cwd=test_root,
+                    env=env,
+                    timeout=command_timeout_s,
+                )
+            )
+        after_add = _run_json("layout_after_add_windows", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_add)
+        helper_ask = _run("ask_helper2_before_window_release", [str(ccb_test), "--project", str(project_root), "ask", "helper2"], cwd=test_root, env=env, input_text="multi-window-continuous smoke ping helper2\n", timeout=command_timeout_s)
+        commands.append(helper_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(helper_ask,),
+                timeout=command_timeout_s,
+            )
+        )
+        releases: list[dict[str, Any]] = []
+        for helper, _window in reversed(targets):
+            release = _run_json(
+                f"remove_{helper}",
+                [
+                    str(ccb_test),
+                    "--project",
+                    str(project_root),
+                    "agent",
+                    "remove",
+                    helper,
+                    "--policy",
+                    "unload",
+                    "--idle-only",
+                    "--json",
+                ],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+            releases.append(release)
+            commands.append(release)
+        after_release = _run_json("layout_after_remove_windows", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_release)
+        commands.append(_run("ask_main_after_window_release", [str(ccb_test), "--project", str(project_root), "ask", "main"], cwd=test_root, env=env, input_text="multi-window-continuous smoke ping main\n", timeout=command_timeout_s))
+        after_add_panes = _agent_panes(after_add)
+        after_release_panes = _agent_panes(after_release)
+        release_apply = [dict(_payload(item).get("apply") or {}) for item in releases]
+        expected_windows = {"main": ["main"], **{window: [helper] for helper, window in targets}}
+        removed_windows = {
+            helper: apply.get("namespace_removed_windows")
+            for (helper, _window), apply in zip(reversed(targets), release_apply)
+        }
+        removed_agents = {
+            helper: apply.get("namespace_removed_agents", {}).get(helper)
+            for (helper, _window), apply in zip(reversed(targets), release_apply)
+        }
+        checks = {
+            "add_window_plans": [_payload(item).get("apply", {}).get("plan_class") for item in commands[2:5]] == ["add_window"] * 3,
+            "grew_to_four_windows": _window_agents(after_add) == expected_windows,
+            "helper_ask_accepted": _accepted(helper_ask),
+            "helper_ask_terminal": _watch_commands_terminal(commands),
+            "release_remove_agent_plans": [apply.get("plan_class") for apply in release_apply] == ["remove_agent"] * 3,
+            "removed_windows_match": all(removed_windows[helper] == [window] for helper, window in targets),
+            "removed_agent_panes_match": all(removed_agents[helper] == after_add_panes.get(helper) for helper, _window in targets),
+            "main_pane_preserved": after_release_panes.get("main") == after_add_panes.get("main"),
+            "returned_to_main_window": _window_agents(after_release) == {"main": ["main"]},
+            "dynamic_agents_cleaned": _payload(after_release).get("dynamic_agent_count") == 0,
+            "ask_main_accepted": _accepted(commands[-1]),
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "multi_window_continuous_add_remove", "flow_status": status, "checks": checks, "commands": commands}
     finally:
         if not keep_running:
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
@@ -1140,6 +1267,15 @@ def _prepare_selected_projects(
             prepare_multi_node_project(
                 test_root=test_root,
                 project_name=f"{project_prefix}-multi-node",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "multi-window-continuous" in flows:
+        prepared.append(
+            prepare_same_window_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-multi-window-continuous",
                 provider=provider,
                 reset=reset,
             )

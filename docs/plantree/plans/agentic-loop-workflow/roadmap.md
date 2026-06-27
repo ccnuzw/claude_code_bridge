@@ -670,11 +670,22 @@ Date: 2026-06-24
   passed with `dynamic_layout_smoke_status=ok`, and the same flow is now a
   Ubuntu py3.11 `Tests` workflow gate. Focused dynamic layout regression
   passed with `67 passed`.
+- Added a multi-window continuous add/remove smoke for explicit `[windows]`
+  page growth and collapse. The `multi-window-continuous` fake-provider flow
+  dynamically creates `review1..review3`, verifies the project has four
+  windows, waits for `helper2` ask completion, unloads helper windows in
+  reverse order, and proves each removal reports `namespace_removed_windows`,
+  preserves the `main` pane, returns to a single `main` window, and leaves
+  `dynamic_agent_count=0`. Source-wrapper validation passed in
+  `/home/bfly/yunwei/test_ccb2/multi-window-continuous-smoke-multi-window-continuous`
+  with `dynamic_layout_smoke_status=ok`; focused dynamic layout regression
+  passed with `69 passed`.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
-   single-agent-window, and explicit-window-class middle-removal cases.
+   single-agent-window, multi-window add/remove, and explicit-window-class
+   middle-removal cases.
 2. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.
