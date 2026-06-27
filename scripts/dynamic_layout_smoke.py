@@ -16,7 +16,7 @@ DEFAULT_TEST_ROOT = Path(os.environ.get("CCB_DYNAMIC_LAYOUT_SMOKE_TEST_ROOT", "/
 DEFAULT_CCB_TEST = REPO_ROOT / "ccb_test"
 DEFAULT_COMMAND_TIMEOUT_S = int(os.environ.get("CCB_DYNAMIC_LAYOUT_SMOKE_COMMAND_TIMEOUT_S", "60"))
 REAL_RUN_ENV = "CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL"
-FLOW_NAMES = ("multi-node", "same-window", "window-class")
+FLOW_NAMES = ("multi-node", "same-window", "window-class", "resolve-preflight")
 PROVIDER_EXECUTABLES = {
     "codex": "codex",
     "claude": "claude",
@@ -87,6 +87,45 @@ def build_window_class_config(*, provider: str = "fake") -> str:
     )
 
 
+def build_resolve_preflight_config(*, provider: str = "fake") -> str:
+    return "\n".join(
+        [
+            "version = 2",
+            'entry_window = "main"',
+            "",
+            "[windows]",
+            f'main = "frontdesk:{provider}"',
+            (
+                'plan-orchestrate = "'
+                + ", ".join(f"p{index}:{provider}" for index in range(1, 7))
+                + '"'
+            ),
+            "",
+            "[loop.capacity]",
+            "enabled = true",
+            "max_nodes = 2",
+            'default_lifetime = "current_round"',
+            'name_template = "loop-{loop_id}-{profile}-{index}"',
+            'reuse = "prefer_idle"',
+            "",
+            "[loop.role_profiles.worker]",
+            'role = "agentroles.coder"',
+            f'provider = "{provider}"',
+            'thinking = "medium"',
+            'workspace_mode = "inplace"',
+            "max_instances = 1",
+            "",
+            "[loop.role_profiles.code_reviewer]",
+            'role = "agentroles.code_reviewer"',
+            f'provider = "{provider}"',
+            'thinking = "medium"',
+            'workspace_mode = "inplace"',
+            "max_instances = 1",
+            "",
+        ]
+    )
+
+
 def prepare_multi_node_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
     project_root = _project_root(test_root, project_name)
     if reset and project_root.exists():
@@ -118,6 +157,19 @@ def prepare_window_class_project(*, test_root: Path, project_name: str, provider
     (project_root / ".ccb" / "ccb.config").write_text(build_window_class_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
+    return {"project_root": str(project_root), "role_store": str(role_store)}
+
+
+def prepare_resolve_preflight_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
+    project_root = _project_root(test_root, project_name)
+    if reset and project_root.exists():
+        shutil.rmtree(project_root)
+    (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ccb" / "ccb.config").write_text(build_resolve_preflight_config(provider=provider), encoding="utf-8")
+    role_store = project_root / "roles"
+    _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
+    _write_minimal_role(role_store, "agentroles.coder", default_agent_name="worker")
+    _write_minimal_role(role_store, "agentroles.code_reviewer", default_agent_name="code_reviewer")
     return {"project_root": str(project_root), "role_store": str(role_store)}
 
 
@@ -190,6 +242,19 @@ def run_dynamic_layout_smoke(
             _run_window_class_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-window-class",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "resolve-preflight" in flow_names:
+        results.append(
+            _run_resolve_preflight_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-resolve-preflight",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -543,6 +608,225 @@ def _run_window_class_flow(
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
 
 
+def _run_resolve_preflight_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_resolve_preflight_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        class_resolve = _run_json(
+            "resolve_window_class_overflow",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "layout",
+                "resolve",
+                "review_helper1",
+                "--window-class",
+                "plan-orchestrate",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(class_resolve)
+        class_add = _run_json(
+            "add_window_class_overflow",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "add",
+                f"review_helper1:{provider}",
+                "--role",
+                "agentroles.code_reviewer",
+                "--window-class",
+                "plan-orchestrate",
+                "--hidden",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(class_add)
+        class_show = _run_json(
+            "show_window_class_overflow",
+            [str(ccb_test), "--project", str(project_root), "agent", "show", "review_helper1", "--json"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(class_show)
+        class_status = _run_json(
+            "layout_after_window_class_add",
+            [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(class_status)
+        class_release = _run_json(
+            "release_window_class_overflow",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "release",
+                "review_helper1",
+                "--idle-only",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(class_release)
+        class_after = _run_json(
+            "layout_after_window_class_release",
+            [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(class_after)
+        node_resolve = _run_json(
+            "resolve_execution_node",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "layout",
+                "resolve",
+                "loop-round3-worker-1",
+                "--loop-id",
+                "round3",
+                "--node-id",
+                "node1",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(node_resolve)
+        capacity_ensure = _run_json(
+            "ensure_execution_node_capacity",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "loop",
+                "capacity",
+                "ensure",
+                "--loop-id",
+                "round3",
+                "--profile",
+                "worker=1",
+                "--profile",
+                "code_reviewer=1",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(capacity_ensure)
+        node_status = _run_json(
+            "layout_after_execution_node_ensure",
+            [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(node_status)
+        capacity_release = _run_json(
+            "release_execution_node_capacity",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "loop",
+                "capacity",
+                "release",
+                "--loop-id",
+                "round3",
+                "--idle-only",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(capacity_release)
+        node_after = _run_json(
+            "layout_after_execution_node_release",
+            [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(node_after)
+        class_resolve_payload = _payload(class_resolve)
+        class_add_payload = _payload(class_add)
+        class_release_payload = _payload(class_release)
+        node_resolve_payload = _payload(node_resolve)
+        checks = {
+            "class_resolve_overflow": class_resolve_payload.get("layout_status") == "ok"
+            and class_resolve_payload.get("addable") is True
+            and class_resolve_payload.get("placement_mode") == "window_class"
+            and class_resolve_payload.get("resolved_window_name") == "plan-orchestrate-2"
+            and class_resolve_payload.get("will_create_window") is True,
+            "class_add_matches_resolve": class_add_payload.get("resolved_window_name") == class_resolve_payload.get("resolved_window_name"),
+            "class_add_window_plan": class_add_payload.get("apply", {}).get("plan_class") == "add_window",
+            "class_show_matches": _payload(class_show).get("resolved_window_name") == "plan-orchestrate-2",
+            "class_window_visible": _window_agents(class_status).get("plan-orchestrate-2") == ["review_helper1"],
+            "class_release_unloaded": class_release_payload.get("resolved_policy") == "unload"
+            and class_release_payload.get("lifecycle_state") == "unloaded",
+            "class_release_removed_window": "plan-orchestrate-2" in class_release_payload.get("apply", {}).get("namespace_removed_windows", []),
+            "class_after_clean": "plan-orchestrate-2" not in _window_agents(class_after)
+            and _payload(class_after).get("dynamic_agent_count") == 0,
+            "node_resolve_execution_window": node_resolve_payload.get("layout_status") == "ok"
+            and node_resolve_payload.get("placement_mode") == "execution_node"
+            and node_resolve_payload.get("resolved_window_name") == "node-round3-node1"
+            and node_resolve_payload.get("will_create_window") is True,
+            "capacity_add_window_plan": _payload(capacity_ensure).get("apply", {}).get("plan_class") == "add_window",
+            "node_window_visible": _has_windows(
+                node_status,
+                {
+                    "node-round3-node1": [
+                        "loop-round3-worker-1",
+                        "loop-round3-code_reviewer-1",
+                    ],
+                },
+            ),
+            "capacity_release_clean": _payload(capacity_release).get("released_count") == 2
+            and _payload(node_after).get("loop_agent_count") == 0
+            and "node-round3-node1" not in _window_agents(node_after),
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "resolve_preflight_chain", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
 def _project_root(test_root: Path, project_name: str) -> Path:
     root = test_root.expanduser().resolve(strict=False)
     project_root = (root / project_name).resolve(strict=False)
@@ -606,6 +890,15 @@ def _prepare_selected_projects(
             prepare_window_class_project(
                 test_root=test_root,
                 project_name=f"{project_prefix}-window-class",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "resolve-preflight" in flows:
+        prepared.append(
+            prepare_resolve_preflight_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-resolve-preflight",
                 provider=provider,
                 reset=reset,
             )
@@ -820,6 +1113,13 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "dynamic_agent_count",
         "window_count",
         "pane_count",
+        "placement_mode",
+        "resolved_window_name",
+        "target_surface",
+        "target_window_exists",
+        "will_create_window",
+        "addable",
+        "resolved_policy",
         "released_count",
         "retained_count",
         "retained_busy",

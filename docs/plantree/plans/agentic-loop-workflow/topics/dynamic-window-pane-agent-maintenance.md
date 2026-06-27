@@ -936,6 +936,18 @@ Current evidence:
   runtime sequence across existing-window add, `park` config-only dispatch
   disable, `resume`, new-window `add_window`, ask reachability, idle release,
   empty-window removal, and return to one `main` pane;
+- mounted source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/resolve-preflight-smoke-1782573894-resolve-preflight`
+  proved the role-facing preflight chain on explicit `[windows]`: `layout
+  resolve` predicted `plan-orchestrate-2`, `agent add` materialized it as
+  `add_window`, `agent show` and `layout status` confirmed placement,
+  `agent release --idle-only` unloaded the short-lived reviewer and removed the
+  empty overflow window, then `layout resolve --loop-id/--node-id` predicted
+  `node-round3-node1` before `ccb loop capacity` created and released the
+  worker/checker execution-node window;
+- guarded provider prepare-only now covers both `window-class` and
+  `resolve-preflight` for Codex+Claude, so CI validates the new project/config
+  surface without requiring real provider auth;
 - live provider release remains gated on busy/idle checks.
 
 Deferred:

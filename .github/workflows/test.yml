@@ -68,7 +68,7 @@ jobs:
           payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
           assert payload["dynamic_layout_smoke_status"] == "prepared"
           assert payload["providers"] == ["codex", "claude"]
-          assert payload["flows"] == ["window-class"]
+          assert payload["flows"] == ["window-class", "resolve-preflight"]
           PY
 
   provider-blackbox:

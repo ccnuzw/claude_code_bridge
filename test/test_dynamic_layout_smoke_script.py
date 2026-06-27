@@ -42,6 +42,8 @@ def test_build_configs_accept_provider() -> None:
     assert 'provider = "codex"' in module.build_multi_node_config(provider="codex")
     assert 'main = "main:claude"' in module.build_same_window_config(provider="claude")
     assert 'plan-orchestrate = "planner:gemini"' in module.build_window_class_config(provider="gemini")
+    assert 'main = "frontdesk:qwen"' in module.build_resolve_preflight_config(provider="qwen")
+    assert 'provider = "qwen"' in module.build_resolve_preflight_config(provider="qwen")
 
 
 def test_build_window_class_config_declares_plan_orchestrate_window() -> None:
@@ -55,23 +57,42 @@ def test_build_window_class_config_declares_plan_orchestrate_window() -> None:
     assert 'plan-orchestrate = "planner:fake"' in text
 
 
+def test_build_resolve_preflight_config_declares_full_class_and_loop_profiles() -> None:
+    module = _load_module()
+
+    text = module.build_resolve_preflight_config()
+
+    assert 'main = "frontdesk:fake"' in text
+    assert 'plan-orchestrate = "p1:fake, p2:fake, p3:fake, p4:fake, p5:fake, p6:fake"' in text
+    assert '[loop.capacity]' in text
+    assert 'name_template = "loop-{loop_id}-{profile}-{index}"' in text
+    assert '[loop.role_profiles.worker]' in text
+    assert '[loop.role_profiles.code_reviewer]' in text
+
+
 def test_prepare_projects_write_configs_and_roles(tmp_path: Path) -> None:
     module = _load_module()
 
     multi = module.prepare_multi_node_project(test_root=tmp_path, project_name="multi", reset=False)
     same = module.prepare_same_window_project(test_root=tmp_path, project_name="same", reset=False)
     window_class = module.prepare_window_class_project(test_root=tmp_path, project_name="window-class", reset=False)
+    resolve = module.prepare_resolve_preflight_project(test_root=tmp_path, project_name="resolve", reset=False)
 
     multi_root = Path(multi["project_root"])
     same_root = Path(same["project_root"])
     window_class_root = Path(window_class["project_root"])
+    resolve_root = Path(resolve["project_root"])
     assert (multi_root / ".ccb" / "ccb.config").read_text(encoding="utf-8").startswith("version = 2")
     assert (same_root / ".ccb" / "ccb.config").read_text(encoding="utf-8").startswith("version = 2")
     assert 'plan-orchestrate = "planner:fake"' in (window_class_root / ".ccb" / "ccb.config").read_text(encoding="utf-8")
+    assert 'plan-orchestrate = "p1:fake, p2:fake, p3:fake, p4:fake, p5:fake, p6:fake"' in (resolve_root / ".ccb" / "ccb.config").read_text(encoding="utf-8")
     assert (Path(multi["role_store"]) / "installed" / "agentroles.coder" / "current" / "role.toml").is_file()
     assert (Path(multi["role_store"]) / "installed" / "agentroles.code_reviewer" / "current" / "role.toml").is_file()
     assert (Path(same["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
     assert (Path(window_class["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
+    assert (Path(resolve["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
+    assert (Path(resolve["role_store"]) / "installed" / "agentroles.coder" / "current" / "role.toml").is_file()
+    assert (Path(resolve["role_store"]) / "installed" / "agentroles.code_reviewer" / "current" / "role.toml").is_file()
 
 
 def test_prepare_only_can_generate_real_provider_window_class_project(tmp_path: Path) -> None:
@@ -93,6 +114,26 @@ def test_prepare_only_can_generate_real_provider_window_class_project(tmp_path: 
     config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
     assert 'main = "frontdesk:codex"' in config.read_text(encoding="utf-8")
     assert payload["preflight"]["checks"]["provider"] == "codex"
+
+
+def test_prepare_only_can_generate_resolve_preflight_project(tmp_path: Path) -> None:
+    module = _load_module()
+
+    payload = module.run_dynamic_layout_smoke(
+        test_root=tmp_path,
+        project_prefix="resolve-prepare",
+        ccb_test=Path(__file__),
+        provider="claude",
+        flows=("resolve-preflight",),
+        prepare_only=True,
+        reset=True,
+    )
+
+    assert payload["dynamic_layout_smoke_status"] == "prepared"
+    assert payload["flows"] == ["resolve-preflight"]
+    assert len(payload["prepared"]) == 1
+    config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
+    assert 'plan-orchestrate = "p1:claude, p2:claude, p3:claude, p4:claude, p5:claude, p6:claude"' in config.read_text(encoding="utf-8")
 
 
 def test_real_provider_run_requires_explicit_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -247,6 +288,8 @@ def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -
                         "payload": {
                             "layout_status": "ok",
                             "loop_agent_count": 2,
+                            "resolved_window_name": "node-round1-node1",
+                            "will_create_window": True,
                             "windows": [
                                 {
                                     "name": "node-round1-node1",
@@ -270,6 +313,8 @@ def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -
     assert command["payload"] == {
         "layout_status": "ok",
         "loop_agent_count": 2,
+        "resolved_window_name": "node-round1-node1",
+        "will_create_window": True,
         "windows": [
             {
                 "name": "node-round1-node1",

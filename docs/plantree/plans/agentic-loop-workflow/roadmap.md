@@ -577,15 +577,29 @@ Date: 2026-06-24
   layout status`, with resolver evidence for `addable`, `placement_mode`,
   `resolved_window_name`, and `will_create_window`. Focused RolePack tests
   passed with `9 passed`, including Codex home skill projection.
+- Landed repeatable guarded smoke coverage for the resolver-driven chain.
+  `scripts/dynamic_layout_smoke.py --flow resolve-preflight` now starts an
+  explicit `[windows]` fake-provider project, proves `layout resolve` overflows
+  a full `plan-orchestrate` class to `plan-orchestrate-2`, hot-adds a dynamic
+  short-lived reviewer there with `add_window`, verifies `agent show` and
+  `layout status`, releases the agent and removes the empty overflow window,
+  then resolves `node-round3-node1` and uses `ccb loop capacity` to create and
+  release worker/checker panes without exposing raw `agent add` for loop
+  capacity. The external source-wrapper run in
+  `/home/bfly/yunwei/test_ccb2/resolve-preflight-smoke-1782573894-resolve-preflight`
+  returned `dynamic_layout_smoke_status=ok`; the guarded provider wrapper now
+  prepares both `window-class` and `resolve-preflight` for Codex+Claude in CI;
+  script/guarded tests passed with `19 passed`; layout tests passed with
+  `30 passed`; lifecycle/capacity/RolePack regression passed with `49 passed`;
+  touched script tests passed `py_compile`; and `git diff --check` passed.
 
 ## Next
 
 1. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
    smoke into the chosen release/CI guarded regression path.
-2. Expand guarded smoke coverage so the role-facing
-   `layout resolve -> agent add -> status -> release` chain is exercised in
-   explicit `[windows]` projects for both class overflow and execution-node
-   placement while keeping loop execution capacity behind `ccb loop capacity`.
+2. Run the guarded real-provider opt-in variant for the new
+   `resolve-preflight` flow when real provider usage is intentionally allowed,
+   matching the existing Codex/Claude `window-class` evidence.
 3. Implement richer live reflow beyond the proven same-window and
    explicit-window-class middle-removal cases.
 4. Wire the verified deterministic layout planner and dynamic smoke behavior

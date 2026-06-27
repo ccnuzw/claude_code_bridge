@@ -18,7 +18,7 @@ import dynamic_layout_smoke  # noqa: E402
 
 
 DEFAULT_PROVIDERS = ("codex", "claude")
-DEFAULT_FLOWS = ("window-class",)
+DEFAULT_FLOWS = ("window-class", "resolve-preflight")
 DEFAULT_TEST_ROOT = dynamic_layout_smoke.DEFAULT_TEST_ROOT
 DEFAULT_CCB_TEST = dynamic_layout_smoke.DEFAULT_CCB_TEST
 DEFAULT_PROJECT_PREFIX = "dynamic-layout-provider-matrix"
