@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 
 from ccbd.reload_apply_models import AdditiveReloadApplyResult
@@ -58,11 +59,11 @@ def plan_blocker(plan: dict[str, object]) -> tuple[str, str] | None:
 def plan_blocked_result(
     old_graph,
     plan: dict[str, object],
-    blocker: tuple[str, str],
+    blocker: tuple[object, ...],
     *,
     namespace_diagnostics: dict[str, object],
 ) -> AdditiveReloadApplyResult:
-    reason, message = blocker
+    reason, message, extra_diagnostics = _blocker_parts(blocker)
     return AdditiveReloadApplyResult(
         status='blocked',
         stage='plan',
@@ -74,10 +75,20 @@ def plan_blocked_result(
         diagnostics={
             'reason': reason,
             'message': message,
+            **extra_diagnostics,
             'namespace': namespace_diagnostics,
             **not_published_diagnostics(),
         },
     )
+
+
+def _blocker_parts(blocker: tuple[object, ...]) -> tuple[str, str, dict[str, object]]:
+    reason = str(blocker[0] if len(blocker) > 0 else 'blocked')
+    message = str(blocker[1] if len(blocker) > 1 else 'reload apply blocked')
+    extra = blocker[2] if len(blocker) > 2 else {}
+    if isinstance(extra, Mapping):
+        return reason, message, dict(extra)
+    return reason, message, {}
 
 
 def _operation_blocker(plan: dict[str, object]) -> tuple[str, str] | None:

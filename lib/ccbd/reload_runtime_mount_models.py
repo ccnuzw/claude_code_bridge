@@ -48,6 +48,7 @@ class AdditiveRuntimeMountResult:
 def blocked_mount_result(
     reason: str,
     message: str,
+    extra_diagnostics: dict[str, object] | None = None,
     *,
     requested_agents: tuple[str, ...] = (),
 ) -> AdditiveRuntimeMountResult:
@@ -57,6 +58,7 @@ def blocked_mount_result(
         diagnostics={
             'reason': reason,
             'message': message,
+            **dict(extra_diagnostics or {}),
             **_no_publish_diagnostics(),
         },
     )

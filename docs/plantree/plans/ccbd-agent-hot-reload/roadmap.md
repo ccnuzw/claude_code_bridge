@@ -197,6 +197,15 @@ Date: 2026-06-28
   workflow as `Guard dynamic agent lifecycle smoke`, with workflow text
   coverage in `test/test_dynamic_agent_lifecycle_smoke_script.py`. This makes
   fake-provider park/resume/auto-unload behavior part of the regular CI gate.
+- Added the first bounded busy-unload bridge: non-dry-run `remove_agent` still
+  blocks before namespace mutation when the target agent is busy or has
+  outstanding work, but now records an active unload drain in
+  `.ccb/ccbd/reload-drain.json`, exposes drain diagnostics in the blocked
+  payload, rejects new dispatcher work for draining agents, and retires the
+  drain record after a later idle retry successfully unloads the agent.
+  Focused verification passed with
+  `pytest -q test/test_ccbd_reload_drain.py test/test_ccbd_reload_apply.py test/test_v2_ccbd_dispatcher.py`
+  (`78 passed`).
 
 ## In Progress
 
@@ -204,13 +213,13 @@ Date: 2026-06-28
   accepted user-path classes are implemented for view-only, append-only
   add-agent/add-window, idle remove-agent, runtime dynamic add, runtime dynamic
   release, busy retain, empty dynamic-window cleanup, config-only park/resume
-  dispatch toggling, compact-startup pane identity preservation, batch release,
-  batch move into explicit review/loop/node windows, and mixed move-plus-add
-  explicit `[windows]` reload. Live `codex` and `claude` move,
-  same-window `1->6->1`, and lifecycle park/resume smokes have passed; broader
-  provider lifecycle matrix coverage,
-  daemon-pushed sidebar refresh, replacement, arbitrary layout reshapes, and
-  background config watching remain deferred.
+  dispatch toggling, compact-startup pane identity preservation, bounded
+  busy-unload drain recording, batch release, batch move into explicit
+  review/loop/node windows, and mixed move-plus-add explicit `[windows]`
+  reload. Live `codex` and `claude` move, same-window `1->6->1`, and lifecycle
+  park/resume smokes have passed; broader provider lifecycle matrix coverage,
+  daemon-pushed sidebar refresh, automatic drain retry, replacement, arbitrary
+  layout reshapes, and background config watching remain deferred.
 
 ## Next
 
@@ -227,7 +236,9 @@ Date: 2026-06-28
    cleanup.
 3. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
    validation; avoid polling or steady-state scans.
-4. Add bounded draining follow-up for busy unload instead of stable rejection.
+4. Add automatic drain retry/status surfacing for busy unload records; the
+   first bridge records bounded drains and blocks new work, but does not yet
+   auto-apply the unload when the agent becomes idle.
 5. Expose replacement only after unload semantics are safe; busy replacement
    remains pending with explicit bounds.
 

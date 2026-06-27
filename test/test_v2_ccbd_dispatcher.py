@@ -16,6 +16,7 @@ from agents.models import (
     WorkspaceMode,
 )
 from ccbd.api_models import DeliveryScope, JobStatus, MessageEnvelope, TargetKind
+from ccbd.reload_drain import DrainIntent, DrainQueueStore
 from ccbd.services.dispatcher import JobDispatcher
 from ccbd.services.runtime import RuntimeService
 from ccbd.services.registry import AgentRegistry
@@ -522,6 +523,57 @@ def test_dispatcher_broadcast_skips_dispatch_disabled_agents(tmp_path: Path) -> 
     )
 
     assert receipt.submission_id is not None
+    assert [job.agent_name for job in receipt.jobs] == ['codex']
+
+
+def test_dispatcher_rejects_targets_with_active_reload_drain(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-draining-target'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    store = DrainQueueStore(layout)
+    result = store.load().enqueue(
+        DrainIntent(
+            intent_id='drain-claude',
+            intent_kind='unload',
+            agent_name='claude',
+            created_at_s=1.0,
+            reason='test drain',
+        ),
+        now_s=1.0,
+    )
+    store.save(result.queue)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-18T00:00:00Z')
+
+    with pytest.raises(Exception, match='agent claude is draining and rejects new work'):
+        dispatcher.submit(
+            MessageEnvelope(
+                project_id=ctx.project_id,
+                to_agent='claude',
+                from_actor='user',
+                body='hello',
+                task_id='task-1',
+                reply_to=None,
+                message_type='ask',
+                delivery_scope=DeliveryScope.SINGLE,
+            )
+        )
+
+    receipt = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='all',
+            from_actor='user',
+            body='broadcast',
+            task_id='task-2',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.BROADCAST,
+        )
+    )
     assert [job.agent_name for job in receipt.jobs] == ['codex']
 
 

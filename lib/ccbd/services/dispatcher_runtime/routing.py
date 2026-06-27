@@ -4,6 +4,7 @@ from typing import Iterable
 
 from agents.models import QueuePolicy, normalize_agent_name
 from ccbd.api_models import DeliveryScope
+from ccbd.reload_drain import DrainQueueStore
 from mailbox_runtime.targets import NON_AGENT_ACTORS
 
 from .records import get_job, latest_for_agent
@@ -43,6 +44,8 @@ def validate_targets_available(dispatcher, targets: Iterable[str]) -> None:
         spec = dispatcher._registry.spec_for(agent_name)
         if bool(getattr(spec, 'dispatch_disabled', False)):
             raise dispatcher._dispatch_rejected_error(f'agent {agent_name} is dispatch-disabled')
+        if _drain_blocks_dispatch(dispatcher, agent_name):
+            raise dispatcher._dispatch_rejected_error(f'agent {agent_name} is draining and rejects new work')
         if spec.queue_policy is QueuePolicy.REJECT_WHEN_BUSY and dispatcher._has_outstanding_work(agent_name):
             raise dispatcher._dispatch_rejected_error(f'agent {agent_name} rejects new work while busy')
 
@@ -51,6 +54,8 @@ def _ensure_dispatch_enabled(dispatcher, agent_name: str):
     spec = dispatcher._registry.spec_for(agent_name)
     if bool(getattr(spec, 'dispatch_disabled', False)):
         raise dispatcher._dispatch_rejected_error(f'agent {agent_name} is dispatch-disabled')
+    if _drain_blocks_dispatch(dispatcher, agent_name):
+        raise dispatcher._dispatch_rejected_error(f'agent {agent_name} is draining and rejects new work')
     return spec
 
 
@@ -59,7 +64,14 @@ def _dispatch_disabled(dispatcher, agent_name: str) -> bool:
         spec = dispatcher._registry.spec_for(agent_name)
     except Exception:
         return True
-    return bool(getattr(spec, 'dispatch_disabled', False))
+    return bool(getattr(spec, 'dispatch_disabled', False)) or _drain_blocks_dispatch(dispatcher, agent_name)
+
+
+def _drain_blocks_dispatch(dispatcher, agent_name: str) -> bool:
+    try:
+        return DrainQueueStore(dispatcher._layout).load().blocks_new_work_for(agent_name)
+    except Exception:
+        return False
 
 
 def resolve_watch_target(dispatcher, target: str) -> tuple[str, str]:

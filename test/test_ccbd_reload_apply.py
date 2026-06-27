@@ -609,6 +609,7 @@ def test_additive_reload_apply_can_readd_same_agent_after_unload_residue(tmp_pat
 
 def test_additive_reload_apply_blocks_busy_remove_before_namespace_patch(tmp_path: Path) -> None:
     app = _started_app(tmp_path / 'repo-remove-busy', BASE_CONFIG)
+    app.reload_drain_clock_s = lambda: 10.0
     old_graph = app.service_graph
     new_config = _load_config(app.project_root, REMOVE_AGENT_CONFIG)
     _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
@@ -629,8 +630,62 @@ def test_additive_reload_apply_blocks_busy_remove_before_namespace_patch(tmp_pat
     assert result.stage == 'plan'
     assert result.plan_class == 'remove_agent'
     assert result.diagnostics['reason'] == 'agent_busy'
+    assert result.diagnostics['drain_action'] == 'enqueued'
+    assert result.diagnostics['drain_accepted'] is True
+    assert result.diagnostics['drain_record']['phase'] == 'draining'
+    assert result.diagnostics['drain_record']['status'] == 'waiting'
+    assert result.diagnostics['drain_record']['busy'] is True
+    assert result.diagnostics['drain_queue_pending_count'] == 1
     assert result.diagnostics['graph_published'] is False
     assert app.service_graph is old_graph
+    drain_records = app.reload_drain_store.load().active_records_for('agent2')
+    assert len(drain_records) == 1
+    assert drain_records[0].status == 'waiting'
+
+
+def test_additive_reload_apply_idle_retry_retires_busy_remove_drain_record(tmp_path: Path) -> None:
+    app = _started_app(tmp_path / 'repo-remove-busy-retry', BASE_CONFIG)
+    times = iter([10.0, 20.0])
+    app.reload_drain_clock_s = lambda: next(times)
+    new_config = _load_config(app.project_root, REMOVE_AGENT_CONFIG)
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
+    runtime = app.service_graph.registry.get('agent2')
+    assert runtime is not None
+    app.runtime_service.patch_runtime_state(runtime, state=AgentState.BUSY)
+
+    blocked = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=_fail_with('busy remove must not patch namespace'),
+        run_runtime_mount_fn=_fail_with('busy remove must not mutate runtime'),
+        publish_transaction_fn=_fail_with('busy remove must not publish'),
+    )
+    assert blocked.status == 'blocked'
+    assert app.reload_drain_store.load().active_records_for('agent2')
+
+    app.runtime_service.patch_runtime_state(runtime, state=AgentState.IDLE)
+    published = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=lambda **_kwargs: _namespace_patch_result(
+            created_panes=(),
+            agent_panes={},
+            removed_agents={'agent2': '%2'},
+            removed_panes=('%2',),
+            preserved_before={'agent1': '%1'},
+            preserved_after={'agent1': '%1'},
+        ),
+    )
+
+    assert published.status == 'published'
+    assert published.plan_class == 'remove_agent'
+    assert published.runtime_mount['status'] == 'unloaded'
+    drain_queue = app.reload_drain_store.load()
+    assert drain_queue.active_records_for('agent2') == ()
+    assert drain_queue.records[0].status == 'retired'
+    assert drain_queue.records[0].phase == 'retired'
 
 
 def test_additive_reload_apply_namespace_patch_failure_stops_before_runtime_and_publish(
@@ -1000,6 +1055,7 @@ def test_project_reload_non_dry_run_busy_remove_blocks_without_namespace_mutatio
     monkeypatch,
 ) -> None:
     app = _started_app(tmp_path / 'repo-remove-busy-handler', BASE_CONFIG)
+    app.reload_drain_clock_s = lambda: 10.0
     old_graph = app.service_graph
     _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
     runtime = old_graph.registry.get('agent2')
@@ -1018,6 +1074,10 @@ def test_project_reload_non_dry_run_busy_remove_blocks_without_namespace_mutatio
     assert payload['plan_class'] == 'remove_agent'
     assert payload['mutation_enabled'] is False
     assert payload['diagnostics']['reason'] == 'agent_busy'
+    assert payload['diagnostics']['drain_action'] == 'enqueued'
+    assert payload['diagnostics']['drain_accepted'] is True
+    assert payload['diagnostics']['drain_record']['status'] == 'waiting'
+    assert app.reload_drain_store.load().active_records_for('agent2')
     assert payload['diagnostics']['graph_published'] is False
     assert app.service_graph is old_graph
 

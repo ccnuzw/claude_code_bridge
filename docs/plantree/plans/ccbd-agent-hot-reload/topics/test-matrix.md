@@ -138,6 +138,9 @@ Date: 2026-05-29
   - busy/idle predicate is injectable;
   - state-machine and store tests do not call tmux, publish a service graph,
     patch namespace, mutate runtime authority, or start/stop providers.
+  - non-dry-run busy `remove_agent` persists an unload drain before returning
+    blocked, dispatcher rejects active-drain targets, and a later successful
+    idle retry retires the record.
 - Handler graph routing:
   - after graph replacement, `submit`, `project_view`, `ping`, and focus
     handlers resolve the new graph;
@@ -166,8 +169,12 @@ Date: 2026-05-29
 - Existing agent removed from `[windows]`:
   - Phase 3 dry-run reports `remove_agent`;
   - idle unload retires runtime and removes only the target pane;
-  - busy unload returns a stable rejection before pane kill; bounded draining is
-    a follow-up;
+  - busy unload returns a stable rejection before pane kill, records an active
+    bounded unload drain, and exposes the drain record in blocked diagnostics;
+  - active unload drains reject new dispatcher work for the draining agent and
+    remove draining agents from broadcast target resolution;
+  - after the runtime becomes idle, a later successful unload retries the same
+    `remove_agent` path and retires the drain record;
   - existing unrelated processes are not killed by reload.
 - Existing agent provider/workspace/model/key/url change after replacement is
   enabled:
