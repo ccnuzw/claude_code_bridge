@@ -147,6 +147,10 @@ Date: 2026-05-29
   - `project_reload_config` and CLI reload rendering expose active drain count,
     agent, phase/status, busy state, bounded deadlines, and `ccb reload` as the
     explicit retry path.
+  - `project_view` exposes the same active drain summary and marks affected
+    agent rows with `reload_drain` and
+    `dispatch_blocked_by_reload_drain=true`; project-view cache reuse is
+    invalidated when `reload-drain.json` appears or changes.
 - Handler graph routing:
   - after graph replacement, `submit`, `project_view`, `ping`, and focus
     handlers resolve the new graph;
@@ -211,6 +215,9 @@ Date: 2026-05-29
 - Project view/sidebar:
   - successful reload invalidates cache;
   - next `project_view` includes new agents/windows;
+  - active reload drains appear in `project_view.reload_drains` and on the
+    affected agent row, including long-TTL cache invalidation when the drain
+    file changes;
   - sidebar refresh control and `r` shortcut submit non-dry-run reload and then
     refresh project view;
   - daemon-pushed sidebar refresh remains deferred unless later manual

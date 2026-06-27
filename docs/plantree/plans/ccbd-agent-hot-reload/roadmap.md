@@ -222,6 +222,15 @@ Date: 2026-06-28
   `dynamic_agent_lifecycle_smoke_status: ok`, covering dynamic add, ask,
   park/reject, resume/ask, short-lived reviewer unload, planner cleanup,
   layout cleanup, and final `kill`.
+- Exposed active reload drain state in `project_view` for sidebar/orchestrator
+  consumers: the view now includes top-level `reload_drains`, affected agent
+  rows carry `reload_drain` and `dispatch_blocked_by_reload_drain=true`, and
+  the project-view cache key includes the `reload-drain.json` file revision so
+  a long TTL cannot hide newly recorded or retired drains. Focused
+  verification passed with `pytest -q test/test_ccbd_project_view.py`
+  (`67 passed`) plus the reload/drain/dispatcher slice
+  `pytest -q test/test_ccbd_reload_drain.py test/test_ccbd_reload_apply.py test/test_v2_cli_render.py test/test_v2_ccbd_dispatcher.py::test_dispatcher_rejects_targets_with_active_reload_drain`
+  (`77 passed`).
 
 ## In Progress
 
@@ -230,7 +239,8 @@ Date: 2026-06-28
   add-agent/add-window, idle remove-agent, runtime dynamic add, runtime dynamic
   release, busy retain, empty dynamic-window cleanup, config-only park/resume
   dispatch toggling, compact-startup pane identity preservation, bounded
-  busy-unload drain recording/status surfacing, batch release, batch move into explicit
+  busy-unload drain recording/status surfacing in reload and project-view
+  surfaces, batch release, batch move into explicit
   review/loop/node windows, and mixed move-plus-add explicit `[windows]`
   reload. Live `codex` and `claude` move, same-window `1->6->1`, and lifecycle
   park/resume smokes have passed; broader provider lifecycle matrix coverage,
@@ -250,8 +260,9 @@ Date: 2026-06-28
    evidence for unchanged old panes, newly-mounted agents, released dynamic
    panes, moved panes, mixed move-plus-add transactions, and empty-window
    cleanup.
-3. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
-   validation; avoid polling or steady-state scans.
+3. Validate whether sidebar's existing project-view polling/refresh path is
+   enough for drain status visibility; add a lightweight daemon-pushed sidebar
+   refresh signal only if manual validation proves it is needed.
 4. Add automatic drain retry only after explicit retry remains stable; the
    first bridge records bounded drains, blocks new work, surfaces status, and
    lets `ccb reload` retry when the agent becomes idle, but does not yet run a

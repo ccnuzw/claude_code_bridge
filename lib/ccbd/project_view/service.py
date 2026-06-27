@@ -11,6 +11,7 @@ from agents.config_loader import load_project_config
 from agents.models import AgentState
 from ccbd.api_models import JobStatus, TargetKind
 from ccbd.models import MountState
+from ccbd.reload_drain_status import reload_drain_revision, reload_drain_status_payload
 from ccbd.project_focus.tmux import backend_for_namespace, refresh_sidebar_panes
 from ccbd.services.dispatcher_runtime import comms_recoverability_for_job
 from ccbd.system import parse_utc_timestamp, utc_now
@@ -242,6 +243,7 @@ class _CachedProjectViewResponse:
     response: dict[str, object]
     expires_at: float
     dispatcher_revision: int
+    drain_revision: tuple[int, int] | None
 
 
 class ProjectViewService:
@@ -268,6 +270,7 @@ class ProjectViewService:
         ttl_s = max(0.0, ttl_ms / 1000.0)
         now = monotonic()
         dispatcher_revision = _dispatcher_project_view_revision(self._deps.dispatcher)
+        drain_revision = reload_drain_revision(self._deps)
         did_refresh_sidebar = False
         if ttl_s > 0:
             cached = self._cached_response
@@ -275,6 +278,7 @@ class ProjectViewService:
                 cached is not None
                 and now < cached.expires_at
                 and cached.dispatcher_revision == dispatcher_revision
+                and cached.drain_revision == drain_revision
             ):
                 did_refresh_sidebar = self._consume_sidebar_refresh_request()
                 if did_refresh_sidebar:
@@ -303,6 +307,7 @@ class ProjectViewService:
                 response=response,
                 expires_at=monotonic() + ttl_s,
                 dispatcher_revision=dispatcher_revision,
+                drain_revision=drain_revision,
             )
         _record_project_view_cache_miss(
             self._deps.metrics,
@@ -364,6 +369,8 @@ def build_project_view(
     queued_jobs = _queued_jobs_by_agent(deps.dispatcher)
     callback_waits = _callback_waits_by_parent_agent(deps.dispatcher)
     provider_runtime_by_agent = _provider_runtime_by_agent(deps.dispatcher)
+    reload_drains = reload_drain_status_payload(deps)
+    active_drain_by_agent = _active_reload_drains_by_agent(reload_drains)
 
     agents = [
         _agent_view(
@@ -379,6 +386,7 @@ def build_project_view(
             queued_jobs=queued_jobs.get(agent_name, ()),
             callback_wait=callback_waits.get(agent_name),
             provider_runtimes=provider_runtime_by_agent.get(agent_name, ()),
+            reload_drain=active_drain_by_agent.get(agent_name),
         )
         for order, agent_name in enumerate(_agent_order(deps.config))
     ]
@@ -400,6 +408,7 @@ def build_project_view(
         ),
         'windows': _window_views(config=deps.config, focus=focus, tmux_snapshot=tmux_snapshot),
         'agents': agents,
+        'reload_drains': reload_drains,
         'comms': _comms_view(
             deps,
             context=context,
@@ -436,6 +445,8 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _project_view_work_pending(deps: ProjectViewDependencies) -> bool:
+    if _reload_drain_active_count(deps) > 0:
+        return True
     dispatcher_state = getattr(getattr(deps, 'dispatcher', None), '_state', None)
     if dispatcher_state is not None:
         try:
@@ -455,6 +466,14 @@ def _project_view_work_pending(deps: ProjectViewDependencies) -> bool:
     except Exception:
         return True
     return any(getattr(runtime, 'state', None) in {AgentState.STARTING, AgentState.BUSY, AgentState.DEGRADED} for runtime in runtimes)
+
+
+def _reload_drain_active_count(deps: ProjectViewDependencies) -> int:
+    payload = reload_drain_status_payload(deps)
+    try:
+        return int(payload.get('active_count') or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _record_project_view_cache_hit(metrics, *, response_started: float) -> None:
@@ -507,6 +526,7 @@ def _agent_view(
     callback_wait,
     active: bool = False,
     provider_runtimes: tuple[dict[str, object], ...] = (),
+    reload_drain: dict[str, object] | None = None,
 ) -> dict[str, object]:
     spec = deps.config.agents[agent_name]
     runtime = deps.registry.get(agent_name)
@@ -577,10 +597,23 @@ def _agent_view(
         'runtime_health': getattr(runtime, 'health', None) if runtime is not None else None,
         'reconcile_state': getattr(runtime, 'reconcile_state', None) if runtime is not None else None,
         'workspace_path': getattr(runtime, 'workspace_path', None) if runtime is not None else None,
+        'reload_drain': dict(reload_drain) if reload_drain is not None else None,
+        'dispatch_blocked_by_reload_drain': reload_drain is not None,
     }
     if provider_runtime is not None:
         record['provider_runtime'] = provider_runtime
     return record
+
+
+def _active_reload_drains_by_agent(reload_drains: dict[str, object]) -> dict[str, dict[str, object]]:
+    records: dict[str, dict[str, object]] = {}
+    for item in tuple(reload_drains.get('active_records') or ()):
+        if not isinstance(item, dict):
+            continue
+        agent_name = str(item.get('agent') or '').strip()
+        if agent_name:
+            records[agent_name] = dict(item)
+    return records
 
 
 def _provider_activity_needs_pane_error_probe(provider_activity: object | None, generated_at: str) -> bool:

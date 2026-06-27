@@ -30,6 +30,7 @@ from ccbd.project_view import (
     resolve_agent_activity,
 )
 import ccbd.project_view.service as project_view_service
+from ccbd.reload_drain import DrainIntent, DrainQueueStore, plan_drain_transition
 from ccbd.services.dispatcher import JobDispatcher
 from ccbd.services.mount import MountManager
 from ccbd.services.project_namespace import ProjectNamespaceController
@@ -337,6 +338,99 @@ def _project_view_service(
             clock=lambda: NOW,
         )
     )
+
+
+def _write_active_unload_drain(layout: PathLayout, agent_name: str):
+    store = DrainQueueStore(layout)
+    intent = DrainIntent(
+        intent_id=f'drain-test-{agent_name}',
+        intent_kind='unload',
+        agent_name=agent_name,
+        created_at_s=10.0,
+        reason='test busy unload',
+    )
+    result = store.load().enqueue(intent, now_s=10.0)
+    record = plan_drain_transition(result.record, now_s=10.0, is_busy=lambda _record: True)
+    store.save(result.queue.replace_record(record))
+    return record
+
+
+def test_project_view_exposes_active_reload_drains(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-drain-view'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        registry.upsert(_runtime(agent_name, project_id=project_id))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    _write_active_unload_drain(layout, 'agent2')
+
+    response = _project_view_service(
+        project_root=project_root,
+        project_id=project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        dispatcher=dispatcher,
+    ).build_response()
+    view = response['view']
+
+    assert view['reload_drains']['active_count'] == 1
+    assert view['reload_drains']['retry_command'] == 'ccb reload'
+    assert view['reload_drains']['active_records'][0]['agent'] == 'agent2'
+    agent1 = next(agent for agent in view['agents'] if agent['name'] == 'agent1')
+    agent2 = next(agent for agent in view['agents'] if agent['name'] == 'agent2')
+    assert agent1['reload_drain'] is None
+    assert agent1['dispatch_blocked_by_reload_drain'] is False
+    assert agent2['dispatch_blocked_by_reload_drain'] is True
+    assert agent2['reload_drain']['intent_kind'] == 'unload'
+    assert agent2['reload_drain']['phase'] == 'draining'
+    assert agent2['reload_drain']['status'] == 'waiting'
+
+
+def test_project_view_cache_invalidates_when_reload_drain_file_changes(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-drain-cache'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        registry.upsert(_runtime(agent_name, project_id=project_id))
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(
+        project_id=project_id,
+        pid=123,
+        socket_path=layout.ccbd_socket_path,
+        generation=7,
+        started_at=NOW,
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            paths=layout,
+            clock=lambda: NOW,
+            cache_ttl_ms=60000,
+        )
+    )
+
+    first = service.build_response()
+    _write_active_unload_drain(layout, 'agent2')
+    second = service.build_response()
+
+    assert first['view']['reload_drains']['active_count'] == 0
+    assert second is not first
+    assert second['view']['reload_drains']['active_count'] == 1
+    assert second['view']['agents'][1]['dispatch_blocked_by_reload_drain'] is True
 
 
 def test_project_view_uses_provider_activity_without_ccb_job(tmp_path: Path) -> None:
