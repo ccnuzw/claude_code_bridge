@@ -546,6 +546,60 @@ def test_agent_move_dynamic_agent_back_removes_empty_source_window(
     ]
 
 
+def test_agent_move_dynamic_agent_from_shared_source_keeps_source_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    for helper in ('helper1', 'helper2'):
+        result, _payload, stderr = _run_phase2(
+            [
+                'agent',
+                'add',
+                f'{helper}:codex',
+                '--role',
+                'agentroles.general',
+                '--window',
+                'review',
+                '--hidden',
+                '--json',
+            ],
+            cwd=project_root,
+        )
+        assert result == 0, stderr
+    before_move = load_project_config(project_root).config
+
+    result, moved, stderr = _run_phase2(
+        ['agent', 'move', 'helper1', '--window', 'main', '--reason', 'split shared review source', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert moved['previous_window_name'] == 'review'
+    assert moved['resolved_window_name'] == 'main'
+    after_move = load_project_config(project_root).config
+    assert [(window.name, window.agent_names, window.layout_spec) for window in after_move.windows] == [
+        ('main', ('main', 'helper1'), 'main:codex; helper1:codex'),
+        ('review', ('helper2',), 'helper2:codex'),
+    ]
+    plan = build_reload_dry_run_plan(before_move, after_move, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert [item['op'] for item in plan['operations']] == ['move_agent']
+    assert plan['namespace_patch_plan']['steps'] == [
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'main',
+            'agent': 'helper1',
+            'role': 'agent',
+            'slot_key': 'helper1',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        }
+    ]
+
+
 def test_agent_add_with_loop_node_places_agent_in_node_window(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

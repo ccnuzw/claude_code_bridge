@@ -23,6 +23,7 @@ FLOW_NAMES = (
     "same-window-continuous",
     "single-agent-window",
     "move-agent",
+    "move-shared-source",
     "window-class",
     "arrange-window",
     "window-class-continuous",
@@ -321,6 +322,19 @@ def run_dynamic_layout_smoke(
             _run_move_agent_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-move-agent",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "move-shared-source" in flow_names:
+        results.append(
+            _run_move_shared_source_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-move-shared-source",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -1153,6 +1167,234 @@ def _run_move_agent_flow(
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
 
 
+def _run_move_shared_source_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_same_window_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        add_results = []
+        for helper in ("helper1", "helper2"):
+            add = _run_json(
+                f"add_{helper}_to_review",
+                [
+                    str(ccb_test),
+                    "--project",
+                    str(project_root),
+                    "agent",
+                    "add",
+                    f"{helper}:{provider}",
+                    "--role",
+                    "agentroles.general",
+                    "--window",
+                    "review",
+                    "--hidden",
+                    "--json",
+                ],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+            commands.append(add)
+            add_results.append(add)
+        before_move = _run_json("layout_before_shared_source_move", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(before_move)
+        pre_move_stay_ask = _run(
+            "ask_helper2_before_shared_source_move",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper2"],
+            cwd=test_root,
+            env=env,
+            input_text="move-shared-source smoke ping helper2 before move\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(pre_move_stay_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(pre_move_stay_ask,),
+                timeout=command_timeout_s,
+            )
+        )
+        move = _run_json(
+            "move_helper1_to_main_from_shared_source",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "move",
+                "helper1",
+                "--window",
+                "main",
+                "--reason",
+                "dynamic layout shared-source move smoke",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(move)
+        after_move = _run_json("layout_after_shared_source_move", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_move)
+        post_move_moved_ask = _run(
+            "ask_helper1_after_shared_source_move",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper1"],
+            cwd=test_root,
+            env=env,
+            input_text="move-shared-source smoke ping helper1 after move\n",
+            timeout=command_timeout_s,
+        )
+        post_move_stay_ask = _run(
+            "ask_helper2_after_shared_source_move",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper2"],
+            cwd=test_root,
+            env=env,
+            input_text="move-shared-source smoke ping helper2 after move\n",
+            timeout=command_timeout_s,
+        )
+        commands.extend([post_move_moved_ask, post_move_stay_ask])
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(post_move_moved_ask, post_move_stay_ask),
+                timeout=command_timeout_s,
+            )
+        )
+        move_back = _run_json(
+            "move_helper1_back_to_shared_source",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "move",
+                "helper1",
+                "--window",
+                "review",
+                "--reason",
+                "dynamic layout shared-source move return",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(move_back)
+        after_return = _run_json("layout_after_shared_source_return", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_return)
+        return_ask = _run(
+            "ask_helper1_after_shared_source_return",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper1"],
+            cwd=test_root,
+            env=env,
+            input_text="move-shared-source smoke ping helper1 after return\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(return_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(return_ask,),
+                timeout=command_timeout_s,
+            )
+        )
+        releases = []
+        for helper in ("helper1", "helper2"):
+            release = _run_json(
+                f"remove_shared_source_{helper}",
+                [
+                    str(ccb_test),
+                    "--project",
+                    str(project_root),
+                    "agent",
+                    "remove",
+                    helper,
+                    "--policy",
+                    "unload",
+                    "--idle-only",
+                    "--json",
+                ],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+            commands.append(release)
+            releases.append(release)
+        after_cleanup = _run_json("layout_after_shared_source_cleanup", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_cleanup)
+        before_panes = _agent_panes(before_move)
+        after_move_panes = _agent_panes(after_move)
+        after_return_panes = _agent_panes(after_return)
+        moved_pane = before_panes.get("helper1")
+        stay_pane = before_panes.get("helper2")
+        move_apply = dict(_payload(move).get("apply") or {})
+        move_back_apply = dict(_payload(move_back).get("apply") or {})
+        first_release_apply = dict(_payload(releases[0]).get("apply") or {}) if releases else {}
+        final_release_apply = dict(_payload(releases[-1]).get("apply") or {}) if releases else {}
+        checks = {
+            "first_add_window_plan": _payload(add_results[0]).get("apply", {}).get("plan_class") == "add_window",
+            "second_add_agent_plan": _payload(add_results[1]).get("apply", {}).get("plan_class") == "add_agent",
+            "before_move_order": _window_agents(before_move) == {"main": ["main"], "review": ["helper1", "helper2"]},
+            "moved_pane_recorded": bool(moved_pane),
+            "stay_pane_recorded": bool(stay_pane),
+            "pre_move_stay_ask_accepted": _accepted(pre_move_stay_ask),
+            "pre_move_stay_ask_terminal": _watch_commands_terminal(commands),
+            "move_plan_class": move_apply.get("plan_class") == "move_agent",
+            "move_apply_status": move_apply.get("apply_status") == "applied",
+            "move_preserved_moved_pane": move_apply.get("namespace_moved_agents", {}).get("helper1") == moved_pane
+            and after_move_panes.get("helper1") == moved_pane,
+            "move_preserved_stay_pane": after_move_panes.get("helper2") == stay_pane,
+            "move_source_window_retained": not move_apply.get("namespace_removed_windows"),
+            "move_reflowed_source_and_target": move_apply.get("namespace_reflowed_windows") == ["main", "review"],
+            "after_move_order": _window_agents(after_move) == {"main": ["main", "helper1"], "review": ["helper2"]},
+            "post_move_moved_ask_accepted": _accepted(post_move_moved_ask),
+            "post_move_stay_ask_accepted": _accepted(post_move_stay_ask),
+            "post_move_asks_terminal": _watch_commands_terminal(commands),
+            "return_move_plan_class": move_back_apply.get("plan_class") == "move_agent",
+            "return_move_apply_status": move_back_apply.get("apply_status") == "applied",
+            "return_preserved_moved_pane": move_back_apply.get("namespace_moved_agents", {}).get("helper1") == moved_pane
+            and after_return_panes.get("helper1") == moved_pane,
+            "return_preserved_stay_pane": after_return_panes.get("helper2") == stay_pane,
+            "return_kept_review_window": not move_back_apply.get("namespace_removed_windows"),
+            "after_return_order": _window_agents(after_return) == {"main": ["main"], "review": ["helper2", "helper1"]},
+            "return_ask_accepted": _accepted(return_ask),
+            "return_ask_terminal": _watch_commands_terminal(commands),
+            "first_release_kept_review_window": first_release_apply.get("plan_class") == "remove_agent"
+            and not first_release_apply.get("namespace_removed_windows"),
+            "final_release_removed_review_window": final_release_apply.get("plan_class") == "remove_agent"
+            and final_release_apply.get("namespace_removed_windows") == ["review"],
+            "after_cleanup_only_main": _window_agents(after_cleanup) == {"main": ["main"]},
+            "dynamic_agents_cleaned": _payload(after_cleanup).get("dynamic_agent_count") == 0,
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "move_agent_shared_source", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
 def _run_window_class_flow(
     *,
     test_root: Path,
@@ -1858,6 +2100,15 @@ def _prepare_selected_projects(
             prepare_same_window_project(
                 test_root=test_root,
                 project_name=f"{project_prefix}-move-agent",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "move-shared-source" in flows:
+        prepared.append(
+            prepare_same_window_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-move-shared-source",
                 provider=provider,
                 reset=reset,
             )

@@ -243,6 +243,26 @@ def test_prepare_only_can_generate_move_agent_project(tmp_path: Path) -> None:
     assert 'main = "main:fake"' in config.read_text(encoding="utf-8")
 
 
+def test_prepare_only_can_generate_move_shared_source_project(tmp_path: Path) -> None:
+    module = _load_module()
+
+    payload = module.run_dynamic_layout_smoke(
+        test_root=tmp_path,
+        project_prefix="move-shared-source-prepare",
+        ccb_test=Path(__file__),
+        provider="fake",
+        flows=("move-shared-source",),
+        prepare_only=True,
+        reset=True,
+    )
+
+    assert payload["dynamic_layout_smoke_status"] == "prepared"
+    assert payload["flows"] == ["move-shared-source"]
+    assert len(payload["prepared"]) == 1
+    config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
+    assert 'main = "main:fake"' in config.read_text(encoding="utf-8")
+
+
 def test_prepare_only_can_generate_arrange_window_project(tmp_path: Path) -> None:
     module = _load_module()
 
@@ -799,6 +819,215 @@ def test_move_agent_flow_moves_helper_to_new_window_and_cleans_up(
     assert [name for name, _command in calls if name.startswith("watch_job_")] == [
         "watch_job_before",
         "watch_job_after",
+        "watch_job_return",
+    ]
+
+
+def test_move_shared_source_flow_keeps_remaining_source_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    project_root = tmp_path / "project"
+    role_store = tmp_path / "roles"
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        module,
+        "prepare_same_window_project",
+        lambda **_kwargs: {"project_root": str(project_root), "role_store": str(role_store)},
+    )
+
+    def layout_payload(windows: list[tuple[str, list[tuple[str, str]]]], *, dynamic_count: int) -> dict[str, object]:
+        return {
+            "dynamic_agent_count": dynamic_count,
+            "windows": [
+                {
+                    "name": name,
+                    "agent_names": [agent for agent, _pane in agents],
+                    "observed": _observed_window([pane for _agent, pane in agents], [agent for agent, _pane in agents]),
+                    "agents": [{"agent": agent, "pane_id": pane} for agent, pane in agents],
+                }
+                for name, agents in windows
+            ],
+        }
+
+    def fake_run(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        jobs = {
+            "ask_helper2_before_shared_source_move": "job_before",
+            "ask_helper1_after_shared_source_move": "job_after_moved",
+            "ask_helper2_after_shared_source_move": "job_after_stay",
+            "ask_helper1_after_shared_source_return": "job_return",
+        }
+        if name in jobs:
+            target = "helper1" if "helper1" in name else "helper2"
+            job_id = jobs[name]
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": f"accepted job={job_id} target={target}\n[CCB_ASYNC_SUBMITTED job={job_id} target={target}]\n",
+                "stderr": "",
+            }
+        if name.startswith("watch_job_"):
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "watch_status: terminal\nstatus: completed\n",
+                "stderr": "",
+            }
+        return {"name": name, "returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+    def fake_run_json(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name == "add_helper1_to_review":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "add_window"}},
+            }
+        if name == "add_helper2_to_review":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "add_agent"}},
+            }
+        if name == "layout_before_shared_source_move":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": layout_payload(
+                    [("main", [("main", "%1")]), ("review", [("helper1", "%2"), ("helper2", "%3")])],
+                    dynamic_count=2,
+                ),
+            }
+        if name == "move_helper1_to_main_from_shared_source":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "move_agent",
+                        "apply_status": "applied",
+                        "namespace_moved_agents": {"helper1": "%2"},
+                        "namespace_moved_agent_windows": {"helper1": "main"},
+                        "namespace_reflowed_windows": ["main", "review"],
+                        "namespace_removed_windows": [],
+                    }
+                },
+            }
+        if name == "layout_after_shared_source_move":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": layout_payload(
+                    [("main", [("main", "%1"), ("helper1", "%2")]), ("review", [("helper2", "%3")])],
+                    dynamic_count=2,
+                ),
+            }
+        if name == "move_helper1_back_to_shared_source":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "move_agent",
+                        "apply_status": "applied",
+                        "namespace_moved_agents": {"helper1": "%2"},
+                        "namespace_moved_agent_windows": {"helper1": "review"},
+                        "namespace_reflowed_windows": ["main", "review"],
+                        "namespace_removed_windows": [],
+                    }
+                },
+            }
+        if name == "layout_after_shared_source_return":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": layout_payload(
+                    [("main", [("main", "%1")]), ("review", [("helper2", "%3"), ("helper1", "%2")])],
+                    dynamic_count=2,
+                ),
+            }
+        if name == "remove_shared_source_helper1":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "remove_agent",
+                        "namespace_removed_agents": {"helper1": "%2"},
+                        "namespace_removed_windows": [],
+                    }
+                },
+            }
+        if name == "remove_shared_source_helper2":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "remove_agent",
+                        "namespace_removed_agents": {"helper2": "%3"},
+                        "namespace_removed_windows": ["review"],
+                    }
+                },
+            }
+        if name == "layout_after_shared_source_cleanup":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": layout_payload([("main", [("main", "%1")])], dynamic_count=0),
+            }
+        raise AssertionError(f"unexpected json command {name}")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_run_json", fake_run_json)
+
+    payload = module._run_move_shared_source_flow(
+        test_root=tmp_path,
+        project_name="move-shared-source",
+        provider="fake",
+        ccb_test=Path("ccb_test"),
+        provider_home=tmp_path / "home",
+        command_timeout_s=1,
+        reset=True,
+        keep_running=False,
+    )
+
+    assert payload["flow_status"] == "ok"
+    assert payload["checks"]["before_move_order"] is True
+    assert payload["checks"]["move_source_window_retained"] is True
+    assert payload["checks"]["move_preserved_stay_pane"] is True
+    assert payload["checks"]["after_move_order"] is True
+    assert payload["checks"]["return_kept_review_window"] is True
+    assert payload["checks"]["after_return_order"] is True
+    assert payload["checks"]["final_release_removed_review_window"] is True
+    assert payload["checks"]["dynamic_agents_cleaned"] is True
+    assert [name for name, _command in calls if name.startswith("watch_job_")] == [
+        "watch_job_before",
+        "watch_job_after_moved",
+        "watch_job_after_stay",
         "watch_job_return",
     ]
 
@@ -1466,12 +1695,14 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert "--provider fake" in text
     assert "--flow same-window-continuous" in text
     assert "--flow move-agent" in text
+    assert "--flow move-shared-source" in text
     assert "--flow window-class-continuous" in text
     assert "--flow arrange-window" in text
     assert 'payload["dynamic_layout_smoke_status"] == "ok"' in text
-    assert 'payload["flows"] == ["same-window-continuous", "move-agent", "window-class-continuous", "arrange-window"]' in text
+    assert 'payload["flows"] == ["same-window-continuous", "move-agent", "move-shared-source", "window-class-continuous", "arrange-window"]' in text
     assert 'payload["checks"]["same_window_continuous_1_to_6_to_1"] is True' in text
     assert 'payload["checks"]["move_agent_to_new_window"] is True' in text
+    assert 'payload["checks"]["move_agent_shared_source"] is True' in text
     assert 'payload["checks"]["window_class_continuous_1_to_8_to_1"] is True' in text
     assert 'payload["checks"]["arrange_window_disturb_restore"] is True' in text
     assert 'checks["grew_to_six_order"] is True' in text

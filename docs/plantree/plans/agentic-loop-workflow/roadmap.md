@@ -865,6 +865,18 @@ Date: 2026-06-24
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-watch-regression-latest.json`
   passed `same-window-continuous`, `move-agent`,
   `window-class-continuous`, and `arrange-window`.
+- Extended movement coverage to a shared dynamic source window. The new
+  `move-shared-source` smoke hot-loads `helper1` and `helper2` into `review`,
+  moves only `helper1` to `main`, proves `helper2` stays in `review` with the
+  same pane id and ask reachability, moves `helper1` back into `review`, then
+  unloads both helpers so the empty `review` window is removed only after the
+  last dynamic agent exits. Focused tests passed with `83 passed`; external
+  source-wrapper evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-shared-source-latest.json`
+  returned `move_agent_shared_source=true`; the CI-equivalent fake bundle in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-shared-source-ci-latest.json`
+  passed `same-window-continuous`, `move-agent`, `move-shared-source`,
+  `window-class-continuous`, and `arrange-window`.
 
 ## Next
 
@@ -873,9 +885,10 @@ Date: 2026-06-24
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
 2. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex and
-   Claude opt-in real-provider movement are proven; next evaluate whether
-   multi-agent source windows or mixed moved/new target transactions are worth
-   supporting.
+   Claude opt-in real-provider movement are proven, and shared-source
+   single-agent movement is proven with fake providers; next evaluate whether
+   simultaneous multi-agent moves or mixed moved/new target transactions are
+   worth supporting.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

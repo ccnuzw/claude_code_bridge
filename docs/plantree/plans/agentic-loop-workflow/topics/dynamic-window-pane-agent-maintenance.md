@@ -1067,6 +1067,12 @@ Current evidence:
   `move-agent` runs prove `main -> review -> main -> unload` with terminal asks
   before move, after move, and after return. The smoke harness uses
   `ccb pend --watch` with an explicit watch timeout for these job observations;
+- shared-source movement is now proven for moving one dynamic agent out of a
+  source window that still contains another dynamic agent: `helper1` and
+  `helper2` start in `review`, moving `helper1` to `main` preserves both pane
+  ids, keeps `review` alive with `helper2`, keeps both helpers ask-reachable,
+  and moving `helper1` back appends it after `helper2`; final unload removes
+  `review` only after both helpers exit;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1117,6 +1123,6 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
-- multi-agent source-window movement, and transactions that mix moved panes
-  with newly materialized panes in the same target window;
+- simultaneous multi-agent source-window movement, and transactions that mix
+  moved panes with newly materialized panes in the same target window;
 - user-defined arbitrary window classes.
