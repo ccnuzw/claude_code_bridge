@@ -732,13 +732,26 @@ Date: 2026-06-24
   ask reachability, and cleanup to only `main` plus `plan-orchestrate`.
   `/home/bfly/yunwei/test_ccb2/ci-combined-layout-smoke.json` passed the
   CI-equivalent combined same-window plus window-class continuous run.
+- Landed a repeatable dynamic agent lifecycle policy smoke in the current
+  worktree. `scripts/dynamic_agent_lifecycle_smoke.py` starts an explicit
+  `[windows]` fake-provider project, hot-loads a long-lived
+  `planner_helper` into `plan-orchestrate`, proves `release --policy auto`
+  resolves to `park`, dispatch is disabled, parked `ask` is rejected, and
+  `resume --hidden` preserves the pane and restores ask reachability. The same
+  smoke hot-loads a short-lived `reviewer_helper`, proves `release --policy
+  auto` resolves to `unload`, removes the reviewer pane through
+  `remove_agent`, and cleans up the planner helper back to only static
+  `frontdesk` plus `planner`. Focused tests passed with `5 passed`, adjacent
+  lifecycle/layout script regression passed with `49 passed`, and
+  `/home/bfly/yunwei/test_ccb2/lifecycle-policy-smoke.json` returned
+  `dynamic_agent_lifecycle_smoke_status=ok` with all lifecycle checks true.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
-   middle-removal cases, especially role-class lifecycle policy, manual
-   rearrangement commands, and non-fake provider tolerance.
+   middle-removal cases, especially manual rearrangement commands and
+   non-fake provider tolerance.
 2. Decide the next public CLI surface for dynamic rearrangement: fixed
    auto-reflow is now proven for 1->6, but manual move/park/hide workflows
    still need a separate command and safety contract.

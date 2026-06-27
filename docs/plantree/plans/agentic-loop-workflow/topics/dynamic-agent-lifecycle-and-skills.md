@@ -618,6 +618,12 @@ Current worktree slice:
 - `release` is the non-kill command surface for role-policy release. It defaults
   to `auto`, unloads short-lived execution roles, and parks unknown/long-lived
   roles unless an explicit non-kill policy is supplied;
+- `scripts/dynamic_agent_lifecycle_smoke.py` now provides a repeatable
+  source-wrapper policy smoke for explicit `[windows]`: long-lived planner
+  helpers must park on `release --policy auto`, reject normal `ask` while
+  parked, resume without pane replacement, and regain ask reachability;
+  short-lived reviewer helpers must unload on `release --policy auto` and
+  disappear from layout/runtime state.
 - `park` now means "keep runtime/pane context but disable dispatch":
   lifecycle state `parked` projects `dispatch_disabled=true` into the active
   config, the reload planner treats that as a config-only `view_only_change`,
@@ -710,6 +716,24 @@ Verification evidence:
   created a new `review` window with `reviewer` (`add_window`, pane `%4`),
   verified `ask reviewer`, released reviewer and helper through idle unload,
   removed the empty `review` window, and returned `known_agents` to `['main']`.
+- External dynamic lifecycle policy smoke passed in
+  `/home/bfly/yunwei/test_ccb2/lifecycle-policy-smoke.json`: explicit
+  `[windows]` startup mounted `frontdesk` and `planner`; dynamic
+  `planner_helper:fake --role agentroles.ccb_planner --window-class
+  plan-orchestrate --hidden` returned `role_class=long_lived_interactive` and
+  `plan_class=add_agent`; `release planner_helper --idle-only` returned
+  `resolved_policy=park`, `lifecycle_state=parked`,
+  `plan_class=view_only_change`, and preserved the pane; direct `ask
+  planner_helper` failed with `agent planner_helper is dispatch-disabled`;
+  `resume planner_helper --hidden` restored ask reachability; dynamic
+  `reviewer_helper:fake --role agentroles.code_reviewer --window-class
+  plan-orchestrate --hidden` returned `role_class=short_lived_execution`;
+  `release reviewer_helper --idle-only` returned `resolved_policy=unload`,
+  `plan_class=remove_agent`, and removed the reviewer pane; cleanup returned
+  layout status to only static `frontdesk` plus `planner` with
+  `dynamic_agent_count=0`. Script unit tests passed with `5 passed`, adjacent
+  lifecycle/layout script regression passed with `49 passed`, and
+  `git diff --check` passed.
 
 Known V1 gap:
 
