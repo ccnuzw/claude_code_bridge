@@ -735,6 +735,96 @@ bottom_height = 20
     assert backend.pane_options['%2']['@ccb_namespace_epoch'] == '3'
 
 
+def test_apply_moves_multiple_agents_from_same_source_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+review = "helper1:codex, helper2:claude, helper3:codex"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+"""
+    new_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, helper1:codex, helper2:claude"
+review = "helper3:codex"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+"""
+    current = _load_config(tmp_path / 'current-move-multiple-agents', current_text)
+    new = _load_config(tmp_path / 'new-move-multiple-agents', new_text)
+    layout = PathLayout(_project(tmp_path / 'repo-move-multiple-agents', current_text))
+    backend = _PatchFakeBackend(socket_path=str(layout.ccbd_tmux_socket_path))
+    backend.add_window(layout.ccbd_tmux_session_name, 'main')
+    review_first_pane = backend.add_window(layout.ccbd_tmux_session_name, 'review')
+    backend.sessions[layout.ccbd_tmux_session_name][1]['panes'].extend(['%3', '%4'])
+    backend.pane_counter = 4
+    _seed_agent_pane(backend, '%1', project_id='proj-1', window='main', agent='agent1')
+    _seed_agent_pane(backend, review_first_pane, project_id='proj-1', window='review', agent='helper1')
+    _seed_agent_pane(backend, '%3', project_id='proj-1', window='review', agent='helper2')
+    _seed_agent_pane(backend, '%4', project_id='proj-1', window='review', agent='helper3')
+    _store_namespace(layout, project_id='proj-1')
+    controller = ProjectNamespaceController(layout, 'proj-1', backend_factory=lambda socket_path=None: backend)
+    _forbid_recreate_paths(monkeypatch)
+    plan = build_reload_dry_run_plan(current, new, project_id='proj-1', current_namespace=controller.load())
+
+    result = controller.apply_reload_patch(
+        patch_plan=plan['namespace_patch_plan'],
+        old_topology=build_namespace_topology_plan(current),
+        new_topology=build_namespace_topology_plan(new),
+        timeout_s=0.0,
+    )
+
+    assert result.status == 'applied'
+    assert result.created_windows == ()
+    assert result.created_panes == ()
+    assert result.agent_panes == {}
+    assert result.removed_agents == {}
+    assert result.removed_windows == ()
+    assert result.removed_panes == ()
+    assert result.moved_agents == {'helper1': review_first_pane, 'helper2': '%3'}
+    assert result.moved_agent_windows == {'helper1': 'main', 'helper2': 'main'}
+    assert result.reflowed_windows == ('main', 'review')
+    assert result.reflow_errors == {}
+    assert result.preserved_before == {
+        'agent1': '%1',
+        'helper1': review_first_pane,
+        'helper2': '%3',
+        'helper3': '%4',
+    }
+    assert result.preserved_after == {
+        'agent1': '%1',
+        'helper1': review_first_pane,
+        'helper2': '%3',
+        'helper3': '%4',
+    }
+    assert ('move-pane', '-v', '-s', review_first_pane, '-t', '%1') in backend.tmux_calls
+    assert ('move-pane', '-v', '-s', '%3', '-t', review_first_pane) in backend.tmux_calls
+    assert ('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:review') not in backend.tmux_calls
+    assert backend.sessions[layout.ccbd_tmux_session_name][0]['panes'] == ['%1', review_first_pane, '%3']
+    assert backend.sessions[layout.ccbd_tmux_session_name][1]['panes'] == ['%4']
+    assert backend.pane_options[review_first_pane]['@ccb_slot'] == 'helper1'
+    assert backend.pane_options[review_first_pane]['@ccb_window'] == 'main'
+    assert backend.pane_options[review_first_pane]['@ccb_namespace_epoch'] == '3'
+    assert backend.pane_options['%3']['@ccb_slot'] == 'helper2'
+    assert backend.pane_options['%3']['@ccb_window'] == 'main'
+    assert backend.pane_options['%3']['@ccb_namespace_epoch'] == '3'
+    assert backend.pane_options['%4']['@ccb_slot'] == 'helper3'
+    assert backend.pane_options['%4']['@ccb_window'] == 'review'
+
+
 def test_apply_move_agent_to_new_window_reuses_pane_and_removes_placeholder(
     tmp_path: Path,
     monkeypatch,

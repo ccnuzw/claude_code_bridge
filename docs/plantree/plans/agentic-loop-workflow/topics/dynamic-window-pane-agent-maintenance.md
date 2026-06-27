@@ -1073,6 +1073,13 @@ Current evidence:
   ids, keeps `review` alive with `helper2`, keeps both helpers ask-reachable,
   and moving `helper1` back appends it after `helper2`; final unload removes
   `review` only after both helpers exit;
+- same-transaction movement of multiple agents out of one shared source window
+  is now proven at the reload/namespace patch layer. The planner preserves
+  source-window order by subtracting the full moved-agent set, and namespace
+  apply moves both existing panes into the target window while preserving pane
+  ids, source-window survivorship, and target append order. This proof is
+  intentionally below the CLI layer; a user-facing batch move command remains a
+  separate product/API decision;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1123,6 +1130,7 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
-- simultaneous multi-agent source-window movement, and transactions that mix
-  moved panes with newly materialized panes in the same target window;
+- user-facing batch movement commands, simultaneous all-agents source-window
+  removal, and transactions that mix moved panes with newly materialized panes
+  in the same target window;
 - user-defined arbitrary window classes.

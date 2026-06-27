@@ -60,7 +60,8 @@ def _move_agent_step(
             }
     if new_target is None:
         return {'steps': [], 'blocked': [_blocked_move(agent_name, source_window, target_window, 'target window must exist in new topology')]}
-    if new_source is not None and tuple(item for item in window_agent_names(old_source) if item != agent_name) != window_agent_names(new_source):
+    moved_source_set = set(moved_source_agents)
+    if new_source is not None and tuple(item for item in window_agent_names(old_source) if item not in moved_source_set) != window_agent_names(new_source):
         return {
             'steps': [],
             'blocked': [_blocked_move(agent_name, source_window, target_window, 'source window order must be preserved after move')],

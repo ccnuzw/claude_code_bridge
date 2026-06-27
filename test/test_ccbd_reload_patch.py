@@ -357,6 +357,76 @@ def test_namespace_patch_plan_remove_agent_kills_only_removed_agent_pane(tmp_pat
     ]
 
 
+def test_namespace_patch_plan_moves_multiple_agents_from_same_source_window(tmp_path: Path) -> None:
+    current = _load_config(
+        tmp_path / 'current-move-multiple',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+review = "helper1:codex, helper2:claude, helper3:codex"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+""",
+    )
+    new = _load_config(
+        tmp_path / 'new-move-multiple',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, helper1:codex, helper2:claude"
+review = "helper3:codex"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+""",
+    )
+
+    plan = build_reload_dry_run_plan(
+        current,
+        new,
+        project_id='proj-1',
+        current_namespace=_namespace('proj-1'),
+    )
+    patch = plan['namespace_patch_plan']
+
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert [item['op'] for item in plan['operations']] == ['move_agent', 'move_agent']
+    assert patch['status'] == 'planned'
+    assert patch['blocked_operations'] == []
+    assert patch['preserved_agents'] == ['agent1', 'helper1', 'helper2', 'helper3']
+    assert patch['steps'] == [
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'main',
+            'agent': 'helper1',
+            'role': 'agent',
+            'slot_key': 'helper1',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'main',
+            'agent': 'helper2',
+            'role': 'agent',
+            'slot_key': 'helper2',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+    ]
+
+
 def test_namespace_patch_plan_blocks_additive_when_namespace_scope_unverified(tmp_path: Path) -> None:
     current = _load_config(tmp_path / 'current-no-scope', BASE_CONFIG)
     new = _load_config(

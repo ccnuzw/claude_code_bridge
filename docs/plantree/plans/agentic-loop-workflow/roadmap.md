@@ -877,6 +877,15 @@ Date: 2026-06-24
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-shared-source-ci-latest.json`
   passed `same-window-continuous`, `move-agent`, `move-shared-source`,
   `window-class-continuous`, and `arrange-window`.
+- Landed guarded low-level support for same-transaction movement of multiple
+  agents out of one source window while the source window remains alive. The
+  reload planner now validates source-window order after removing all moved
+  source agents as a set, not one agent at a time, and namespace apply moves
+  both existing panes into the target window without restart or source-window
+  removal. Focused tests passed with `68 passed` across reload planning,
+  namespace patch apply, and agent lifecycle CLI coverage. This is a
+  transaction-kernel proof; a user-facing batch `ccb agent move` command is
+  still not exposed.
 
 ## Next
 
@@ -886,9 +895,10 @@ Date: 2026-06-24
    dynamic visibility changes rather than pure reflow.
 2. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex and
    Claude opt-in real-provider movement are proven, and shared-source
-   single-agent movement is proven with fake providers; next evaluate whether
-   simultaneous multi-agent moves or mixed moved/new target transactions are
-   worth supporting.
+   single-agent movement is proven with fake providers; the low-level kernel
+   can now move multiple source-window agents in one transaction, so next
+   evaluate whether to expose a batch command and whether mixed moved/new
+   target transactions are worth supporting.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.
