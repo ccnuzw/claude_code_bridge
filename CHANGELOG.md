@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v8.0.0 (2026-06-27)
+
+### CCB Mobile Monorepo Release
+
+- **Mobile Source Joined The Main Repository**: the Flutter CCB Mobile app now
+  lives under `mobile/` alongside the core CLI, ccbd, and mobile gateway
+  source.
+- **Android APK Published**: the release includes
+  `ccb-mobile-v8.0.0.apk` plus SHA256 and manifest assets for Android Alpha
+  installation and validation.
+- **Server-Wide Mobile Gateway Promoted**: mobile setup now targets
+  server-wide project discovery, authenticated pairing, route diagnostics,
+  pane-native text input, transcript rendering, terminal access, and
+  image/document upload and download.
+- **Tailnet Onboarding Unified**: `ccb update mobile` guides Tailscale setup,
+  keeps the gateway loopback-only, uses Tailscale Serve instead of Funnel, and
+  avoids storing Tailscale tokens or modifying ACL/grants.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, mobile app version metadata, README release notes, mobile
+  documentation, launcher icon assets, and npm packaging metadata are aligned
+  for 8.0.0.
+
 ## v7.7.0 (2026-06-27)
 
 ### Runtime Accelerator Release Hardening
