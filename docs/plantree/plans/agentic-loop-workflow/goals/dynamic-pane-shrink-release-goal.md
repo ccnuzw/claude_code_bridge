@@ -169,3 +169,9 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
   layout smokes use this metadata to prove same-window `1->6->1` and
   multi-window add/remove preserve observable agent pane geometry while
   excluding sidebar panes from agent layout counts.
+- Append-only `add_agent` now performs the same best-effort window reflow and
+  managed sidebar width sync as idle `remove_agent`, recording
+  `namespace_reflowed_windows` / `namespace_reflow_errors`. The
+  same-window continuous smoke asserts a minimum observed agent pane width so
+  repeated hot-load splits cannot silently collapse later panes into unusable
+  columns.

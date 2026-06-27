@@ -692,15 +692,27 @@ Date: 2026-06-24
   `/home/bfly/yunwei/test_ccb2/observed-geometry-smoke.json` passed both
   `same-window-continuous` and `multi-window-continuous` flows with all
   observed geometry checks green.
+- Added append-path live reflow for dynamic hot load. Append-only
+  `add_agent` now uses the same `select-layout -E` plus sidebar width sync
+  helper as `remove_agent`, and records the result in existing
+  `namespace_reflowed_windows` / `namespace_reflow_errors` diagnostics. The
+  same-window continuous smoke now rejects collapsed hot-load geometry with
+  `observed_grow_min_width`; source-wrapper validation in
+  `/home/bfly/yunwei/test_ccb2/add-reflow-smoke.json` proved six agent panes
+  grew to observable widths `20,22,22,22,22,22` instead of the previous
+  repeated-split shape `66,33,16,8,3,4`. Combined source-wrapper validation in
+  `/home/bfly/yunwei/test_ccb2/add-reflow-combined-smoke.json` passed both
+  same-window and multi-window flows, and focused regression passed with
+  `78 passed`.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases.
-2. Use the new observed pane geometry to decide whether `select-layout -E`
-   remains sufficient or should be replaced by a CCB-owned fixed `1->6` /
-   `6->1` live reflow policy.
+2. Decide whether the current `select-layout -E` compaction is sufficient for
+   v1, or whether CCB should add a heavier fixed `1->6` / `6->1` pane movement
+   policy for true two-column visual layouts.
 3. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and

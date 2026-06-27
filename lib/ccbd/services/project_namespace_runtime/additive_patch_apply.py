@@ -144,6 +144,8 @@ def _apply_mutations(
                 old_topology=old_topology,
                 new_topology=new_topology,
                 existing_agent_panes=preserved_before,
+                current=current,
+                result=state,
                 namespace_epoch=current.namespace_epoch,
                 created_panes=state.created_panes,
                 timeout_s=timeout_s,

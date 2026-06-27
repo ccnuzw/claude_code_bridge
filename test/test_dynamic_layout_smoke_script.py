@@ -357,6 +357,7 @@ def test_same_window_continuous_flow_grows_to_six_and_shrinks_to_one(
     assert payload["checks"]["observed_grew_to_six_panes"] is True
     assert payload["checks"]["observed_grow_geometry"] is True
     assert payload["checks"]["observed_grow_indexes_contiguous"] is True
+    assert payload["checks"]["observed_grow_min_width"] is True
     assert payload["checks"]["shrunk_to_one_order"] is True
     assert payload["checks"]["observed_shrunk_to_one_pane"] is True
     add_names = [name for name, _command in calls if name.startswith("add_helper")]
@@ -759,6 +760,7 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert 'checks["observed_grew_to_six_panes"] is True' in text
     assert 'checks["observed_grow_geometry"] is True' in text
     assert 'checks["observed_grow_indexes_contiguous"] is True' in text
+    assert 'checks["observed_grow_min_width"] is True' in text
     assert 'checks["shrunk_to_one_order"] is True' in text
     assert 'checks["observed_shrunk_to_one_pane"] is True' in text
     assert 'checks["observed_shrink_geometry"] is True' in text

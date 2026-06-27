@@ -282,6 +282,11 @@ Contract:
   close that window before an explicit `kill-window`, the apply path must treat
   the window as already removed, record it in `namespace_removed_windows`, and
   preserve `namespace_removed_agents` / `namespace_removed_panes` diagnostics.
+- Guarded reload should reflow a window after successful append-only
+  `add_agent` and idle `remove_agent` mutations, then reapply managed sidebar
+  width. The reflow is a visual compaction step; it must preserve surviving
+  pane identity and report `namespace_reflowed_windows` or
+  `namespace_reflow_errors` in apply diagnostics.
 - Runtime layout diagnostics may observe every tmux pane in a managed window,
   including sidebar or tool panes. Agent layout checks must count only panes
   whose CCB identity matches that window's configured/effective `agent_names`;

@@ -465,10 +465,13 @@ def test_apply_append_add_agent_creates_only_new_agent_pane(tmp_path: Path, monk
     assert result.created_windows == ()
     assert result.created_panes == ('%3',)
     assert result.agent_panes == {'agent3': '%3'}
+    assert result.reflowed_windows == ('main',)
+    assert result.reflow_errors == {}
     assert result.sidebar_panes == {}
     assert result.preserved_before == {'agent1': '%1', 'agent2': '%2'}
     assert result.preserved_after == {'agent1': '%1', 'agent2': '%2'}
     assert backend.split_calls == [('%2', 'right', 50)]
+    assert ('select-layout', '-E', '-t', f'{layout.ccbd_tmux_session_name}:main') in backend.tmux_calls
     assert backend.pane_options['%3']['@ccb_project_id'] == 'proj-1'
     assert backend.pane_options['%3']['@ccb_role'] == 'agent'
     assert backend.pane_options['%3']['@ccb_slot'] == 'agent3'
@@ -632,7 +635,10 @@ def test_apply_trailing_add_agent_creates_new_agent_pane(tmp_path: Path, monkeyp
     assert result.created_windows == ()
     assert result.created_panes == ('%3',)
     assert result.agent_panes == {'agent3': '%3'}
+    assert result.reflowed_windows == ('main',)
+    assert result.reflow_errors == {}
     assert backend.split_calls == [('%2', 'bottom', 50)]
+    assert ('select-layout', '-E', '-t', f'{layout.ccbd_tmux_session_name}:main') in backend.tmux_calls
     assert backend.pane_options['%3']['@ccb_slot'] == 'agent3'
     assert backend.pane_options['%3']['@ccb_window'] == 'main'
 

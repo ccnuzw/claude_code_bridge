@@ -798,6 +798,7 @@ def _run_same_window_continuous_flow(
             "observed_grew_to_six_panes": _observed_window_agent_pane_count(after_add, "main") == 6,
             "observed_grow_geometry": _observed_panes_have_geometry(_observed_window_agent_panes(after_add, "main")),
             "observed_grow_indexes_contiguous": _observed_pane_indexes_contiguous(_observed_window_agent_panes(after_add, "main")),
+            "observed_grow_min_width": _observed_panes_min_width(_observed_window_agent_panes(after_add, "main")) >= 8,
             "helper_ask_accepted": _accepted(helper_ask),
             "helper_ask_terminal": _watch_commands_terminal(commands),
             "release_remove_agent_plans": [apply.get("plan_class") for apply in release_apply] == ["remove_agent"] * 5,
@@ -1740,6 +1741,11 @@ def _observed_pane_indexes_contiguous(panes: list[dict[str, Any]]) -> bool:
         return False
     ordered = sorted(indexes)
     return ordered == list(range(ordered[0], ordered[0] + len(ordered)))
+
+
+def _observed_panes_min_width(panes: list[dict[str, Any]]) -> int:
+    widths = [pane.get("pane_width") for pane in panes if isinstance(pane.get("pane_width"), int)]
+    return min(widths) if widths else 0
 
 
 def _accepted(result: dict[str, Any]) -> bool:

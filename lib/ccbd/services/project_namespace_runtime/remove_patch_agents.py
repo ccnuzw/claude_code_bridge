@@ -50,7 +50,7 @@ def remove_agent_panes(
             timeout_s=timeout_s,
         )
         if removed_agents:
-            _reflow_window_after_remove(
+            reflow_window_after_agent_change(
                 controller,
                 backend,
                 current=current,
@@ -93,7 +93,7 @@ def _kill_window(backend, *, current, window_name: str, result, timeout_s: float
     _append_unique(result.removed_windows, window_name)
 
 
-def _reflow_window_after_remove(
+def reflow_window_after_agent_change(
     controller,
     backend,
     *,
@@ -183,4 +183,4 @@ def _append_unique(values: list[str], value: str) -> None:
         values.append(value)
 
 
-__all__ = ['remove_agent_panes']
+__all__ = ['remove_agent_panes', 'reflow_window_after_agent_change']

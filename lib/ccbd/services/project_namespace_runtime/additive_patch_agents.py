@@ -4,6 +4,7 @@ from ccbd.reload_additive_agents import append_agent_windows, window_agent_names
 from terminal_runtime.tmux_identity import apply_ccb_pane_identity
 
 from .backend import split_pane
+from .remove_patch_agents import reflow_window_after_agent_change
 
 
 def append_agent_panes(
@@ -13,6 +14,8 @@ def append_agent_panes(
     old_topology,
     new_topology,
     existing_agent_panes: dict[str, str],
+    current,
+    result,
     namespace_epoch: int,
     created_panes: list[str],
     timeout_s: float | None,
@@ -35,6 +38,15 @@ def append_agent_panes(
                 created_panes=created_panes,
                 timeout_s=timeout_s,
             )
+        )
+        reflow_window_after_agent_change(
+            controller,
+            backend,
+            current=current,
+            topology_plan=new_topology,
+            window_name=window_name,
+            result=result,
+            timeout_s=timeout_s,
         )
     return agent_panes
 
