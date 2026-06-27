@@ -20,8 +20,12 @@ from ccbd.services.project_namespace_runtime.backend import (
 from terminal_runtime import TmuxBackend
 from terminal_runtime.tmux_identity import apply_ccb_pane_identity
 
+from .layout_status import layout_status
+
 
 def layout_command(context, command) -> dict[str, object]:
+    if str(command.action or '').strip().lower() == 'status':
+        return layout_status(context)
     names = tuple(f'p{index}' for index in range(1, int(command.panes) + 1))
     windows = build_pane_growth_windows(
         names,

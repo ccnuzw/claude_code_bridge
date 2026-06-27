@@ -488,6 +488,11 @@ slice:
 - `agent release --policy unload --idle-only` exposes the same safe non-kill
   release path for workflow roles and scripts.
 - Busy dynamic agents are retained instead of being killed or removed.
+- `ccb layout status` and `ccb layout status --json` expose the effective
+  runtime layout view for explicit `[windows]`: configured/static vs dynamic
+  agents, lifecycle state, dispatch state, runtime state, pane ids, namespace
+  state, and best-effort tmux pane observations. Unmounted projects with stale
+  namespace state skip tmux observation instead of reporting a false failure.
 
 Evidence:
 
@@ -529,6 +534,11 @@ Evidence:
   window continuous growth and shrink without manual pane seeding:
   `main/%1 -> dyn1/%2 -> dyn2/%3 -> dyn3/%4 -> dyn4/%5 -> dyn5/%6`, followed
   by forced unload in reverse order back to only `main/%1`.
+- Source-wrapper status smoke in
+  `/home/bfly/yunwei/test_ccb2/layout-status-real-1782553123` proved
+  `layout status --json` on an explicit-window project before mount, after
+  mount, after same-window hot add/release, after new-window add/release with
+  empty-window removal, and after forced kill with stale namespace state.
 - Focused regression passed with `222 passed` across dynamic lifecycle,
   config-loader, dispatcher, start-runtime, start-flow, reload-apply,
   reload-runtime-mount, and tmux-start-layout tests.
@@ -720,6 +730,9 @@ Current evidence:
 - isolated fake-agent dynamic smoke passed for `1->6->1`;
 - isolated fake-agent dynamic smoke passed for `1->8->1`, including page add
   at 7 and page removal at 6;
+- `ccb layout status --json` now provides a read-only effective topology and
+  runtime pane diagnostic for explicit `[windows]`, including dynamic overlays
+  and best-effort tmux observations;
 - existing-window and new-window dynamic hot add are proven through guarded
   reload tests and controlled mounted tmux smoke;
 - existing-window and new-window dynamic hot unload are proven through

@@ -215,6 +215,25 @@ def render_layout(summary) -> tuple[str, ...]:
         f'pane_count: {payload.get("pane_count", 0)}',
         f'window_count: {payload.get("window_count", 0)}',
     ]
+    if str(payload.get('action') or '') == 'status':
+        lines.extend(
+            [
+                f'ccbd_state: {payload.get("ccbd_state", "")}',
+                f'windows_explicit: {payload.get("windows_explicit", "")}',
+                f'entry_window: {payload.get("entry_window", "")}',
+                f'dynamic_agent_count: {payload.get("dynamic_agent_count", 0)}',
+                f'runtime_agent_count: {payload.get("runtime_agent_count", 0)}',
+            ]
+        )
+        namespace = payload.get('namespace') if isinstance(payload.get('namespace'), Mapping) else {}
+        if namespace:
+            lines.append(
+                'namespace: '
+                f'status={namespace.get("status", "")} '
+                f'state={namespace.get("state_load_status", "")} '
+                f'session={namespace.get("tmux_session_name", "")} '
+                f'workspace={namespace.get("workspace_window_name", "")}'
+            )
     for window in tuple(payload.get('windows') or ()):
         if not isinstance(window, Mapping):
             continue
@@ -225,6 +244,19 @@ def render_layout(summary) -> tuple[str, ...]:
             f'panes={len(tuple(window.get("agent_names") or ()))} '
             f'layout={window.get("layout_spec", "")}'
         )
+        if str(payload.get('action') or '') == 'status':
+            for agent in tuple(window.get('agents') or ()):
+                if not isinstance(agent, Mapping):
+                    continue
+                lines.append(
+                    'layout_agent: '
+                    f'window={window.get("name", "")} '
+                    f'agent={agent.get("agent", "")} '
+                    f'source={agent.get("source", "")} '
+                    f'state={agent.get("runtime_state", "")} '
+                    f'lifecycle={agent.get("lifecycle_state", "")} '
+                    f'pane={agent.get("pane_id", "")}'
+                )
     smoke_status = str(payload.get('smoke_status') or '').strip()
     if smoke_status:
         lines.extend(

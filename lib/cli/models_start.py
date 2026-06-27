@@ -84,7 +84,7 @@ class ParsedAgentCommand:
 class ParsedLayoutCommand:
     project: str | None
     action: str
-    panes: int
+    panes: int = 0
     window_prefix: str = 'layout'
     session_name: str | None = None
     cleanup: bool = True

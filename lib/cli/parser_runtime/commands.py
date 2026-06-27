@@ -249,10 +249,19 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
 
 def parse_layout(tokens: list[str], *, project: str | None, error_type) -> ParsedLayoutCommand:
     if not tokens:
-        raise error_type('layout requires one of: plan, smoke, dynamic-smoke')
+        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status')
     action = str(tokens[0] or '').strip().lower()
-    if action not in {'plan', 'smoke', 'dynamic-smoke'}:
-        raise error_type('layout only supports: plan, smoke, dynamic-smoke')
+    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status'}:
+        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status')
+    if action == 'status':
+        parser = argparse.ArgumentParser(prog='ccb layout status', add_help=False)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, tokens[1:], error_message='invalid layout status command', error_type=error_type)
+        return ParsedLayoutCommand(
+            project=project,
+            action=action,
+            json_output=bool(namespace.json_output),
+        )
     parser = argparse.ArgumentParser(prog=f'ccb layout {action}', add_help=False)
     parser.add_argument('--panes', type=int, required=True)
     parser.add_argument('--window-prefix', default='layout')

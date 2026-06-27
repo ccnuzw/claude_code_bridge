@@ -356,6 +356,16 @@ Date: 2026-06-24
   and no dynamic worker/checker in `ps`. The fake-provider final task status
   remains intentionally `blocked` with
   `round_result_source=missing_round_checker_result`.
+- Landed the first read-only runtime layout status surface. `ccb layout status`
+  and `ccb layout status --json` now report effective `[windows]` topology
+  after dynamic overlays, configured vs dynamic agents, lifecycle state,
+  runtime state, pane ids, namespace state, and best-effort tmux observations.
+  Focused tests passed with `39 passed`, touched-file `py_compile` passed, and
+  the source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/layout-status-real-1782553123` proved mounted
+  explicit-window startup, same-window hot add/release, new-window
+  add/release with empty-window removal, ask reachability for the dynamic fake
+  agent, and unmounted stale-namespace status skipping tmux observation.
 
 ## Next
 
@@ -369,9 +379,8 @@ Date: 2026-06-24
    `orchestrator-capacity` to share the same lifecycle semantics.
 4. Define the V1 runtime layout manager command/state surface from
    [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
-   expose `layout status`, enforce six-pane dialog/planning windows, allocate
-   one window per execution node, and release/retain panes through runtime
-   state.
+   enforce six-pane dialog/planning windows, allocate one window per execution
+   node, and release/retain panes through runtime state.
 5. Implement the next true hot-load slices:
     full live-provider smoke for pane-backed providers, better pane-identity
     diagnostics at startup, and only later live reflow/1->6 pane rearrangement.
