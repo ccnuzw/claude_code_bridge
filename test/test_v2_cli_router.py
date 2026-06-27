@@ -83,6 +83,31 @@ def test_dispatch_management_command_routes_update_rich() -> None:
     assert calls[0].target == "rich"
 
 
+def test_dispatch_management_command_routes_update_mobile() -> None:
+    calls: list[argparse.Namespace] = []
+
+    def update_handler(args: argparse.Namespace) -> int:
+        calls.append(args)
+        return 25
+
+    def fail(_args: argparse.Namespace) -> int:
+        raise AssertionError("handler should not be called")
+
+    result = dispatch_management_command(
+        ["update", "mobile"],
+        install_handler=fail,
+        update_handler=update_handler,
+        version_handler=fail,
+        uninstall_handler=fail,
+        reinstall_handler=fail,
+    )
+
+    assert result == 25
+    assert len(calls) == 1
+    assert calls[0].command == "update"
+    assert calls[0].target == "mobile"
+
+
 def test_dispatch_management_command_routes_uninstall_rich() -> None:
     calls: list[argparse.Namespace] = []
 
@@ -199,6 +224,7 @@ def test_run_cli_entrypoint_prints_start_help_without_phase2() -> None:
     assert "ccb install mobile" in stdout.getvalue()
     assert "ccb rich" in stdout.getvalue()
     assert "ccb update rich" in stdout.getvalue()
+    assert "ccb update mobile" in stdout.getvalue()
     assert "ccb rich-install" not in stdout.getvalue()
     assert "ccb watch <agent|job_id>" not in stdout.getvalue()
     assert "ccb inbox [--detail] <agent>" not in stdout.getvalue()

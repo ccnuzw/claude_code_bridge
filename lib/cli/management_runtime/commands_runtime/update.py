@@ -11,6 +11,7 @@ import tarfile
 
 from release_artifacts import release_artifact_name
 from cli.roles_runtime.commands import cmd_roles
+from cli.services.mobile_update import run_mobile_update_onboarding
 from cli.tools_runtime.workbench import print_workbench_status, update_rich_workbench
 from rolepacks.sources import role_catalog_status
 
@@ -45,6 +46,8 @@ def cmd_update(args, *, script_root: Path) -> int:
         return 1
     if _update_target_is_rich(args):
         return _update_rich_bundle()
+    if _update_target_is_mobile(args):
+        return _update_mobile_bundle()
     source_repo_install = is_source_repo_root(script_root)
     install_dir = resolve_managed_install_dir(script_root=script_root)
 
@@ -513,11 +516,19 @@ def _update_target_is_rich(args) -> bool:
     return str(getattr(args, "target", "") or "").strip().lower() == "rich"
 
 
+def _update_target_is_mobile(args) -> bool:
+    return str(getattr(args, "target", "") or "").strip().lower() == "mobile"
+
+
 def _update_rich_bundle() -> int:
     print("🔧 Installing/updating rich workbench bundle...")
     result = update_rich_workbench()
     print_workbench_status(result)
     return 0 if result.get("status") in {"ok", "degraded"} else 1
+
+
+def _update_mobile_bundle() -> int:
+    return run_mobile_update_onboarding()
 
 
 __all__ = ['POST_UPDATE_COMMAND', 'cmd_update', 'maybe_handle_post_update_command']

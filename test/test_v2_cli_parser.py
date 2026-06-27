@@ -424,6 +424,12 @@ def test_parse_mobile_serve(parser: CliParser) -> None:
             route_provider='cloudflare_tunnel',
         )
     )
+    assert parser.parse(['mobile', 'serve', '--route-provider', 'tailnet']) == ParsedMobileCommand(
+        project=None,
+        action='serve',
+        listen='127.0.0.1:8787',
+        route_provider='tailnet',
+    )
 
 
 def test_parse_mobile_rejects_invalid_forms(parser: CliParser) -> None:

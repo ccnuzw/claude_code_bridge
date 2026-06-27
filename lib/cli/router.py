@@ -116,12 +116,13 @@ def print_start_help(*, file=None) -> None:
 
             Management:
               ccb install mobile    Start the server-wide CCB Mobile gateway and pairing QR.
-              ccb version | ccb update [rich|VERSION] | ccb uninstall [rich] | ccb reinstall
+              ccb version | ccb update [rich|mobile|VERSION] | ccb uninstall [rich] | ccb reinstall
 
             Tools:
               ccb rich
               ccb rich uninstall
               ccb update rich
+              ccb update mobile
 
             Roles:
               ccb roles list
@@ -574,8 +575,8 @@ def _build_management_parser() -> argparse.ArgumentParser:
         choices=("lan", "tailnet", "cloudflare_tunnel", "relay"),
     )
 
-    update_parser = subparsers.add_parser("update", help="Update CCB or the optional rich bundle")
-    update_parser.add_argument("target", nargs="?", help="version like '4', '4.1', '4.1.3', or 'rich'")
+    update_parser = subparsers.add_parser("update", help="Update CCB or an optional bundle")
+    update_parser.add_argument("target", nargs="?", help="version like '4', '4.1', '4.1.3', or optional bundle 'rich'/'mobile'")
 
     subparsers.add_parser("version", help="Show version and check for updates")
     uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall ccb, or uninstall the optional rich bundle")

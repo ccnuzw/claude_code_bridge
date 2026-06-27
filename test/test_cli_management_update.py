@@ -844,6 +844,26 @@ def test_cmd_update_rich_updates_workbench_without_release_lookup(monkeypatch, t
     assert "Installing/updating rich workbench bundle" in captured.out
 
 
+def test_cmd_update_mobile_runs_onboarding_without_release_lookup(monkeypatch, tmp_path: Path) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        update_runtime,
+        "get_available_versions",
+        lambda: (_ for _ in ()).throw(AssertionError("mobile update must not resolve CCB releases")),
+    )
+    monkeypatch.setattr(
+        update_runtime,
+        "run_mobile_update_onboarding",
+        lambda: calls.append("mobile") or 0,
+    )
+
+    code = update_runtime.cmd_update(SimpleNamespace(target="mobile"), script_root=tmp_path / "script-root")
+
+    assert code == 0
+    assert calls == ["mobile"]
+
+
 def test_cmd_update_rich_allows_degraded_workbench_status(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
     monkeypatch.setattr(update_runtime, "update_rich_workbench", lambda: {"status": "degraded", "enabled": True})
