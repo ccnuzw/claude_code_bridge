@@ -215,6 +215,13 @@ Date: 2026-06-28
   (`76 passed`) and
   `pytest -q test/test_ccbd_reload_dry_run.py test/test_ccbd_reload_patch.py`
   (`42 passed`).
+- Re-ran an external source-wrapper fake provider lifecycle smoke from
+  `/home/bfly/yunwei/test_ccb2` using current source `ccb_test`:
+  `scripts/dynamic_agent_lifecycle_smoke.py --provider fake --project-name
+  dynamic-agent-lifecycle-drain-status-smoke --reset` passed with
+  `dynamic_agent_lifecycle_smoke_status: ok`, covering dynamic add, ask,
+  park/reject, resume/ask, short-lived reviewer unload, planner cleanup,
+  layout cleanup, and final `kill`.
 
 ## In Progress
 
