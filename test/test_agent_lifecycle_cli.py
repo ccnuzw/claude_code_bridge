@@ -250,6 +250,69 @@ def test_agent_add_to_existing_window_projects_add_agent_reload_plan(
     ]
 
 
+def test_agent_remove_middle_dynamic_agent_preserves_remaining_order_and_uses_remove_agent_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    for helper in ('helper1', 'helper2', 'helper3'):
+        result, _payload, stderr = _run_phase2(
+            [
+                'agent',
+                'add',
+                f'{helper}:codex',
+                '--role',
+                'agentroles.general',
+                '--window',
+                'main',
+                '--hidden',
+                '--json',
+            ],
+            cwd=project_root,
+        )
+        assert result == 0, stderr
+    before_remove = load_project_config(project_root).config
+    assert [(window.name, window.agent_names, window.layout_spec) for window in before_remove.windows] == [
+        (
+            'main',
+            ('main', 'helper1', 'helper2', 'helper3'),
+            'main:codex; helper1:codex; helper2:codex; helper3:codex',
+        ),
+    ]
+
+    result, removed, stderr = _run_phase2(
+        ['agent', 'remove', 'helper2', '--policy', 'unload', '--idle-only', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert removed['resolved_policy'] == 'unload'
+    assert removed['lifecycle_state'] == 'unloaded'
+    after_remove = load_project_config(project_root).config
+    assert [(window.name, window.agent_names, window.layout_spec) for window in after_remove.windows] == [
+        (
+            'main',
+            ('main', 'helper1', 'helper3'),
+            'main:codex; helper1:codex; helper3:codex',
+        ),
+    ]
+    plan = build_reload_dry_run_plan(before_remove, after_remove, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'remove_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert set(plan['namespace_patch_plan']['preserved_agents']) == {'main', 'helper1', 'helper3'}
+    assert plan['namespace_patch_plan']['steps'] == [
+        {
+            'action': 'kill_agent_pane',
+            'window': 'main',
+            'agent': 'helper2',
+            'role': 'agent',
+            'slot_key': 'helper2',
+            'managed_by': 'ccbd',
+            'reason': 'agent exists only in current published config',
+        }
+    ]
+
+
 def test_agent_add_to_new_window_projects_add_window_reload_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

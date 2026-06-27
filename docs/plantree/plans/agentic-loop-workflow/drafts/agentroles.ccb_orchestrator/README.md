@@ -9,7 +9,8 @@ Primary skill:
 
 - `orchestrator-capacity`: calls `ccb loop capacity ensure/status/release`
   and turns returned dynamic agent names into bounded worker/checker ask
-  targets.
+  targets. Returned node/window placement is CCB-owned evidence only; the role
+  does not choose windows, panes, or tmux layout.
 
 This draft is installable by path for source tests, but it is not a published
 Agent Roles catalog entry.

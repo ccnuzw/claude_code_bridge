@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
 
@@ -101,12 +102,19 @@ def test_orchestrator_capacity_skill_declares_command_boundary() -> None:
     assert 'ccb loop capacity ensure --loop-id <id>' in skill
     assert 'ccb loop capacity status --loop-id <id> --json' in skill
     assert 'ccb loop capacity release --loop-id <id> --policy auto --json' in skill
+    assert 'ccb layout status --json' in skill
     assert 'loop_capacity_status = "ensured"' in skill
     assert 'apply.apply_status = "applied"' in skill
+    assert 'source=loop' in skill
+    assert 'expected `loop_id`/`node_id`' in skill
+    assert 'CCB-owned evidence only' in skill
+    assert 'runtime layout manager owns window naming' in skill
     assert 'Do not use `ccb loop run-once`' in skill
     assert 'command ask --callback "$WORKER_AGENT"' in skill
     assert 'Never:' in skill
     assert 'edit `.ccb/ccb.config`' in skill
+    assert 'ccb agent add --window' in skill
+    assert 'ccb agent add --window-class' in skill
     assert 'call raw `ccb reload`' in skill
     assert 'call raw `ccb kill`' in skill
     assert 'run `tmux` commands' in skill
@@ -115,6 +123,24 @@ def test_orchestrator_capacity_skill_declares_command_boundary() -> None:
     assert 'Use this skill only from an execution-ready loop round' in skill
     assert 'replan_required' in skill
     assert 'replan_needed' not in skill
+
+
+def test_orchestrator_capacity_template_keeps_placement_ccb_owned() -> None:
+    template = json.loads(
+        (ORCHESTRATOR_ROLE / 'templates' / 'capacity-request.json').read_text(
+            encoding='utf-8'
+        )
+    )
+
+    assert template['placement_policy'] == 'ccb_runtime_layout_manager'
+    assert template['forbidden_placement_overrides'] == [
+        'window_name',
+        'window_class',
+        'pane_id',
+    ]
+    assert 'window_name' not in template
+    assert 'window_class' not in template
+    assert 'pane_id' not in template
 
 
 def test_workflow_rolepacks_translate_and_project_role_skills() -> None:

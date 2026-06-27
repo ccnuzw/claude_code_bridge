@@ -46,7 +46,7 @@ Classify the current execution task before slicing:
 | `single` | One bounded implementation path, low cross-module risk | 1 |
 | `split_serial` | Several dependent steps; parallelism would create rework | 1-2 |
 | `split_parallel` | Independent work items can run safely in parallel | 2-4 |
-| `replan_needed` | Task is too vague, too broad, or acceptance criteria are not executable | 0 |
+| `replan_required` | Task is too vague, too broad, or acceptance criteria are not executable | 0 |
 
 Complexity signals:
 
@@ -62,7 +62,7 @@ Hard limits:
 
 - V1 node count must be between 1 and 4.
 - Prefer 1 node unless parallelism clearly reduces risk or wall time.
-- If more than 4 nodes seem necessary, return `replan_needed` with a smaller
+- If more than 4 nodes seem necessary, return `replan_required` with a smaller
   task-splitting recommendation.
 
 ### 2. Work Item Slicing
@@ -122,10 +122,12 @@ runtime state.
 
 Allowed:
 
-- Request fixed configured agents for V1.
-- Request dynamic load for a bounded batch of agents when the workflow spec and
-  loop runner support it.
-- Request idle unload after work completes.
+- Call `orchestrator-capacity`, which in turn uses
+  `ccb loop capacity ensure/status/release`.
+- Request a bounded batch of loop-owned agents by declared profile and count.
+- Use returned agent names as the only dynamic ask targets.
+- Report returned node/window placement as evidence only.
+- Request idle release after work completes.
 - Provide reasons, node count, provider/role preferences, and expected lifetime.
 
 Disallowed:
@@ -133,6 +135,8 @@ Disallowed:
 - Editing `.ccb/ccb.config` directly.
 - Running `ccb reload` directly from the role.
 - Killing panes or agents directly.
+- Calling `ccb agent add --window`, `ccb agent add --window-class`, or choosing
+  execution-node window names directly.
 - Writing `.ccb/runtime/loops/*` authority files directly.
 - Bypassing busy unload or provider replacement guards.
 
@@ -150,11 +154,13 @@ Runtime request shape:
 }
 ```
 
-`loop_runner` owns translating runtime requests into `ccb reload --dry-run`,
-`ccb reload`, fixed-agent reuse, or rejection. Current CCB supports explicit
-reload for append-only add-agent/add-window and idle remove-agent; busy unload,
-provider replacement, agent movement, arbitrary layout reshaping, and background
-watching remain out of scope.
+`ccb loop capacity` and the runtime layout manager own translating requests
+into runtime records, guarded reload, window creation, pane placement, idle
+release, or rejection. Current CCB has proven loop-generated worker/checker
+placement in `node-<loop-id>-<node-id>` windows for explicit `[windows]`
+layouts. `orchestrator` may inspect `ccb layout status --json` as a read-only
+diagnostic view when capacity placement is unclear, but it must not use layout
+status to pick targets or repair tmux state.
 
 ### 5. Ask Dispatch
 
@@ -229,20 +235,21 @@ partial_loop_report
 
 ## V1 Cut
 
-V1 should start with fixed configured agents:
+V1 starts with the narrow loop-capacity path:
 
 ```text
 planner -> loop_runner -> ask orchestrator
-orchestrator -> ask coder
-orchestrator -> ask checker
+orchestrator -> ccb loop capacity ensure
+orchestrator -> ask returned worker
+orchestrator -> ask returned checker
 orchestrator -> aggregate
+orchestrator -> ccb loop capacity release
 checker or round_checker -> verify
 planner/frontdesk -> receive partial/replan only when needed
 ```
 
-Dynamic load/unload can be added after the fixed-agent loop works. In V1,
-orchestrator should still emit runtime requests in a structured form so the
-later dynamic path has a stable contract.
+The fixed-agent path remains useful for smoke tests or projects without dynamic
+capacity enabled, but it is not the preferred orchestrator contract.
 
 ## Role Pack Guidance
 
@@ -250,8 +257,8 @@ The `orchestrator` Role Pack should include:
 
 - Role memory describing purpose, authorities, non-authorities, and V1 limits.
 - A dispatch skill for work item slicing and ask payload generation.
-- A runtime-request skill for producing structured load/unload requests without
-  executing them.
+- A runtime-request skill for producing structured capacity requests without
+  direct runtime mutation or hand-picked placement.
 - Templates for work items, dependency graphs, worker asks, checker asks,
   runtime requests, orchestration summaries, and partial loop reports.
 - References to:

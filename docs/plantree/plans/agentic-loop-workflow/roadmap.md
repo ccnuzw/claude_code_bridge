@@ -390,6 +390,38 @@ Date: 2026-06-24
   mounted `loop capacity ensure` creates `node-round1-node1`, status reports
   two loop agents there, and `loop capacity release --idle-only` removes the
   node window and returns to `loop_agent_count=0`.
+- Aligned orchestrator-facing RolePack and capacity documentation with the
+  runtime layout model. `orchestrator-capacity` now states that
+  `ccb loop capacity ensure/status/release` is the only dynamic execution
+  capacity path, returned `node_id`/window/placement fields are CCB-owned
+  evidence only, `ccb layout status --json` is read-only diagnostics for
+  `source=loop`, and raw `ccb agent add --window`, `--window-class`, tmux,
+  reload, and kill remain forbidden. Focused RolePack tests passed with
+  `8 passed`; related orchestrator/loop/layout/lifecycle tests passed with
+  `49 passed`; and a source-wrapper prepare/config/capacity smoke in
+  `/home/bfly/yunwei/test_ccb2/orchestrator-capacity-rolepack-projection-1782560`
+  proved config validity, planned node placement, layout status
+  `loop_agent_count=2`, and release cleanup back to `loop_agent_count=0`.
+- Extended loop-capacity explicit `[windows]` coverage from one execution node
+  to multiple node windows. Focused tests now prove `worker=2` and
+  `code_reviewer=2` become `node-round2-node1` and `node-round2-node2`, that
+  each node keeps its worker/checker order, that release removes both node
+  windows from the effective layout, and that `layout status` returns to
+  `loop_agent_count=0`. Related targeted tests passed with `50 passed`; the
+  mounted fake-provider source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/multi-node-layout-smoke-1782561` proved live
+  `add_window` materialization to 8 tmux panes, ask submission to two generated
+  loop agents, `remove_agent` release of all four loop agents, and return to
+  the original `main` window with only sidebar plus `orchestrator`.
+- Extended same-window dynamic release coverage for middle-pane deletion.
+  Dynamic lifecycle tests now prove `main + helper1 + helper2 + helper3`
+  can unload middle `helper2` while preserving effective order
+  `main + helper1 + helper3` and staying in safe `remove_agent` instead of
+  degrading to `layout_change`. The mounted fake-provider smoke in
+  `/home/bfly/yunwei/test_ccb2/same-window-middle-release-1782562` proved
+  live append-only hot load to panes `%2/%3/%4`, middle release removing only
+  `%3`, preserved helper panes `%2` and `%4` staying alive, and accepted asks
+  to both surviving dynamic agents after release.
 
 ## Next
 
@@ -403,10 +435,9 @@ Date: 2026-06-24
    `orchestrator-capacity` to share the same lifecycle semantics.
 4. Define the V1 runtime layout manager command/state surface from
    [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
-   expose a script-friendly placement command/skill wrapper over the proven
-   `--window-class` and `--loop-id/--node-id` semantics, then update
-   orchestrator-facing role/skill docs to rely on loop capacity rather than
-   hand-picked window names.
+   expose a script-friendly placement command/skill wrapper for generic
+   non-loop dynamic agents while keeping loop execution capacity behind
+   `ccb loop capacity`.
 5. Implement the next true hot-load slices:
     full live-provider smoke for pane-backed providers, better pane-identity
     diagnostics at startup, and only later live reflow/1->6 pane rearrangement.

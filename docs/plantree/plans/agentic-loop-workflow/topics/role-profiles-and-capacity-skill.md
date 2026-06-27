@@ -34,8 +34,8 @@ orchestrator-capacity skill
 ccb loop capacity ensure/release/status
   validates requests, creates or reuses agents, and owns runtime writes
 
-ccbd / reload transaction
-  performs pane, provider, service-graph, and runtime-authority mutation
+runtime layout manager / ccbd / guarded reload
+  performs window, pane, provider, service-graph, and runtime-authority mutation
 ```
 
 `orchestrator` may execute dynamic capacity actions only through the narrow
@@ -153,6 +153,8 @@ Responsibilities:
 - Reuse idle matching agents when allowed.
 - Create missing agents through CCB-owned runtime mutation.
 - Return ready ask targets or structured blockers.
+- Return placement evidence such as `node_id`, `window_name`, or `placement`
+  when available; these fields are CCB-owned evidence, not orchestrator input.
 - Record capacity ownership under runtime loop state.
 
 Example output:
@@ -169,6 +171,8 @@ Example output:
       "role": "agentroles.coder",
       "provider": "codex",
       "lifetime": "current_round",
+      "node_id": "node1",
+      "placement": {"mode": "execution_node", "window_name": "node-loop_123-node1"},
       "source": "created",
       "state": "ready"
     }
@@ -229,6 +233,11 @@ project config. The transitional strategy may be useful because current CCB
 already has explicit `reload` support for append-only add-agent/add-window and
 idle remove-agent.
 
+For explicit `[windows]` layouts, the current runtime layout manager maps
+loop-generated execution profiles into `node-<loop-id>-<node-id>` windows and
+removes empty node windows after idle release. This placement behavior remains
+an implementation contract of CCB, not an orchestrator choice.
+
 ## Orchestrator Skill Contract
 
 The `orchestrator-capacity` skill should be installed into
@@ -257,13 +266,17 @@ Allowed actions:
 - call `ccb loop capacity release --json`
 - use returned agent names as `ask` targets
 - include returned blockers in partial/replan reports
+- inspect `ccb layout status --json` only as a read-only diagnostic view for
+  `source=loop`, `loop_id`, `node_id`, and pane evidence
 
 Forbidden actions:
 
 - edit `.ccb/ccb.config`
 - call raw `ccb reload`
 - call raw `ccb kill`
+- call raw `ccb agent add --window` or `ccb agent add --window-class`
 - kill tmux panes or provider processes
+- hand-pick `node-<loop-id>-<node-id>` or any other execution window name
 - invent provider/model/thinking values not present in `loop.role_profiles`
 - exceed `max_nodes` or profile `max_instances`
 - ignore failed validation and silently run fewer nodes as success
@@ -294,7 +307,7 @@ Capacity ensure returns concrete agents:
 
 Only after this mapping exists should orchestrator generate final worker and
 checker asks. If capacity cannot be satisfied, orchestrator should return
-`replan_needed`, `blocked`, or a reduced serial plan only when planner policy
+`replan_required`, `blocked`, or a reduced serial plan only when planner policy
 explicitly allows serial fallback.
 
 ## Validation Gates
@@ -325,10 +338,8 @@ Skill validation:
 
 ## Open Implementation Choices
 
-1. Whether V1 uses the preferred runtime overlay immediately, or starts with a
-   generated config block over the existing reload transaction.
+1. When to replace the transitional guarded-reload materialization with a
+   daemon-side transient loop capacity overlay.
 2. The exact provider adapter mapping for `thinking = "low|medium|high"`.
-3. Whether generated loop agents appear as normal sidebar agents, grouped
-   under one `loop` window, or under a dedicated runtime section.
-4. Whether `manual_release` lifetime should be allowed before cleanup and
+3. Whether `manual_release` lifetime should be allowed before cleanup and
    storage diagnostics are mature.

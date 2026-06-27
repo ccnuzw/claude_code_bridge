@@ -223,7 +223,7 @@ the lifecycle layer.
 
 ```text
 request agent capacity
-  -> choose window class
+  -> runtime layout manager resolves window class or execution-node window
   -> ensure window
   -> ensure pane
   -> start provider session
@@ -770,10 +770,17 @@ Current evidence:
   reload;
 - loop-capacity worker/checker allocation now uses execution-node windows and
   is visible in `layout status` as `source=loop`;
+- multi-node loop-capacity allocation is proven for explicit `[windows]`:
+  `worker=2` plus `code_reviewer=2` creates separate
+  `node-round2-node1` and `node-round2-node2` windows, each with ordered
+  worker/checker panes, and release removes both node windows;
 - existing-window and new-window dynamic hot add are proven through guarded
   reload tests and controlled mounted tmux smoke;
 - existing-window and new-window dynamic hot unload are proven through
   controlled mounted tmux smoke, including busy retain and empty-window removal;
+- same-window middle dynamic release is proven: removing the middle helper pane
+  deletes only the target pane, preserves the remaining dynamic pane ids, keeps
+  their ask targets reachable, and avoids `layout_change`;
 - same-window dynamic agent cycle smoke passed for `1->6->1` without changing
   the preserved `main` pane id;
 - mounted source-wrapper smoke in

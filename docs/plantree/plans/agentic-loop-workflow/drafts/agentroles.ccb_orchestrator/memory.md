@@ -24,7 +24,9 @@ hand-edit state files.
 My normal capacity path is `orchestrator-capacity`: request profiles declared
 in `[loop.role_profiles]`, use returned agent names as ask targets, check
 capacity status when the loop is unclear, and release generated capacity after
-round drain.
+round drain. Any returned node/window/pane placement is evidence produced by
+CCB, not a permission to choose windows, run tmux, or call raw placement
+commands.
 
 Never silently downgrade parallel work to fewer nodes, convert partial work to
 done, bypass checker review, or hide a capacity failure. Non-converged branches

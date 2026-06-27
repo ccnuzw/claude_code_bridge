@@ -342,6 +342,127 @@ max_instances = 1
     ]
 
 
+def test_loop_capacity_ensure_places_multiple_nodes_in_separate_windows_and_release_cleans_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-loop-capacity-explicit-multi-node'
+    role_store = tmp_path / 'roles'
+    _write_installed_role(role_store, 'agentroles.coder', default_agent_name='coder')
+    _write_installed_role(role_store, 'agentroles.code_reviewer', default_agent_name='code_reviewer')
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "orchestrator:codex"
+
+[loop.capacity]
+enabled = true
+max_nodes = 4
+default_lifetime = "current_round"
+name_template = "loop-{loop_id}-{profile}-{index}"
+reuse = "prefer_idle"
+
+[loop.role_profiles.worker]
+role = "agentroles.coder"
+provider = "codex"
+thinking = "high"
+workspace_mode = "git-worktree"
+workspace_group = "worker_pool"
+max_instances = 2
+reuse = "prefer_idle"
+
+[loop.role_profiles.code_reviewer]
+role = "agentroles.code_reviewer"
+provider = "codex"
+thinking = "medium"
+workspace_mode = "git-worktree"
+workspace_group = "review_pool"
+max_instances = 2
+""",
+    )
+    current = load_project_config(project_root, include_loop_overlays=False).config
+
+    result, payload, stderr = _run_phase2(
+        [
+            'loop',
+            'capacity',
+            'ensure',
+            '--loop-id',
+            'round2',
+            '--profile',
+            'worker=2',
+            '--profile',
+            'code_reviewer=2',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert [(agent['name'], agent['node_id'], agent['created_sequence']) for agent in payload['agents']] == [
+        ('loop-round2-worker-1', 'node1', 1),
+        ('loop-round2-worker-2', 'node2', 2),
+        ('loop-round2-code_reviewer-1', 'node1', 3),
+        ('loop-round2-code_reviewer-2', 'node2', 4),
+    ]
+    loaded = load_project_config(project_root).config
+    assert [(window.name, window.agent_names) for window in loaded.windows] == [
+        ('main', ('orchestrator',)),
+        ('node-round2-node1', ('loop-round2-worker-1', 'loop-round2-code_reviewer-1')),
+        ('node-round2-node2', ('loop-round2-worker-2', 'loop-round2-code_reviewer-2')),
+    ]
+    plan = build_reload_dry_run_plan(current, loaded, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'add_window'
+    assert [step['action'] for step in plan['namespace_patch_plan']['steps']] == [
+        'create_window',
+        'create_sidebar_pane',
+        'create_agent_pane',
+        'create_agent_pane',
+        'create_window',
+        'create_sidebar_pane',
+        'create_agent_pane',
+        'create_agent_pane',
+    ]
+
+    result, status_payload, stderr = _run_phase2(['layout', 'status', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    assert status_payload['loop_agent_count'] == 4
+    windows = {window['name']: window for window in status_payload['windows']}
+    assert windows['node-round2-node1']['agent_names'] == [
+        'loop-round2-worker-1',
+        'loop-round2-code_reviewer-1',
+    ]
+    assert windows['node-round2-node2']['agent_names'] == [
+        'loop-round2-worker-2',
+        'loop-round2-code_reviewer-2',
+    ]
+    assert {agent['source'] for agent in windows['node-round2-node1']['agents']} == {'loop'}
+    assert {agent['source'] for agent in windows['node-round2-node2']['agents']} == {'loop'}
+
+    result, release_payload, stderr = _run_phase2(
+        ['loop', 'capacity', 'release', '--loop-id', 'round2', '--idle-only', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert release_payload['released_count'] == 4
+    released = load_project_config(project_root).config
+    assert [(window.name, window.agent_names) for window in released.windows] == [
+        ('main', ('orchestrator',)),
+    ]
+    result, released_status, stderr = _run_phase2(['layout', 'status', '--json'], cwd=project_root)
+    assert result == 0, stderr
+    assert released_status['loop_agent_count'] == 0
+    assert [(window['name'], window['agent_names']) for window in released_status['windows']] == [
+        ('main', ['orchestrator']),
+    ]
+
+
 def test_loop_run_once_writes_round_artifacts_and_releases_capacity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

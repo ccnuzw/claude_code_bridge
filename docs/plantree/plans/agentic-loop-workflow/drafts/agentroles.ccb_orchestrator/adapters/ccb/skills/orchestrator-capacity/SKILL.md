@@ -55,10 +55,16 @@ After ensure:
   `apply.apply_status = "deferred_until_start"` only when reporting planned
   capacity without dispatching;
 - use returned agent names as the only dynamic ask targets;
+- treat returned `node_id`, `window_name`, `resolved_window_name`, or
+  `placement` fields as CCB-owned evidence only, not as values to select,
+  rewrite, or hand off to raw layout commands;
 - if rejected, blocked, retained, or failed fields exist, report them as loop
   blockers instead of continuing as success.
 
 Do not invent names from `name_template`. Returned JSON is the source of truth.
+Do not invent node windows such as `node-<loop-id>-<node-id>` yourself. The CCB
+runtime layout manager owns window naming, pane placement, and any overflow or
+cleanup behavior.
 Do not use `ccb loop run-once`; that is an external deterministic runner, not
 the autonomous orchestrator path.
 
@@ -116,6 +122,16 @@ ccb loop capacity status --loop-id <id> --json
 Use status to report generated agents, profile, provider, role, lifetime,
 state, blockers, retained agents, and whether the loop can release.
 
+For visual/runtime diagnosis only, you may inspect the read-only layout view:
+
+```bash
+ccb layout status --json
+```
+
+Use it to confirm loop-owned panes are reported with `source=loop` and the
+expected `loop_id`/`node_id`. Do not use layout status to choose agent names,
+write placement, or repair tmux state.
+
 ## Release
 
 After the worker/checker branch is drained, release only idle loop-owned
@@ -135,6 +151,8 @@ Never:
 - edit `.ccb/ccb.config`;
 - write `.ccb/runtime`, `.ccb/agents`, lifecycle, lease, socket, pid, mailbox,
   pane, or provider-state files directly;
+- call `ccb agent add --window`, `ccb agent add --window-class`, or other raw
+  agent placement commands for loop execution capacity;
 - call raw `ccb reload`;
 - call raw `ccb kill`;
 - run `tmux` commands;
