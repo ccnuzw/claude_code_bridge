@@ -25,6 +25,7 @@ FLOW_NAMES = (
     "single-agent-window",
     "move-agent",
     "move-shared-source",
+    "batch-move-window-class",
     "window-class",
     "arrange-window",
     "window-class-continuous",
@@ -99,6 +100,24 @@ def build_window_class_config(*, provider: str = "fake") -> str:
             "[windows]",
             f'main = "frontdesk:{provider}"',
             f'plan-orchestrate = "planner:{provider}"',
+            "",
+        ]
+    )
+
+
+def build_batch_move_window_class_config(*, provider: str = "fake") -> str:
+    return "\n".join(
+        [
+            "version = 2",
+            'entry_window = "main"',
+            "",
+            "[windows]",
+            f'main = "frontdesk:{provider}"',
+            (
+                'plan-orchestrate = "'
+                + ", ".join(f"p{index}:{provider}" for index in range(1, 6))
+                + '"'
+            ),
             "",
         ]
     )
@@ -184,6 +203,17 @@ def prepare_window_class_project(*, test_root: Path, project_name: str, provider
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
     (project_root / ".ccb" / "ccb.config").write_text(build_window_class_config(provider=provider), encoding="utf-8")
+    role_store = project_root / "roles"
+    _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
+    return {"project_root": str(project_root), "role_store": str(role_store)}
+
+
+def prepare_batch_move_window_class_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
+    project_root = _project_root(test_root, project_name)
+    if reset and project_root.exists():
+        shutil.rmtree(project_root)
+    (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ccb" / "ccb.config").write_text(build_batch_move_window_class_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
     return {"project_root": str(project_root), "role_store": str(role_store)}
@@ -349,6 +379,19 @@ def run_dynamic_layout_smoke(
             _run_move_shared_source_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-move-shared-source",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "batch-move-window-class" in flow_names:
+        results.append(
+            _run_batch_move_window_class_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-batch-move-window-class",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -1529,6 +1572,128 @@ def _run_move_shared_source_flow(
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
 
 
+def _run_batch_move_window_class_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_batch_move_window_class_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    helpers = ("zeta", "alpha")
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        adds: list[dict[str, Any]] = []
+        for helper in helpers:
+            add = _run_json(
+                f"add_{helper}_to_review",
+                [
+                    str(ccb_test),
+                    "--project",
+                    str(project_root),
+                    "agent",
+                    "add",
+                    f"{helper}:{provider}",
+                    "--role",
+                    "agentroles.general",
+                    "--window",
+                    "review",
+                    "--hidden",
+                    "--json",
+                ],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+            adds.append(add)
+            commands.append(add)
+        before_move = _run_json("layout_before_batch_move_window_class", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(before_move)
+        move = _run_json(
+            "move_zeta_alpha_to_window_class",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "move",
+                "--agents",
+                ",".join(helpers),
+                "--window-class",
+                "plan-orchestrate",
+                "--reason",
+                "dynamic layout batch window-class move smoke",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(move)
+        after_move = _run_json("layout_after_batch_move_window_class", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_move)
+        zeta_ask = _run(
+            "ask_zeta_after_batch_move_window_class",
+            [str(ccb_test), "--project", str(project_root), "ask", "zeta"],
+            cwd=test_root,
+            env=env,
+            input_text="batch-move-window-class smoke ping zeta\n",
+            timeout=command_timeout_s,
+        )
+        alpha_ask = _run(
+            "ask_alpha_after_batch_move_window_class",
+            [str(ccb_test), "--project", str(project_root), "ask", "alpha"],
+            cwd=test_root,
+            env=env,
+            input_text="batch-move-window-class smoke ping alpha\n",
+            timeout=command_timeout_s,
+        )
+        commands.extend([zeta_ask, alpha_ask])
+        before_panes = _agent_panes(before_move)
+        after_panes = _agent_panes(after_move)
+        move_payload = _payload(move)
+        move_apply = dict(move_payload.get("apply") or {})
+        moved_agents = dict(move_apply.get("namespace_moved_agents") or {})
+        moved_windows = dict(move_apply.get("namespace_moved_agent_windows") or {})
+        checks = {
+            "add_plans": [_payload(item).get("apply", {}).get("plan_class") for item in adds] == ["add_window", "add_agent"],
+            "before_windows": _window_agents(before_move)
+            == {
+                "main": ["frontdesk"],
+                "plan-orchestrate": ["p1", "p2", "p3", "p4", "p5"],
+                "review": ["zeta", "alpha"],
+            },
+            "move_status_active": move_payload.get("agent_lifecycle_status") == "active",
+            "move_target_windows": move_payload.get("target_window_names") == ["plan-orchestrate", "plan-orchestrate-2"],
+            "move_plan_class": move_apply.get("plan_class") == "move_agent",
+            "moved_agent_panes_match": all(moved_agents.get(agent) == before_panes.get(agent) for agent in helpers),
+            "moved_window_evidence": moved_windows == {"zeta": "plan-orchestrate", "alpha": "plan-orchestrate-2"},
+            "removed_review_window": move_apply.get("namespace_removed_windows") == ["review"],
+            "after_panes_preserved": all(after_panes.get(agent) == before_panes.get(agent) for agent in helpers),
+            "after_windows": _window_agents(after_move)
+            == {
+                "main": ["frontdesk"],
+                "plan-orchestrate": ["p1", "p2", "p3", "p4", "p5", "zeta"],
+                "plan-orchestrate-2": ["alpha"],
+            },
+            "zeta_ask_accepted": _accepted(zeta_ask),
+            "alpha_ask_accepted": _accepted(alpha_ask),
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "batch_move_window_class", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
 def _run_window_class_flow(
     *,
     test_root: Path,
@@ -2252,6 +2417,15 @@ def _prepare_selected_projects(
             prepare_same_window_project(
                 test_root=test_root,
                 project_name=f"{project_prefix}-move-shared-source",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "batch-move-window-class" in flows:
+        prepared.append(
+            prepare_batch_move_window_class_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-batch-move-window-class",
                 provider=provider,
                 reset=reset,
             )

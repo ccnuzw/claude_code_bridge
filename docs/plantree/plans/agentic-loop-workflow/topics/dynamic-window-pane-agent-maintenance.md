@@ -1122,6 +1122,19 @@ Current evidence:
   includes `--flow batch-release` and asserts the batch flow result, removed
   dynamic panes, removed single-agent windows, survivor pane preservation, and
   ask reachability for both `helper1` and `main`;
+- `ccb agent move --agents a,b` now accepts the same dynamic target grammar as
+  single-agent move instead of being limited to explicit `--window NAME`.
+  The first landed target is `--window-class CLASS`: CCB writes the batch
+  lifecycle placement in command order, resolves each agent through the
+  effective `[windows]` capacity rules, reports `target_window_names` when a
+  batch spans multiple resolved windows, and still applies one reload
+  transaction with rollback on failure. Source-wrapper fake-provider evidence
+  is preserved in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-batch-move-window-class-latest.json`;
+  it proves `review=[zeta,alpha]` moves to
+  `plan-orchestrate=[p1,p2,p3,p4,p5,zeta]` and
+  `plan-orchestrate-2=[alpha]`, preserves both moved pane ids, removes
+  `review`, and accepts ask for both moved agents;
 - `ccb agent park --agents a,b --json` and
   `ccb agent resume --agents a,b --hidden|--visible --json` now expose the
   first user-facing batch transition command for long-lived dynamic agents.
@@ -1183,7 +1196,6 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
-- batch movement for `--window-class` and execution-node placement, and
-  transactions that mix moved panes with newly materialized panes in the same
-  target window;
+- batch movement for execution-node placement, and transactions that mix moved
+  panes with newly materialized panes in the same target window;
 - user-defined arbitrary window classes.

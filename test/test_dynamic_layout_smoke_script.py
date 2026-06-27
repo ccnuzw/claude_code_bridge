@@ -343,6 +343,27 @@ def test_prepare_only_can_generate_batch_release_project(tmp_path: Path) -> None
     assert 'main = "main:fake"' in config.read_text(encoding="utf-8")
 
 
+def test_prepare_only_can_generate_batch_move_window_class_project(tmp_path: Path) -> None:
+    module = _load_module()
+
+    payload = module.run_dynamic_layout_smoke(
+        test_root=tmp_path,
+        project_prefix="batch-move-window-class-prepare",
+        ccb_test=Path(__file__),
+        provider="fake",
+        flows=("batch-move-window-class",),
+        prepare_only=True,
+        reset=True,
+    )
+
+    assert payload["dynamic_layout_smoke_status"] == "prepared"
+    assert payload["flows"] == ["batch-move-window-class"]
+    assert len(payload["prepared"]) == 1
+    config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
+    text = config.read_text(encoding="utf-8")
+    assert 'plan-orchestrate = "p1:fake, p2:fake, p3:fake, p4:fake, p5:fake"' in text
+
+
 def test_same_window_continuous_flow_grows_to_six_and_shrinks_to_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -761,6 +782,192 @@ def test_batch_release_flow_removes_multiple_windows_in_one_transaction(
     assert batch_commands == [
         "ccb_test --project "
         f"{project_root} agent remove --agents helper2,helper3 --policy unload --idle-only --json"
+    ]
+
+
+def test_batch_move_window_class_flow_splits_targets_by_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    project_root = tmp_path / "project"
+    role_store = tmp_path / "roles"
+    calls: list[tuple[str, str]] = []
+    panes = {
+        "frontdesk": "%1",
+        "p1": "%2",
+        "p2": "%3",
+        "p3": "%4",
+        "p4": "%5",
+        "p5": "%6",
+        "zeta": "%7",
+        "alpha": "%8",
+    }
+
+    monkeypatch.setattr(
+        module,
+        "prepare_batch_move_window_class_project",
+        lambda **_kwargs: {"project_root": str(project_root), "role_store": str(role_store)},
+    )
+
+    def fake_run(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name == "ask_zeta_after_batch_move_window_class":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "accepted job=job_zeta target=zeta\n[CCB_ASYNC_SUBMITTED job=job_zeta target=zeta]\n",
+                "stderr": "",
+            }
+        if name == "ask_alpha_after_batch_move_window_class":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "accepted job=job_alpha target=alpha\n[CCB_ASYNC_SUBMITTED job=job_alpha target=alpha]\n",
+                "stderr": "",
+            }
+        return {"name": name, "returncode": 0, "stdout": "ok\n", "stderr": ""}
+
+    def fake_run_json(name, command, **_kwargs):
+        calls.append((name, " ".join(str(item) for item in command)))
+        if name == "add_zeta_to_review":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "add_window"}},
+            }
+        if name == "add_alpha_to_review":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {"apply": {"plan_class": "add_agent"}},
+            }
+        if name == "layout_before_batch_move_window_class":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 2,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["frontdesk"],
+                            "observed": _observed_window([panes["frontdesk"]], ["frontdesk"]),
+                            "agents": [{"agent": "frontdesk", "pane_id": panes["frontdesk"]}],
+                        },
+                        {
+                            "name": "plan-orchestrate",
+                            "agent_names": ["p1", "p2", "p3", "p4", "p5"],
+                            "observed": _observed_window(
+                                [panes["p1"], panes["p2"], panes["p3"], panes["p4"], panes["p5"]],
+                                ["p1", "p2", "p3", "p4", "p5"],
+                            ),
+                            "agents": [
+                                {"agent": agent, "pane_id": panes[agent]}
+                                for agent in ("p1", "p2", "p3", "p4", "p5")
+                            ],
+                        },
+                        {
+                            "name": "review",
+                            "agent_names": ["zeta", "alpha"],
+                            "observed": _observed_window([panes["zeta"], panes["alpha"]], ["zeta", "alpha"]),
+                            "agents": [
+                                {"agent": "zeta", "pane_id": panes["zeta"]},
+                                {"agent": "alpha", "pane_id": panes["alpha"]},
+                            ],
+                        },
+                    ],
+                },
+            }
+        if name == "move_zeta_alpha_to_window_class":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "agent_lifecycle_status": "active",
+                    "target_window_names": ["plan-orchestrate", "plan-orchestrate-2"],
+                    "apply": {
+                        "plan_class": "move_agent",
+                        "namespace_moved_agents": {"zeta": panes["zeta"], "alpha": panes["alpha"]},
+                        "namespace_moved_agent_windows": {
+                            "zeta": "plan-orchestrate",
+                            "alpha": "plan-orchestrate-2",
+                        },
+                        "namespace_removed_windows": ["review"],
+                    },
+                },
+            }
+        if name == "layout_after_batch_move_window_class":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 2,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["frontdesk"],
+                            "observed": _observed_window([panes["frontdesk"]], ["frontdesk"]),
+                            "agents": [{"agent": "frontdesk", "pane_id": panes["frontdesk"]}],
+                        },
+                        {
+                            "name": "plan-orchestrate",
+                            "agent_names": ["p1", "p2", "p3", "p4", "p5", "zeta"],
+                            "observed": _observed_window(
+                                [panes["p1"], panes["p2"], panes["p3"], panes["p4"], panes["p5"], panes["zeta"]],
+                                ["p1", "p2", "p3", "p4", "p5", "zeta"],
+                            ),
+                            "agents": [
+                                {"agent": agent, "pane_id": panes[agent]}
+                                for agent in ("p1", "p2", "p3", "p4", "p5", "zeta")
+                            ],
+                        },
+                        {
+                            "name": "plan-orchestrate-2",
+                            "agent_names": ["alpha"],
+                            "observed": _observed_window([panes["alpha"]], ["alpha"]),
+                            "agents": [{"agent": "alpha", "pane_id": panes["alpha"]}],
+                        },
+                    ],
+                },
+            }
+        raise AssertionError(f"unexpected json command {name}")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(module, "_run_json", fake_run_json)
+
+    payload = module._run_batch_move_window_class_flow(
+        test_root=tmp_path,
+        project_name="batch-move-window-class",
+        provider="fake",
+        ccb_test=Path("ccb_test"),
+        provider_home=tmp_path / "home",
+        command_timeout_s=1,
+        reset=True,
+        keep_running=False,
+    )
+
+    assert payload["flow_status"] == "ok"
+    assert payload["checks"]["move_target_windows"] is True
+    assert payload["checks"]["moved_agent_panes_match"] is True
+    assert payload["checks"]["removed_review_window"] is True
+    assert payload["checks"]["after_windows"] is True
+    assert payload["checks"]["zeta_ask_accepted"] is True
+    move_commands = [command for name, command in calls if name == "move_zeta_alpha_to_window_class"]
+    assert move_commands == [
+        "ccb_test --project "
+        f"{project_root} agent move --agents zeta,alpha --window-class plan-orchestrate "
+        "--reason dynamic layout batch window-class move smoke --json"
     ]
 
 

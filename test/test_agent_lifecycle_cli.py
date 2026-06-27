@@ -140,6 +140,43 @@ def test_agent_parser_supports_add_and_remove_commands() -> None:
     assert parser.parse(
         [
             'agent',
+            'move',
+            '--agents',
+            'planner2,broker1',
+            '--window-class',
+            'plan-orchestrate',
+            '--json',
+        ]
+    ) == ParsedAgentCommand(
+        project=None,
+        action='move',
+        agent_names=('planner2', 'broker1'),
+        window_class='plan-orchestrate',
+        json_output=True,
+    )
+    assert parser.parse(
+        [
+            'agent',
+            'move',
+            '--agents',
+            'worker1,checker1',
+            '--loop-id',
+            'round1',
+            '--node-id',
+            'node1',
+            '--json',
+        ]
+    ) == ParsedAgentCommand(
+        project=None,
+        action='move',
+        agent_names=('worker1', 'checker1'),
+        loop_id='round1',
+        node_id='node1',
+        json_output=True,
+    )
+    assert parser.parse(
+        [
+            'agent',
             'remove',
             'helper',
             '--policy',
@@ -772,6 +809,89 @@ def test_agent_move_batch_moves_dynamic_agents_to_new_window(
             'reason': 'window emptied by moved agents',
         },
     ]
+
+
+def test_agent_move_batch_resolves_window_class_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-agent-lifecycle-batch-window-class'
+    role_store = tmp_path / 'roles'
+    _write_installed_role(role_store, 'agentroles.general', default_agent_name='general')
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "main:codex"
+plan-orchestrate = "p1:codex, p2:codex, p3:codex, p4:codex, p5:codex"
+""",
+    )
+    for helper in ('zeta', 'alpha'):
+        result, _payload, stderr = _run_phase2(
+            [
+                'agent',
+                'add',
+                f'{helper}:codex',
+                '--role',
+                'agentroles.general',
+                '--window',
+                'review',
+                '--hidden',
+                '--json',
+            ],
+            cwd=project_root,
+        )
+        assert result == 0, stderr
+    before_move = load_project_config(project_root).config
+
+    result, moved, stderr = _run_phase2(
+        [
+            'agent',
+            'move',
+            '--agents',
+            'zeta,alpha',
+            '--window-class',
+            'plan-orchestrate',
+            '--reason',
+            'batch class placement',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert moved['agent_lifecycle_status'] == 'active'
+    assert moved['moved_agents'] == ['zeta', 'alpha']
+    assert moved['target_window_name'] is None
+    assert moved['target_window_names'] == ['plan-orchestrate', 'plan-orchestrate-2']
+    assert [(agent['agent'], agent['resolved_window_name']) for agent in moved['agents']] == [
+        ('zeta', 'plan-orchestrate'),
+        ('alpha', 'plan-orchestrate-2'),
+    ]
+    after_move = load_project_config(project_root).config
+    assert [(window.name, window.agent_names) for window in after_move.windows] == [
+        ('main', ('main',)),
+        ('plan-orchestrate', ('p1', 'p2', 'p3', 'p4', 'p5', 'zeta')),
+        ('plan-orchestrate-2', ('alpha',)),
+    ]
+    plan = build_reload_dry_run_plan(before_move, after_move, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert [item['op'] for item in plan['operations']] == [
+        'add_window',
+        'move_agent',
+        'move_agent',
+        'layout_change',
+    ]
+    assert plan['namespace_patch_plan']['steps'][-1] == {
+        'action': 'kill_window',
+        'window': 'review',
+        'managed_by': 'ccbd',
+        'reason': 'window emptied by moved agents',
+    }
 
 
 def test_agent_add_with_loop_node_places_agent_in_node_window(

@@ -930,6 +930,18 @@ Date: 2026-06-24
   workflow now asserts the batch flow status plus removed-window, removed-pane,
   survivor-pane, and ask-reachability invariants instead of relying only on
   the standalone smoke evidence.
+- Extended user-facing batch `ccb agent move --agents a,b` beyond explicit
+  `--window NAME` placement to the same dynamic target grammar as single-agent
+  move. `--window-class CLASS` now resolves each moved agent through the
+  effective `[windows]` topology and capacity rules before applying one reload
+  transaction; the response includes `target_window_names` when a batch splits
+  across multiple resolved windows. Focused regression passed with `67
+  passed`; source-wrapper fake-provider evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-batch-move-window-class-latest.json`
+  proved `review=[zeta,alpha]` batch-moves into
+  `plan-orchestrate=[p1..p5,zeta]` plus `plan-orchestrate-2=[alpha]`,
+  preserves both moved pane ids, removes the empty `review` window, and keeps
+  both moved ask targets accepted.
 - Exposed the first user-facing batch park/resume command:
   `ccb agent park --agents a,b --json` and
   `ccb agent resume --agents a,b --hidden|--visible --json`. The command
@@ -953,8 +965,10 @@ Date: 2026-06-24
    single-agent movement is proven with fake providers; the low-level kernel
    and user-facing command now move multiple source-window agents in one
    transaction, including newly materialized target windows and emptied source
-   window removal. Next evaluate batch `--window-class` / node placement and
-   transactions that mix moved panes with newly created agents in one target.
+   window removal. Batch `--window-class` placement is now proven for
+   capacity-based split targets; next evaluate batch execution-node placement
+   and transactions that mix moved panes with newly created agents in one
+   target.
 3. Extend the shrink/release proof from single-agent and batch fake-provider
    source-wrapper/CI smokes to opt-in real-provider tolerance where useful.
 4. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command

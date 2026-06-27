@@ -472,12 +472,9 @@ def _move(context, command) -> dict[str, object]:
 
 def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
     normalized = _normalize_agent_names(names, command='agent move --agents')
-    target_window = _optional_text(getattr(command, 'window_name', None))
-    if target_window is None:
-        raise ValueError('agent move --agents currently requires --window')
     placement = _placement_record(command)
-    if str(placement.get('mode') or '') != 'window':
-        raise ValueError('agent move --agents currently requires --window')
+    if str(placement.get('mode') or '') == 'auto':
+        raise ValueError('agent move requires --window, --window-class, --loop-id, or --node-id')
     previous_by_name: dict[str, dict[str, object]] = {}
     payloads: dict[str, dict[str, object]] = {}
     for name in normalized:
@@ -488,7 +485,12 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
         if previous_state not in ACTIVE_STATES:
             raise ValueError(f'agent {name!r} is not active; current lifecycle_state={previous_state or "<empty>"}')
         previous_by_name[name] = previous
-    base_sequence = _next_placement_sequence_for_agents(context, target_window=target_window, exclude_agents=set(normalized))
+    explicit_target_window = _optional_text(placement.get('window_name'))
+    base_sequence = _next_placement_sequence_for_agents(
+        context,
+        target_window=explicit_target_window,
+        exclude_agents=set(normalized),
+    )
     try:
         for index, name in enumerate(normalized):
             previous = previous_by_name[name]
@@ -502,13 +504,12 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
                     'previous_window_name': _optional_text(dict(previous.get('placement') or {}).get('window_name'))
                     or _optional_text(previous.get('resolved_window_name'))
                     or _optional_text(previous.get('window_name')),
-                    'window_name': target_window,
+                    'window_name': explicit_target_window,
                     'window_class': placement.get('window_class'),
                     'loop_id': placement.get('loop_id'),
                     'node_id': placement.get('node_id'),
                     'placement': placement_with_sequence,
                     'placement_sequence': placement_sequence,
-                    'resolved_window_name': target_window,
                     'reason': _optional_text(getattr(command, 'reason', None)),
                     'updated_at': _utc_now(),
                     'last_reason': _optional_text(getattr(command, 'reason', None)) or 'agent move batch',
@@ -516,8 +517,17 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
                     'events_path': str(_events_path(context)),
                 }
             )
+            if explicit_target_window is not None:
+                payload['resolved_window_name'] = explicit_target_window
             _write_state(context, name, payload)
             payloads[name] = payload
+        if explicit_target_window is None:
+            for name in normalized:
+                payload = payloads[name]
+                _update_resolved_placement(context, payload)
+                if _optional_text(payload.get('resolved_window_name')) is None:
+                    raise ValueError(f'agent move --agents could not resolve target window for {name!r}')
+                _write_state(context, name, payload)
         for name, payload in payloads.items():
             _append_event(
                 context,
@@ -525,7 +535,8 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
                     'event': 'move',
                     'agent': name,
                     'previous_window_name': payload.get('previous_window_name'),
-                    'target_window_name': target_window,
+                    'target_window_name': payload.get('resolved_window_name')
+                    or dict(payload.get('placement') or {}).get('window_name'),
                     'batch_agents': list(normalized),
                 },
             )
@@ -540,6 +551,15 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
             _restore_state(context, name, previous)
         raise
     records = [_status_record(payloads[name], source='dynamic') for name in normalized]
+    target_windows = tuple(
+        dict.fromkeys(
+            _optional_text(payloads[name].get('resolved_window_name'))
+            or _optional_text(dict(payloads[name].get('placement') or {}).get('window_name'))
+            or ''
+            for name in normalized
+        )
+    )
+    target_windows = tuple(name for name in target_windows if name)
     return {
         'agent_lifecycle_status': 'active',
         'action': 'move',
@@ -547,7 +567,8 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
         'project_root': str(context.project.project_root),
         'agent_count': len(records),
         'moved_agents': list(normalized),
-        'target_window_name': target_window,
+        'target_window_name': target_windows[0] if len(target_windows) == 1 else None,
+        'target_window_names': list(target_windows),
         'apply': apply,
         'agents': records,
         'runtime_agents_root': str(_agents_root(context)),

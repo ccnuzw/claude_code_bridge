@@ -203,8 +203,6 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
         positional_agent = str(namespace.agent_name).strip() if namespace.agent_name is not None else ''
         if bool(batch_agents) == bool(positional_agent):
             raise error_type('agent move requires exactly one <agent_name> or --agents a,b')
-        if batch_agents and namespace.window_name is None:
-            raise error_type('agent move --agents currently requires --window')
         return ParsedAgentCommand(
             project=project,
             action=action,
