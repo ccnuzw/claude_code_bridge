@@ -165,6 +165,12 @@ Date: 2026-06-28
   wrapper smoke
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-mixed-move-add-latest.json`
   passed for `mixed-move-add`.
+- Ran the first real-account live provider smoke for dynamic pane movement:
+  guarded source-wrapper smoke
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-codex-move-agent-latest.json`
+  passed for `codex` with `move-agent`, proving a pane-backed managed Codex
+  agent can be moved into a new window and remain ask-reachable after the
+  transaction.
 
 ## In Progress
 
@@ -174,15 +180,17 @@ Date: 2026-06-28
   release, busy retain, empty dynamic-window cleanup, config-only park/resume
   dispatch toggling, compact-startup pane identity preservation, batch release,
   batch move into explicit review/loop/node windows, and mixed move-plus-add
-  explicit `[windows]` reload. Full live `codex`/`claude` provider smoke,
+  explicit `[windows]` reload. One live `codex` move smoke has passed; broader
+  live `codex`/`claude` provider matrix coverage,
   daemon-pushed sidebar refresh, replacement, arbitrary layout reshapes, and
   background config watching remain deferred.
 
 ## Next
 
-1. Run full live-provider smoke for pane-backed `codex`/`claude` dynamic add,
-   move, release, hide/park/resume after confirming account/auth boundaries for
-   the test project.
+1. Extend live-provider smoke for pane-backed `codex`/`claude` dynamic add,
+   move, release, hide/park/resume. `codex` `move-agent` has passed with
+   real-home auth; remaining flows need the same guarded account-boundary
+   treatment before being promoted to release gates.
 2. Run or update the automatic and manual additive reload matrix in
    [topics/test-matrix.md](topics/test-matrix.md), including `test_ccb2`
    evidence for unchanged old panes, newly-mounted agents, released dynamic
