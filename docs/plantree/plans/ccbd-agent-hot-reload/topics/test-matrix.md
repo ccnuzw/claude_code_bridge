@@ -233,6 +233,17 @@ Date: 2026-05-29
   - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-move-agent-latest.json`
     passed `claude` `move-agent` with the same pane-preserving move/move-back
     and unload checks.
+- 2026-06-28 dynamic lifecycle smoke evidence:
+  - `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with
+    `5 passed`;
+  - `/home/bfly/yunwei/test_ccb2/dynamic-agent-lifecycle-fake-latest.json`
+    passed fake-provider lifecycle policy checks;
+  - `/home/bfly/yunwei/test_ccb2/dynamic-agent-lifecycle-codex-latest.json`
+    passed real-home `codex` lifecycle checks: long-lived planner helper
+    auto-parks, dispatch is rejected while parked, pane identity is preserved
+    through resume, ask works again after resume, short-lived reviewer helper
+    auto-unloads, and final layout returns to static `frontdesk` plus
+    `planner`.
 - Phase 3 dry-run checks:
   - start a mounted project and run `ccb reload --dry-run` with no config
     changes; expect `plan_class: no_change`;
