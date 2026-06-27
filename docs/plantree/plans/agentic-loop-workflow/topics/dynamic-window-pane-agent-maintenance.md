@@ -953,6 +953,10 @@ Current evidence:
   reviewer and loop worker/checker profiles, reducing the future real-provider
   run from a large static pane startup to the actual dynamic add/release and
   loop-capacity surfaces that need real-provider proof;
+- the first opt-in Codex real-provider run of this lighter
+  `resolve-preflight` variant passed in `/home/bfly/yunwei/test_ccb2`, proving
+  real dynamic reviewer add/release and real loop worker/checker
+  create/release while static overflow panes remained `fake`;
 - live provider release remains gated on busy/idle checks.
 
 Deferred:

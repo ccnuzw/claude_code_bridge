@@ -607,12 +607,21 @@ Date: 2026-06-24
   `dynamic_layout_smoke_status=ok`. Focused script tests passed with
   `21 passed`; related layout/lifecycle/capacity/RolePack tests passed with
   `81 passed`; `py_compile` and `git diff --check` passed.
+- Ran the first opt-in Codex real-provider `resolve-preflight` proof for the
+  lighter variant in
+  `/home/bfly/yunwei/test_ccb2/guarded-light-codex-real-1782574-codex-resolve-preflight`.
+  With `CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL=1`, the flow passed
+  `dynamic_layout_smoke_status=ok`: `layout resolve` predicted
+  `plan-orchestrate-2`, dynamic Codex reviewer add used `add_window`, release
+  removed the overflow window, execution-node resolve predicted
+  `node-round3-node1`, loop capacity created and released Codex worker/checker
+  panes, and final `kill -f` returned `state: unmounted`.
 
 ## Next
 
-1. Run the guarded real-provider opt-in variant for the new
-   `resolve-preflight` flow when real provider usage is intentionally allowed,
-   matching the existing Codex/Claude `window-class` evidence.
+1. Run the matching guarded Claude real-provider opt-in variant for the new
+   lightweight `resolve-preflight` flow when real provider usage is
+   intentionally allowed.
 2. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
    smoke into the chosen release/CI guarded regression path.
 3. Implement richer live reflow beyond the proven same-window and
