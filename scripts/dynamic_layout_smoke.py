@@ -2426,6 +2426,10 @@ def _watch_submitted_jobs(
     timeout: int,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    watch_env = dict(env)
+    watch_timeout = max(10, int(timeout))
+    watch_env["CCB_WATCH_TIMEOUT_S"] = str(watch_timeout)
+    watch_env.setdefault("CCB_WATCH_POLL_INTERVAL_S", "0.1")
     for ask in asks:
         job_id = _job_id(ask)
         if job_id is None:
@@ -2433,10 +2437,10 @@ def _watch_submitted_jobs(
         results.append(
             _run(
                 f"watch_{job_id}",
-                [str(ccb_test), "--project", str(project_root), "watch", job_id],
+                [str(ccb_test), "--project", str(project_root), "pend", "--watch", job_id],
                 cwd=test_root,
-                env=env,
-                timeout=timeout,
+                env=watch_env,
+                timeout=watch_timeout + 5,
             )
         )
     return results

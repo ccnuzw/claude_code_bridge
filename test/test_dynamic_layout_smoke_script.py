@@ -1266,6 +1266,43 @@ def test_provider_matrix_payload_compacts_provider_results(tmp_path: Path, monke
     assert compact["provider_results"][1]["provider"] == "claude"
 
 
+def test_watch_submitted_jobs_uses_converged_watch_with_smoke_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    captured = {}
+
+    def fake_run(name, command, **kwargs):
+        captured.update({"name": name, "command": command, **kwargs})
+        return {"name": name, "returncode": 0, "stdout": "watch_status: terminal\n", "stderr": ""}
+
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    results = module._watch_submitted_jobs(
+        ccb_test=Path("ccb_test"),
+        project_root=tmp_path / "project",
+        test_root=tmp_path,
+        env={"CCB_WATCH_TIMEOUT_S": "10", "CCB_WATCH_POLL_INTERVAL_S": "0.1"},
+        asks=({"stdout": "accepted job=job_slow target=helper\n"},),
+        timeout=240,
+    )
+
+    assert len(results) == 1
+    assert captured["name"] == "watch_job_slow"
+    assert captured["command"] == [
+        "ccb_test",
+        "--project",
+        str(tmp_path / "project"),
+        "pend",
+        "--watch",
+        "job_slow",
+    ]
+    assert captured["env"]["CCB_WATCH_TIMEOUT_S"] == "240"
+    assert captured["env"]["CCB_WATCH_POLL_INTERVAL_S"] == "0.1"
+    assert captured["timeout"] == 245
+
+
 def test_run_records_timeout_without_raising(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_module()
 

@@ -44,7 +44,7 @@ def test_guarded_provider_matrix_defaults_to_prepare_only(tmp_path: Path, monkey
 
     assert payload["dynamic_layout_smoke_status"] == "prepared"
     assert captured["providers"] == ("codex", "claude")
-    assert captured["flows"] == ("window-class", "resolve-preflight")
+    assert captured["flows"] == ("window-class", "move-agent", "resolve-preflight")
     assert captured["provider_home_mode"] == "real-home"
     assert captured["resolve_preflight_static_provider"] == "fake"
     assert captured["prepare_only"] is True
@@ -102,6 +102,6 @@ def test_tests_workflow_runs_prepare_only_guarded_provider_matrix() -> None:
     assert "--ccb-test \"$GITHUB_WORKSPACE/ccb_test\"" in text
     assert 'payload["dynamic_layout_smoke_status"] == "prepared"' in text
     assert 'payload["providers"] == ["codex", "claude"]' in text
-    assert 'payload["flows"] == ["window-class", "resolve-preflight"]' in text
+    assert 'payload["flows"] == ["window-class", "move-agent", "resolve-preflight"]' in text
     step = text.split("Guard dynamic layout provider matrix smoke", 1)[1].split("Guard workflow closure layout cleanup smoke", 1)[0]
     assert "--run" not in step

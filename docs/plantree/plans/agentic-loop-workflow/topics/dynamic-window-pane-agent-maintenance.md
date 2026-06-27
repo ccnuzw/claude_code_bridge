@@ -759,16 +759,17 @@ Evidence:
   cleanup.
 - `scripts/guarded_dynamic_layout_provider_smoke.py` now provides a fixed
   guarded entrypoint for future release/CI wiring. It defaults to prepare-only
-  Codex+Claude `window-class`, requires `--run` plus
+  Codex+Claude `window-class`, `move-agent`, and `resolve-preflight`, requires
+  `--run` plus
   `CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL=1` for live provider execution, and passed
   both prepare-only and real guarded source-wrapper runs in
   `/home/bfly/yunwei/test_ccb2/guarded-dynamic-layout-prepare-1782568181-*`
   and `/home/bfly/yunwei/test_ccb2/guarded-dynamic-layout-real-1782568215-*`.
 - The default `Tests` workflow now runs that wrapper as a prepare-only Ubuntu
   py3.11 gate, without `--run`, and asserts that the Codex+Claude
-  `window-class` provider matrix reaches `prepared`. This keeps real provider
-  execution behind explicit local/release opt-in while making wrapper drift a
-  normal CI failure.
+  `window-class`, `move-agent`, and `resolve-preflight` provider matrix reaches
+  `prepared`. This keeps real provider execution behind explicit local/release
+  opt-in while making wrapper drift a normal CI failure.
 - Dynamic reload apply reports now carry pane identity diagnostics. The shared
   `pane_identity_report` appears under mounted `ccb agent add/remove --json`
   and `ccb loop capacity ensure/release --json` apply payloads, summarizing
@@ -1060,6 +1061,12 @@ Current evidence:
   removes the empty `review` window in the same guarded transaction, preserves
   the helper pane id, reflows `main`, keeps ask reachability after return, and
   leaves final unload as a normal same-window `remove_agent` operation;
+- guarded provider movement coverage now includes the bounded move cycle:
+  prepare-only Codex+Claude matrix projects cover `window-class`, `move-agent`,
+  and `resolve-preflight`, while the opt-in Codex real-provider `move-agent`
+  run proves `main -> review -> main -> unload` with terminal asks before
+  move, after move, and after return. The smoke harness uses `ccb pend --watch`
+  with an explicit watch timeout for these job observations;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1079,7 +1086,7 @@ Current evidence:
   empty overflow window, then `layout resolve --loop-id/--node-id` predicted
   `node-round3-node1` before `ccb loop capacity` created and released the
   worker/checker execution-node window;
-- guarded provider prepare-only now covers both `window-class` and
+- guarded provider prepare-only now covers `window-class`, `move-agent`, and
   `resolve-preflight` for Codex+Claude, so CI validates the new project/config
   surface without requiring real provider auth;
 - guarded `resolve-preflight` provider preparation can now keep static

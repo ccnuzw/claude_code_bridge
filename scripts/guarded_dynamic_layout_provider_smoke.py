@@ -18,7 +18,7 @@ import dynamic_layout_smoke  # noqa: E402
 
 
 DEFAULT_PROVIDERS = ("codex", "claude")
-DEFAULT_FLOWS = ("window-class", "resolve-preflight")
+DEFAULT_FLOWS = ("window-class", "move-agent", "resolve-preflight")
 DEFAULT_TEST_ROOT = dynamic_layout_smoke.DEFAULT_TEST_ROOT
 DEFAULT_CCB_TEST = dynamic_layout_smoke.DEFAULT_CCB_TEST
 DEFAULT_PROJECT_PREFIX = "dynamic-layout-provider-matrix"
@@ -70,7 +70,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--flow",
         action="append",
         choices=dynamic_layout_smoke.FLOW_NAMES,
-        help="Flow to run. Defaults to window-class.",
+        help="Flow to run. Defaults to the guarded provider matrix flows.",
     )
     parser.add_argument("--provider-home-mode", choices=("source-home", "real-home"), default="real-home")
     parser.add_argument(
