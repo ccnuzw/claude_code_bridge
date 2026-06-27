@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "dynamic_layout_smoke.py"
 
@@ -30,6 +32,15 @@ def test_build_multi_node_config_declares_explicit_windows_and_loop_profiles() -
     assert 'role = "agentroles.coder"' in text
     assert '[loop.role_profiles.code_reviewer]' in text
     assert 'role = "agentroles.code_reviewer"' in text
+
+
+def test_build_configs_accept_provider() -> None:
+    module = _load_module()
+
+    assert 'main = "orchestrator:codex"' in module.build_multi_node_config(provider="codex")
+    assert 'provider = "codex"' in module.build_multi_node_config(provider="codex")
+    assert 'main = "main:claude"' in module.build_same_window_config(provider="claude")
+    assert 'plan-orchestrate = "planner:gemini"' in module.build_window_class_config(provider="gemini")
 
 
 def test_build_window_class_config_declares_plan_orchestrate_window() -> None:
@@ -60,6 +71,54 @@ def test_prepare_projects_write_configs_and_roles(tmp_path: Path) -> None:
     assert (Path(multi["role_store"]) / "installed" / "agentroles.code_reviewer" / "current" / "role.toml").is_file()
     assert (Path(same["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
     assert (Path(window_class["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
+
+
+def test_prepare_only_can_generate_real_provider_window_class_project(tmp_path: Path) -> None:
+    module = _load_module()
+
+    payload = module.run_dynamic_layout_smoke(
+        test_root=tmp_path,
+        project_prefix="real-provider-prepare",
+        ccb_test=Path(__file__),
+        provider="codex",
+        flows=("window-class",),
+        prepare_only=True,
+        reset=True,
+    )
+
+    assert payload["dynamic_layout_smoke_status"] == "prepared"
+    assert payload["flows"] == ["window-class"]
+    assert len(payload["prepared"]) == 1
+    config = Path(payload["prepared"][0]["project_root"]) / ".ccb" / "ccb.config"
+    assert 'main = "frontdesk:codex"' in config.read_text(encoding="utf-8")
+    assert payload["preflight"]["checks"]["provider"] == "codex"
+
+
+def test_real_provider_run_requires_explicit_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+    monkeypatch.delenv(module.REAL_RUN_ENV, raising=False)
+
+    with pytest.raises(RuntimeError, match=module.REAL_RUN_ENV):
+        module.run_dynamic_layout_smoke(
+            test_root=tmp_path,
+            project_prefix="real-provider-run",
+            ccb_test=Path(__file__),
+            provider="codex",
+            flows=("window-class",),
+        )
+
+
+def test_real_home_mode_ignores_isolated_home_when_override_is_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    isolated_home = tmp_path / "source_home"
+    real_home = tmp_path / "real_home"
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("CCB_REAL_HOME", str(real_home))
+
+    assert module._provider_home(test_root=tmp_path, mode="real-home") == real_home
 
 
 def test_payload_helpers_extract_window_agents_and_panes() -> None:

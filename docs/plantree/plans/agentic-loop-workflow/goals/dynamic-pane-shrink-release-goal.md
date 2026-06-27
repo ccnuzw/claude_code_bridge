@@ -121,4 +121,8 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
     helpers askable.
 - Remaining gap: these are fake-provider panes. Full live pane-backed
   `codex`/`claude` release still needs a guarded real-provider smoke before
-  treating provider-specific teardown and recovery as proven.
+  treating provider-specific teardown and recovery as proven. The smoke harness
+  can now prepare and preflight real-provider projects with `--provider`,
+  `--flow`, `--provider-home-mode`, and `--prepare-only`, and it blocks
+  accidental non-fake execution unless `CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL=1`
+  is set.

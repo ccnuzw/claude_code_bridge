@@ -14,16 +14,24 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEST_ROOT = Path(os.environ.get("CCB_DYNAMIC_LAYOUT_SMOKE_TEST_ROOT", "/home/bfly/yunwei/test_ccb2"))
 DEFAULT_CCB_TEST = REPO_ROOT / "ccb_test"
+REAL_RUN_ENV = "CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL"
+FLOW_NAMES = ("multi-node", "same-window", "window-class")
+PROVIDER_EXECUTABLES = {
+    "codex": "codex",
+    "claude": "claude",
+    "fake": "fake",
+    "gemini": "gemini",
+}
 
 
-def build_multi_node_config() -> str:
+def build_multi_node_config(*, provider: str = "fake") -> str:
     return "\n".join(
         [
             "version = 2",
             'entry_window = "main"',
             "",
             "[windows]",
-            'main = "orchestrator:fake"',
+            f'main = "orchestrator:{provider}"',
             "",
             "[loop.capacity]",
             "enabled = true",
@@ -34,7 +42,7 @@ def build_multi_node_config() -> str:
             "",
             "[loop.role_profiles.worker]",
             'role = "agentroles.coder"',
-            'provider = "fake"',
+            f'provider = "{provider}"',
             'thinking = "medium"',
             'workspace_mode = "inplace"',
             "max_instances = 2",
@@ -42,7 +50,7 @@ def build_multi_node_config() -> str:
             "",
             "[loop.role_profiles.code_reviewer]",
             'role = "agentroles.code_reviewer"',
-            'provider = "fake"',
+            f'provider = "{provider}"',
             'thinking = "medium"',
             'workspace_mode = "inplace"',
             "max_instances = 2",
@@ -51,62 +59,62 @@ def build_multi_node_config() -> str:
     )
 
 
-def build_same_window_config() -> str:
+def build_same_window_config(*, provider: str = "fake") -> str:
     return "\n".join(
         [
             "version = 2",
             'entry_window = "main"',
             "",
             "[windows]",
-            'main = "main:fake"',
+            f'main = "main:{provider}"',
             "",
         ]
     )
 
 
-def build_window_class_config() -> str:
+def build_window_class_config(*, provider: str = "fake") -> str:
     return "\n".join(
         [
             "version = 2",
             'entry_window = "main"',
             "",
             "[windows]",
-            'main = "frontdesk:fake"',
-            'plan-orchestrate = "planner:fake"',
+            f'main = "frontdesk:{provider}"',
+            f'plan-orchestrate = "planner:{provider}"',
             "",
         ]
     )
 
 
-def prepare_multi_node_project(*, test_root: Path, project_name: str, reset: bool = False) -> dict[str, str]:
+def prepare_multi_node_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
     project_root = _project_root(test_root, project_name)
     if reset and project_root.exists():
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
-    (project_root / ".ccb" / "ccb.config").write_text(build_multi_node_config(), encoding="utf-8")
+    (project_root / ".ccb" / "ccb.config").write_text(build_multi_node_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.coder", default_agent_name="worker")
     _write_minimal_role(role_store, "agentroles.code_reviewer", default_agent_name="code_reviewer")
     return {"project_root": str(project_root), "role_store": str(role_store)}
 
 
-def prepare_same_window_project(*, test_root: Path, project_name: str, reset: bool = False) -> dict[str, str]:
+def prepare_same_window_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
     project_root = _project_root(test_root, project_name)
     if reset and project_root.exists():
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
-    (project_root / ".ccb" / "ccb.config").write_text(build_same_window_config(), encoding="utf-8")
+    (project_root / ".ccb" / "ccb.config").write_text(build_same_window_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
     return {"project_root": str(project_root), "role_store": str(role_store)}
 
 
-def prepare_window_class_project(*, test_root: Path, project_name: str, reset: bool = False) -> dict[str, str]:
+def prepare_window_class_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
     project_root = _project_root(test_root, project_name)
     if reset and project_root.exists():
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
-    (project_root / ".ccb" / "ccb.config").write_text(build_window_class_config(), encoding="utf-8")
+    (project_root / ".ccb" / "ccb.config").write_text(build_window_class_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
     return {"project_root": str(project_root), "role_store": str(role_store)}
@@ -117,42 +125,81 @@ def run_dynamic_layout_smoke(
     test_root: Path,
     project_prefix: str,
     ccb_test: Path,
+    provider: str = "fake",
+    flows: tuple[str, ...] | None = None,
+    provider_home_mode: str = "source-home",
+    prepare_only: bool = False,
     reset: bool = False,
     keep_running: bool = False,
 ) -> dict[str, Any]:
     test_root = test_root.expanduser().resolve(strict=False)
     test_root.mkdir(parents=True, exist_ok=True)
-    source_home = test_root / "source_home"
-    source_home.mkdir(parents=True, exist_ok=True)
-    results = [
-        _run_multi_node_flow(
+    flow_names = _normalize_flows(flows)
+    preflight_payload = preflight(test_root=test_root, provider=provider, ccb_test=ccb_test, provider_home_mode=provider_home_mode)
+    if provider != "fake" and not prepare_only and os.environ.get(REAL_RUN_ENV) != "1":
+        raise RuntimeError(f"real provider dynamic layout smoke requires {REAL_RUN_ENV}=1")
+    if prepare_only:
+        prepared = _prepare_selected_projects(
             test_root=test_root,
-            project_name=f"{project_prefix}-multi-node",
-            ccb_test=ccb_test,
-            source_home=source_home,
+            project_prefix=project_prefix,
+            provider=provider,
+            flows=flow_names,
             reset=reset,
-            keep_running=keep_running,
-        ),
-        _run_same_window_flow(
-            test_root=test_root,
-            project_name=f"{project_prefix}-same-window",
-            ccb_test=ccb_test,
-            source_home=source_home,
-            reset=reset,
-            keep_running=keep_running,
-        ),
-        _run_window_class_flow(
-            test_root=test_root,
-            project_name=f"{project_prefix}-window-class",
-            ccb_test=ccb_test,
-            source_home=source_home,
-            reset=reset,
-            keep_running=keep_running,
-        ),
-    ]
+        )
+        return {
+            "dynamic_layout_smoke_status": "prepared",
+            "provider": provider,
+            "provider_home_mode": provider_home_mode,
+            "flows": list(flow_names),
+            "preflight": preflight_payload,
+            "prepared": prepared,
+        }
+    provider_home = _provider_home(test_root=test_root, mode=provider_home_mode)
+    provider_home.mkdir(parents=True, exist_ok=True)
+    results: list[dict[str, Any]] = []
+    if "multi-node" in flow_names:
+        results.append(
+            _run_multi_node_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-multi-node",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "same-window" in flow_names:
+        results.append(
+            _run_same_window_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-same-window",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "window-class" in flow_names:
+        results.append(
+            _run_window_class_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-window-class",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
     checks = {item["flow"]: item.get("flow_status") == "ok" for item in results}
     return {
         "dynamic_layout_smoke_status": "ok" if all(checks.values()) else "failed",
+        "provider": provider,
+        "provider_home_mode": provider_home_mode,
+        "flows": list(flow_names),
+        "preflight": preflight_payload,
         "checks": checks,
         "results": results,
     }
@@ -162,14 +209,15 @@ def _run_multi_node_flow(
     *,
     test_root: Path,
     project_name: str,
+    provider: str,
     ccb_test: Path,
-    source_home: Path,
+    provider_home: Path,
     reset: bool,
     keep_running: bool,
 ) -> dict[str, Any]:
-    prepared = prepare_multi_node_project(test_root=test_root, project_name=project_name, reset=reset)
+    prepared = prepare_multi_node_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
     project_root = Path(prepared["project_root"])
-    env = _env(source_home=source_home, role_store=Path(prepared["role_store"]))
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
     commands: list[dict[str, Any]] = []
     try:
         commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env))
@@ -256,14 +304,15 @@ def _run_same_window_flow(
     *,
     test_root: Path,
     project_name: str,
+    provider: str,
     ccb_test: Path,
-    source_home: Path,
+    provider_home: Path,
     reset: bool,
     keep_running: bool,
 ) -> dict[str, Any]:
-    prepared = prepare_same_window_project(test_root=test_root, project_name=project_name, reset=reset)
+    prepared = prepare_same_window_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
     project_root = Path(prepared["project_root"])
-    env = _env(source_home=source_home, role_store=Path(prepared["role_store"]))
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
     commands: list[dict[str, Any]] = []
     try:
         commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env))
@@ -278,7 +327,7 @@ def _run_same_window_flow(
                         str(project_root),
                         "agent",
                         "add",
-                        f"{helper}:fake",
+                        f"{helper}:{provider}",
                         "--role",
                         "agentroles.general",
                         "--window",
@@ -337,14 +386,15 @@ def _run_window_class_flow(
     *,
     test_root: Path,
     project_name: str,
+    provider: str,
     ccb_test: Path,
-    source_home: Path,
+    provider_home: Path,
     reset: bool,
     keep_running: bool,
 ) -> dict[str, Any]:
-    prepared = prepare_window_class_project(test_root=test_root, project_name=project_name, reset=reset)
+    prepared = prepare_window_class_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
     project_root = Path(prepared["project_root"])
-    env = _env(source_home=source_home, role_store=Path(prepared["role_store"]))
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
     commands: list[dict[str, Any]] = []
     try:
         commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env))
@@ -359,7 +409,7 @@ def _run_window_class_flow(
                         str(project_root),
                         "agent",
                         "add",
-                        f"{helper}:fake",
+                        f"{helper}:{provider}",
                         "--role",
                         "agentroles.general",
                         "--window-class",
@@ -442,6 +492,109 @@ def _project_root(test_root: Path, project_name: str) -> Path:
     return project_root
 
 
+def preflight(*, test_root: Path, provider: str, ccb_test: Path, provider_home_mode: str) -> dict[str, Any]:
+    provider_home = _provider_home(test_root=test_root, mode=provider_home_mode)
+    executable = PROVIDER_EXECUTABLES.get(provider, provider)
+    provider_path = shutil.which(executable)
+    checks = {
+        "ccb_test_exists": ccb_test.exists(),
+        "test_root_exists": test_root.expanduser().resolve(strict=False).is_dir(),
+        "provider": provider,
+        "provider_executable": executable,
+        "provider_executable_path": provider_path,
+        "provider_executable_found": provider == "fake" or provider_path is not None,
+        "provider_home_mode": provider_home_mode,
+        "provider_home": str(provider_home),
+        "provider_auth_exists": _provider_auth_exists(provider=provider, home=provider_home),
+        "real_run_opt_in": os.environ.get(REAL_RUN_ENV) == "1",
+    }
+    required = ("ccb_test_exists", "test_root_exists", "provider_executable_found")
+    return {
+        "preflight_status": "ok" if all(bool(checks[key]) for key in required) else "blocked",
+        "checks": checks,
+    }
+
+
+def _prepare_selected_projects(
+    *,
+    test_root: Path,
+    project_prefix: str,
+    provider: str,
+    flows: tuple[str, ...],
+    reset: bool,
+) -> list[dict[str, str]]:
+    prepared: list[dict[str, str]] = []
+    if "multi-node" in flows:
+        prepared.append(
+            prepare_multi_node_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-multi-node",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "same-window" in flows:
+        prepared.append(
+            prepare_same_window_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-same-window",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "window-class" in flows:
+        prepared.append(
+            prepare_window_class_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-window-class",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    return prepared
+
+
+def _normalize_flows(flows: tuple[str, ...] | None) -> tuple[str, ...]:
+    if not flows:
+        return FLOW_NAMES
+    unknown = sorted({item for item in flows if item not in FLOW_NAMES})
+    if unknown:
+        raise ValueError(f"unknown flow(s): {', '.join(unknown)}")
+    return tuple(dict.fromkeys(flows))
+
+
+def _provider_home(*, test_root: Path, mode: str) -> Path:
+    if mode == "source-home":
+        return test_root.expanduser().resolve(strict=False) / "source_home"
+    if mode == "real-home":
+        return _real_user_home()
+    raise ValueError(f"unsupported provider home mode: {mode}")
+
+
+def _real_user_home() -> Path:
+    override = os.environ.get("CCB_REAL_HOME") or os.environ.get("REAL_USER_HOME")
+    if override:
+        return Path(override).expanduser().resolve(strict=False)
+    try:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser().resolve(strict=False)
+    except Exception:
+        return Path.home().expanduser().resolve(strict=False)
+
+
+def _provider_auth_exists(*, provider: str, home: Path) -> bool | None:
+    if provider == "codex":
+        return any(
+            path.is_file()
+            for path in (
+                home / ".codex" / "auth.json",
+                home / ".codex" / "home" / "auth.json",
+            )
+        )
+    return None
+
+
 def _write_minimal_role(role_store: Path, role_id: str, *, default_agent_name: str) -> None:
     target = role_store / "installed" / role_id / "current" / "role.toml"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -460,10 +613,10 @@ def _write_minimal_role(role_store: Path, role_id: str, *, default_agent_name: s
     )
 
 
-def _env(*, source_home: Path, role_store: Path) -> dict[str, str]:
+def _env(*, provider_home: Path, role_store: Path) -> dict[str, str]:
     env = dict(os.environ)
-    env["HOME"] = str(source_home)
-    env["CCB_SOURCE_HOME"] = str(source_home)
+    env["HOME"] = str(provider_home)
+    env["CCB_SOURCE_HOME"] = str(provider_home)
     env["AGENT_ROLES_STORE"] = str(role_store)
     env["CCB_NO_ATTACH"] = "1"
     env["CCB_WATCH_TIMEOUT_S"] = "10"
@@ -509,6 +662,11 @@ def compact_smoke_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Return a small CLI-friendly copy of a full smoke result payload."""
     return {
         "dynamic_layout_smoke_status": payload.get("dynamic_layout_smoke_status"),
+        "provider": payload.get("provider"),
+        "provider_home_mode": payload.get("provider_home_mode"),
+        "flows": payload.get("flows"),
+        "preflight": payload.get("preflight"),
+        "prepared": payload.get("prepared"),
         "checks": payload.get("checks"),
         "results": [_compact_flow_result(item) for item in payload.get("results", []) if isinstance(item, dict)],
     }
@@ -677,10 +835,14 @@ def _all_success(results: list[dict[str, Any]]) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run CCB dynamic window/pane layout smoke tests with fake providers.")
+    parser = argparse.ArgumentParser(description="Run CCB dynamic window/pane layout smoke tests.")
     parser.add_argument("--test-root", type=Path, default=DEFAULT_TEST_ROOT)
     parser.add_argument("--project-prefix", default="dynamic-layout-smoke")
     parser.add_argument("--ccb-test", type=Path, default=DEFAULT_CCB_TEST)
+    parser.add_argument("--provider", default="fake")
+    parser.add_argument("--flow", action="append", choices=FLOW_NAMES, help="Flow to run; repeat to run multiple flows. Defaults to all flows.")
+    parser.add_argument("--provider-home-mode", choices=("source-home", "real-home"), default="source-home")
+    parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--reset", action="store_true")
     parser.add_argument("--keep-running", action="store_true")
     parser.add_argument("--full-output", action="store_true", help="Print complete command stdout and JSON payloads.")
@@ -690,12 +852,16 @@ def main(argv: list[str] | None = None) -> int:
         test_root=args.test_root,
         project_prefix=args.project_prefix,
         ccb_test=args.ccb_test,
+        provider=args.provider,
+        flows=tuple(args.flow or ()),
+        provider_home_mode=args.provider_home_mode,
+        prepare_only=args.prepare_only,
         reset=args.reset,
         keep_running=args.keep_running,
     )
     printable = payload if args.full_output else compact_smoke_payload(payload)
     print(json.dumps(printable, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if payload.get("dynamic_layout_smoke_status") == "ok" else 1
+    return 0 if payload.get("dynamic_layout_smoke_status") in {"ok", "prepared"} else 1
 
 
 if __name__ == "__main__":

@@ -457,6 +457,14 @@ Date: 2026-06-24
   pane ids and ask reachability. The source-wrapper run in
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-window-class-1782560319-window-class`
   passed with all three dynamic layout flows green.
+- Parameterized the dynamic layout smoke harness for the next real-provider
+  slice. It now supports `--provider`, repeatable `--flow`,
+  `--provider-home-mode`, and `--prepare-only`, while requiring
+  `CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL=1` before any non-fake provider is
+  started. Default fake-provider regression still passed all three flows, a
+  selected `--flow window-class` source-wrapper run passed, and Codex
+  `--prepare-only --provider-home-mode real-home` proved executable/auth
+  preflight without launching provider panes.
 
 ## Next
 
@@ -475,9 +483,10 @@ Date: 2026-06-24
    non-loop dynamic agents while keeping loop execution capacity behind
    `ccb loop capacity`.
 5. Implement the next true hot-load slices:
-    full live-provider smoke for pane-backed providers, better pane-identity
-    diagnostics at startup, and only later richer live reflow beyond the
-    proven same-window and explicit-window-class middle-removal cases.
+    run the guarded `codex`/`claude` provider smoke using the new provider/flow
+    harness, add better pane-identity diagnostics at startup, and only later
+    richer live reflow beyond the proven same-window and explicit-window-class
+    middle-removal cases.
 6. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.

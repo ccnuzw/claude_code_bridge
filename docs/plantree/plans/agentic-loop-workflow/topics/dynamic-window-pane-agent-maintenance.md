@@ -610,6 +610,14 @@ Evidence:
   `namespace_reflowed_windows=["plan-orchestrate"]`, preserved
   `planner_helper1` and `planner_helper3` pane ids, kept `main` unchanged, and
   accepted asks to both surviving helpers.
+- The same smoke harness is now ready for guarded real-provider probes:
+  `--provider` rewrites the generated config and dynamic `agent add` provider,
+  `--flow` can isolate one scenario such as `window-class`,
+  `--provider-home-mode` separates isolated source-home from real user auth,
+  and non-fake runs require `CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL=1`.
+  Verification covered the unchanged default fake run, a selected
+  `--flow window-class` fake run, and Codex `--prepare-only` preflight with
+  real-home auth discovery under `/home/bfly`.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.
