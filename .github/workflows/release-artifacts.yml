@@ -94,7 +94,15 @@ jobs:
             exit "$rc"
           fi
           "$rs_helper" --capabilities | grep -F 'native.output.observe'
-          "$accelerator" socket-path --project-root "$verify_dir" | grep -F '.ccb/runtime-accelerator/accelerator.sock'
+          accelerator_socket="$("$accelerator" socket-path --project-root "$verify_dir")"
+          case "$accelerator_socket" in
+            */.ccb/runtime-accelerator/accelerator.sock|*/ccb-runtime/accelerator-*.sock)
+              ;;
+            *)
+              echo "Unexpected runtime accelerator socket path: $accelerator_socket" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -109,6 +117,11 @@ jobs:
     needs: build
 
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -127,7 +140,41 @@ jobs:
           test -f ccb-macos-universal.tar.gz
           sha256sum ccb-*.tar.gz | sort -k2 > SHA256SUMS
           sha256sum -c SHA256SUMS
-          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY"
+          notes_file="$(mktemp)"
+          python - "$TAG_NAME" > "$notes_file" <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          tag = sys.argv[1]
+          changelog = Path(os.environ["GITHUB_WORKSPACE"]) / "CHANGELOG.md"
+          lines = changelog.read_text(encoding="utf-8").splitlines()
+          capture = False
+          body: list[str] = []
+          for line in lines:
+              if line.startswith(f"## {tag}"):
+                  capture = True
+                  continue
+              if capture and line.startswith("## "):
+                  break
+              if capture:
+                  body.append(line)
+          text = "\n".join(body).strip()
+          if not text:
+              raise SystemExit(f"release notes missing for {tag}")
+          print(text)
+          PY
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG_NAME" \
+              --notes-file "$notes_file"
+          else
+            gh release create "$TAG_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG_NAME" \
+              --notes-file "$notes_file"
+          fi
           gh release upload "$TAG_NAME" ccb-linux-x86_64.tar.gz ccb-macos-universal.tar.gz SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

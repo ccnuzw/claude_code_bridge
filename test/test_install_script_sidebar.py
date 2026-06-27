@@ -566,3 +566,22 @@ def test_release_artifacts_workflow_sets_up_rust_for_sidebar_build() -> None:
     assert "grep -F 'universal binary'" in text
     assert '"$helper" --help' in text
     assert '"$rs_helper" --capabilities' in text
+
+
+def test_release_artifacts_workflow_accepts_runtime_accelerator_socket_fallback() -> None:
+    text = Path('.github/workflows/release-artifacts.yml').read_text(encoding='utf-8')
+
+    assert 'accelerator_socket="$("$accelerator" socket-path --project-root "$verify_dir")"' in text
+    assert '*/.ccb/runtime-accelerator/accelerator.sock|*/ccb-runtime/accelerator-*.sock)' in text
+    assert 'Unexpected runtime accelerator socket path' in text
+
+
+def test_release_artifacts_workflow_writes_release_notes_from_changelog() -> None:
+    text = Path('.github/workflows/release-artifacts.yml').read_text(encoding='utf-8')
+
+    assert 'Checkout release notes' in text
+    assert 'changelog = Path(os.environ["GITHUB_WORKSPACE"]) / "CHANGELOG.md"' in text
+    assert 'release notes missing for {tag}' in text
+    assert 'gh release edit "$TAG_NAME"' in text
+    assert 'gh release create "$TAG_NAME"' in text
+    assert '--notes-file "$notes_file"' in text
