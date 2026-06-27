@@ -82,6 +82,9 @@ def _remove_window_agents(
 
 
 def _kill_window(backend, *, current, window_name: str, result, timeout_s: float | None) -> None:
+    if find_window(backend, session_name=current.tmux_session_name, window_name=window_name, timeout_s=timeout_s) is None:
+        _append_unique(result.removed_windows, window_name)
+        return
     kill_window(
         backend,
         target=session_window_target(current.tmux_session_name, window_name),

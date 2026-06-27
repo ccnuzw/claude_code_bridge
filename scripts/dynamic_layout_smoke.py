@@ -16,7 +16,7 @@ DEFAULT_TEST_ROOT = Path(os.environ.get("CCB_DYNAMIC_LAYOUT_SMOKE_TEST_ROOT", "/
 DEFAULT_CCB_TEST = REPO_ROOT / "ccb_test"
 DEFAULT_COMMAND_TIMEOUT_S = int(os.environ.get("CCB_DYNAMIC_LAYOUT_SMOKE_COMMAND_TIMEOUT_S", "60"))
 REAL_RUN_ENV = "CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL"
-FLOW_NAMES = ("multi-node", "same-window", "window-class", "resolve-preflight")
+FLOW_NAMES = ("multi-node", "same-window", "single-agent-window", "window-class", "resolve-preflight")
 PROVIDER_EXECUTABLES = {
     "codex": "codex",
     "claude": "claude",
@@ -71,6 +71,10 @@ def build_same_window_config(*, provider: str = "fake") -> str:
             "",
         ]
     )
+
+
+def build_single_agent_window_config(*, provider: str = "fake") -> str:
+    return build_same_window_config(provider=provider)
 
 
 def build_window_class_config(*, provider: str = "fake") -> str:
@@ -145,6 +149,17 @@ def prepare_same_window_project(*, test_root: Path, project_name: str, provider:
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
     (project_root / ".ccb" / "ccb.config").write_text(build_same_window_config(provider=provider), encoding="utf-8")
+    role_store = project_root / "roles"
+    _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
+    return {"project_root": str(project_root), "role_store": str(role_store)}
+
+
+def prepare_single_agent_window_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
+    project_root = _project_root(test_root, project_name)
+    if reset and project_root.exists():
+        shutil.rmtree(project_root)
+    (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ccb" / "ccb.config").write_text(build_single_agent_window_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
     return {"project_root": str(project_root), "role_store": str(role_store)}
@@ -243,6 +258,19 @@ def run_dynamic_layout_smoke(
             _run_same_window_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-same-window",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "single-agent-window" in flow_names:
+        results.append(
+            _run_single_agent_window_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-single-agent-window",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -515,6 +543,90 @@ def _run_same_window_flow(
         }
         status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
         return {"flow": "same_window_middle_release", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
+def _run_single_agent_window_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_single_agent_window_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        add = _run_json(
+            "add_single_window_helper",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "add",
+                f"helper:{provider}",
+                "--role",
+                "agentroles.general",
+                "--window",
+                "review",
+                "--hidden",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(add)
+        before = _run_json("layout_before_single_window_release", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(before)
+        release = _run_json(
+            "remove_single_window_helper",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "remove",
+                "helper",
+                "--policy",
+                "unload",
+                "--idle-only",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(release)
+        after = _run_json("layout_after_single_window_release", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after)
+        commands.append(_run("ask_main", [str(ccb_test), "--project", str(project_root), "ask", "main"], cwd=test_root, env=env, input_text="single-agent-window smoke ping main\n", timeout=command_timeout_s))
+        before_panes = _agent_panes(before)
+        release_payload = _payload(release)
+        apply_payload = dict(release_payload.get("apply") or {})
+        checks = {
+            "add_window_plan": _payload(add).get("apply", {}).get("plan_class") == "add_window",
+            "review_window_added": _window_agents(before).get("review") == ["helper"],
+            "helper_pane_recorded": bool(before_panes.get("helper")),
+            "remove_agent_plan": apply_payload.get("plan_class") == "remove_agent",
+            "removed_helper_pane": apply_payload.get("namespace_removed_agents", {}).get("helper") == before_panes.get("helper"),
+            "removed_review_window": apply_payload.get("namespace_removed_windows") == ["review"],
+            "after_only_main_window": _window_agents(after) == {"main": ["main"]},
+            "dynamic_agents_cleaned": _payload(after).get("dynamic_agent_count") == 0,
+            "ask_main_accepted": _accepted(commands[-1]),
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "single_agent_window_release", "flow_status": status, "checks": checks, "commands": commands}
     finally:
         if not keep_running:
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
@@ -912,6 +1024,15 @@ def _prepare_selected_projects(
                 reset=reset,
             )
         )
+    if "single-agent-window" in flows:
+        prepared.append(
+            prepare_single_agent_window_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-single-agent-window",
+                provider=provider,
+                reset=reset,
+            )
+        )
     if "window-class" in flows:
         prepared.append(
             prepare_window_class_project(
@@ -1161,6 +1282,10 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
             for key in ("plan_class", "apply_status", "reload_status")
             if key in apply_payload
         }
+        if apply_payload.get("namespace_removed_agents"):
+            summary["apply"]["namespace_removed_agents"] = dict(apply_payload.get("namespace_removed_agents") or {})
+        if apply_payload.get("namespace_removed_windows"):
+            summary["apply"]["namespace_removed_windows"] = list(apply_payload.get("namespace_removed_windows") or ())
         if apply_payload.get("namespace_reflowed_windows"):
             summary["apply"]["namespace_reflowed_windows"] = list(apply_payload.get("namespace_reflowed_windows") or ())
         if apply_payload.get("namespace_reflow_errors"):

@@ -649,11 +649,21 @@ Date: 2026-06-24
   wrapper. Focused tests passed with `20 passed`; source-wrapper prepare and
   config validation passed in
   `/home/bfly/yunwei/test_ccb2/orchestrator-autonomous-cleanup-contract-smoke`.
+- Landed a richer live reflow/remove-window boundary for explicit `[windows]`.
+  `remove_agent` namespace apply now tolerates the case where killing the last
+  agent pane closes a no-sidebar agent window before an explicit `kill-window`,
+  records `namespace_removed_windows`, and keeps removed agent/pane
+  diagnostics. The dynamic layout smoke now includes a `single-agent-window`
+  fake-provider flow; source-wrapper validation in
+  `/home/bfly/yunwei/test_ccb2/single-agent-window-release-smoke-single-agent-window`
+  passed with `add_window`, `remove_agent`, `namespace_removed_windows=["review"]`,
+  final `dynamic_agent_count=0`, and `ask main` accepted. Focused tests passed
+  with `60 passed`.
 
 ## Next
 
-1. Implement richer live reflow beyond the proven same-window and
-   explicit-window-class middle-removal cases.
+1. Continue richer live reflow beyond the proven same-window,
+   single-agent-window, and explicit-window-class middle-removal cases.
 2. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.

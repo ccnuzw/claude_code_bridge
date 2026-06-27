@@ -774,6 +774,60 @@ def test_apply_remove_tool_window_is_idempotent_when_window_already_missing(
     assert backend.pane_options['%2']['@ccb_slot'] == 'agent2'
 
 
+def test_apply_remove_agent_window_tolerates_last_pane_closing_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+review = "agent2:claude"
+"""
+    new_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+"""
+    current = _load_config(tmp_path / 'current-remove-window-single-pane', current_text)
+    new = _load_config(tmp_path / 'new-remove-window-single-pane', new_text)
+    layout = PathLayout(_project(tmp_path / 'repo-remove-window-single-pane', current_text))
+
+    class _LastPaneClosesWindowBackend(_PatchFakeBackend):
+        def kill_pane(self, pane_id: str) -> None:
+            super().kill_pane(pane_id)
+            for session_name, windows in list(self.sessions.items()):
+                self.sessions[session_name] = [record for record in windows if record['panes']]
+
+    backend = _LastPaneClosesWindowBackend(socket_path=str(layout.ccbd_tmux_socket_path))
+    backend.add_window(layout.ccbd_tmux_session_name, 'main')
+    review_pane = backend.add_window(layout.ccbd_tmux_session_name, 'review')
+    _seed_agent_pane(backend, '%1', project_id='proj-1', window='main', agent='agent1')
+    _seed_agent_pane(backend, review_pane, project_id='proj-1', window='review', agent='agent2')
+    _store_namespace(layout, project_id='proj-1')
+    controller = ProjectNamespaceController(layout, 'proj-1', backend_factory=lambda socket_path=None: backend)
+    _forbid_recreate_paths(monkeypatch)
+    plan = build_reload_dry_run_plan(current, new, project_id='proj-1', current_namespace=controller.load())
+
+    result = controller.apply_reload_patch(
+        patch_plan=plan['namespace_patch_plan'],
+        old_topology=build_namespace_topology_plan(current),
+        new_topology=build_namespace_topology_plan(new),
+        timeout_s=0.0,
+    )
+
+    assert result.status == 'applied'
+    assert result.removed_agents == {'agent2': review_pane}
+    assert result.removed_panes == (review_pane,)
+    assert result.removed_windows == ('review',)
+    assert ('kill-pane', '-t', review_pane) in backend.tmux_calls
+    assert ('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:review') not in backend.tmux_calls
+    assert [record['name'] for record in backend.sessions[layout.ccbd_tmux_session_name]] == ['main']
+    assert review_pane not in backend.pane_options
+
+
 def test_apply_append_add_agent_failure_does_not_publish_or_write_authority(tmp_path: Path, monkeypatch) -> None:
     current = _load_config(tmp_path / 'current-add-agent-fail', BASE_CONFIG)
     new = _load_config(
