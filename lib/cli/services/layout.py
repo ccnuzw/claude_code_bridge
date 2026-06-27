@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 
 from agents.config_loader import load_project_config
 from agents.config_loader_runtime.dynamic_agent_overlays import (
@@ -11,20 +12,26 @@ from agents.config_loader_runtime.dynamic_agent_overlays import (
     resolve_dynamic_placement_window,
 )
 from agents.models import AgentValidationError, build_pane_growth_windows, normalize_agent_name
+from ccbd.services.project_namespace_state import ProjectNamespaceStateStore
+from ccbd.services.project_namespace_runtime.additive_patch_windows import WindowPatchResult
 from ccbd.services.project_namespace_runtime.backend import (
+    build_backend,
     create_session,
     create_window,
     ensure_server_policy,
     kill_server,
     kill_window,
     prepare_server,
+    session_alive,
     session_window_target,
     split_pane,
     window_root_pane,
 )
+from ccbd.services.project_namespace_runtime.remove_patch_agents import reflow_window_after_agent_change
 from terminal_runtime import TmuxBackend
 from terminal_runtime.tmux_identity import apply_ccb_pane_identity
 
+from .daemon import ping_local_state
 from .layout_status import layout_status
 
 
@@ -34,6 +41,8 @@ def layout_command(context, command) -> dict[str, object]:
         return layout_status(context)
     if action == 'resolve':
         return _resolve_layout_placement(context, command)
+    if action == 'arrange':
+        return _arrange_layout_window(context, command)
     names = tuple(f'p{index}' for index in range(1, int(command.panes) + 1))
     windows = build_pane_growth_windows(
         names,
@@ -55,6 +64,111 @@ def layout_command(context, command) -> dict[str, object]:
     smoke = _run_layout_smoke(context, command, windows)
     payload.update(smoke)
     return payload
+
+
+def _arrange_layout_window(context, command) -> dict[str, object]:
+    window_name = _optional_text(getattr(command, 'window_name', None))
+    if window_name is None:
+        raise ValueError('layout arrange requires --window')
+    loaded = load_project_config(context.project.project_root, include_loop_overlays=True)
+    config = loaded.config
+    if _window_record(config, window_name) is None:
+        return _arrange_blocked(
+            context,
+            window_name=window_name,
+            reason='window_not_configured',
+            message=f'window {window_name!r} is not present in the effective layout',
+            loaded=loaded,
+            config=config,
+        )
+    local = ping_local_state(context)
+    if str(getattr(local, 'mount_state', '') or '') != 'mounted' or not bool(getattr(local, 'socket_connectable', False)):
+        return _arrange_blocked(
+            context,
+            window_name=window_name,
+            reason='namespace_not_mounted',
+            message='layout arrange requires a mounted project namespace',
+            loaded=loaded,
+            config=config,
+        )
+    state = ProjectNamespaceStateStore(context.paths).load()
+    if state is None:
+        return _arrange_blocked(
+            context,
+            window_name=window_name,
+            reason='namespace_state_missing',
+            message='project namespace state is missing',
+            loaded=loaded,
+            config=config,
+        )
+    backend = build_backend(TmuxBackend, socket_path=state.tmux_socket_path)
+    if not session_alive(backend, state.tmux_session_name, timeout_s=float(getattr(command, 'timeout_s', 5.0) or 5.0)):
+        return _arrange_blocked(
+            context,
+            window_name=window_name,
+            reason='session_unavailable',
+            message='project namespace tmux session is not alive',
+            loaded=loaded,
+            config=config,
+        )
+    controller = SimpleNamespace(
+        _project_id=context.project.project_id,
+        _layout=SimpleNamespace(
+            project_root=context.project.project_root,
+            ccbd_socket_path=context.paths.ccbd_socket_path,
+        ),
+    )
+    result = WindowPatchResult()
+    timeout_s = float(getattr(command, 'timeout_s', 5.0) or 5.0)
+    reflow_window_after_agent_change(
+        controller,
+        backend,
+        current=state,
+        topology_plan=config,
+        window_name=window_name,
+        result=result,
+        timeout_s=timeout_s,
+    )
+    reflow_errors = dict(result.reflow_errors)
+    reflowed_windows = list(result.reflowed_windows)
+    after = layout_status(context)
+    arrange_ok = window_name in reflowed_windows and window_name not in reflow_errors
+    return {
+        'layout_status': 'ok' if arrange_ok else 'failed',
+        'arrange_status': 'ok' if arrange_ok else 'failed',
+        'action': 'arrange',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'config_source_kind': loaded.source_kind,
+        'config_source': str(loaded.source_path or '<builtin>'),
+        'window_name': window_name,
+        'timeout_s': timeout_s,
+        'reason': '' if arrange_ok else reflow_errors.get(window_name, 'window_not_reflowed'),
+        'reflowed_windows': reflowed_windows,
+        'reflow_errors': reflow_errors,
+        'namespace': after.get('namespace'),
+        'observed': after.get('observed'),
+        'pane_count': after.get('pane_count', 0),
+        'window_count': after.get('window_count', 0),
+        'windows': after.get('windows', []),
+    }
+
+
+def _arrange_blocked(context, *, window_name: str, reason: str, message: str, loaded, config) -> dict[str, object]:
+    return {
+        'layout_status': 'failed',
+        'arrange_status': 'blocked',
+        'action': 'arrange',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'config_source_kind': loaded.source_kind,
+        'config_source': str(loaded.source_path or '<builtin>'),
+        'window_name': window_name,
+        'reason': reason,
+        'message': message,
+        'pane_count': sum(_window_counts(config).values()),
+        'window_count': len(tuple(config.windows or ())),
+    }
 
 
 def _resolve_layout_placement(context, command) -> dict[str, object]:

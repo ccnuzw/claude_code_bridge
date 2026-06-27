@@ -745,16 +745,28 @@ Date: 2026-06-24
   lifecycle/layout script regression passed with `49 passed`, and
   `/home/bfly/yunwei/test_ccb2/lifecycle-policy-smoke.json` returned
   `dynamic_agent_lifecycle_smoke_status=ok` with all lifecycle checks true.
+- Landed the first manual runtime rearrangement command in the current
+  worktree. `ccb layout arrange --window NAME --json` is mounted-only,
+  topology-preserving, and reuses the same safe fixed/even reflow helper used
+  by dynamic add/remove; it does not add/remove agents, rewrite
+  `.ccb/ccb.config`, or restart providers. Focused layout tests passed with
+  `16 passed`, neighboring layout/dynamic script regression passed with
+  `40 passed`, and the source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/layout-arrange-smoke.json` proved
+  `plan-orchestrate` can be hot-loaded to five panes, manually disturbed into
+  a horizontal tmux layout, restored by `layout arrange` into the managed
+  two-column layout, and kept the agent order
+  `planner, helper1, helper2, helper3, helper4`.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
-   middle-removal cases, especially manual rearrangement commands and
-   non-fake provider tolerance.
-2. Decide the next public CLI surface for dynamic rearrangement: fixed
-   auto-reflow is now proven for 1->6, but manual move/park/hide workflows
-   still need a separate command and safety contract.
+   middle-removal cases, especially non-fake provider tolerance for
+   `layout arrange`.
+2. Decide the next public CLI surface for dynamic rearrangement beyond
+   `layout arrange`: manual move/park/hide workflows still need separate
+   commands and safety contracts.
 3. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and

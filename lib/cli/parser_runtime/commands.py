@@ -249,10 +249,10 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
 
 def parse_layout(tokens: list[str], *, project: str | None, error_type) -> ParsedLayoutCommand:
     if not tokens:
-        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status, resolve')
+        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status, resolve, arrange')
     action = str(tokens[0] or '').strip().lower()
-    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status', 'resolve'}:
-        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status, resolve')
+    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status', 'resolve', 'arrange'}:
+        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status, resolve, arrange')
     if action == 'status':
         parser = argparse.ArgumentParser(prog='ccb layout status', add_help=False)
         parser.add_argument('--json', dest='json_output', action='store_true')
@@ -279,6 +279,21 @@ def parse_layout(tokens: list[str], *, project: str | None, error_type) -> Parse
             window_class=str(namespace.window_class) if namespace.window_class is not None else None,
             loop_id=str(namespace.loop_id) if namespace.loop_id is not None else None,
             node_id=str(namespace.node_id) if namespace.node_id is not None else None,
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'arrange':
+        parser = argparse.ArgumentParser(prog='ccb layout arrange', add_help=False)
+        parser.add_argument('--window', dest='window_name', required=True)
+        parser.add_argument('--timeout', dest='timeout_s', type=float, default=5.0)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, tokens[1:], error_message='invalid layout arrange command', error_type=error_type)
+        if float(namespace.timeout_s) <= 0:
+            raise error_type('layout arrange --timeout must be positive')
+        return ParsedLayoutCommand(
+            project=project,
+            action=action,
+            window_name=str(namespace.window_name),
+            timeout_s=float(namespace.timeout_s),
             json_output=bool(namespace.json_output),
         )
     parser = argparse.ArgumentParser(prog=f'ccb layout {action}', add_help=False)

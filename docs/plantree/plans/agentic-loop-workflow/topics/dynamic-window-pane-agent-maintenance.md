@@ -730,6 +730,17 @@ Evidence:
   added and removed agent panes, preserved before/after panes, created/removed
   panes, removed windows, reflowed windows, reflow errors, mounted agents, and
   unloaded agents from the same namespace patch/runtime mount transaction.
+- `ccb layout arrange --window NAME --json` now exposes the first manual
+  topology-preserving rearrangement command. It is mounted-only, reads the
+  effective `[windows]` layout plus current namespace state, reuses the same
+  fixed-layout-first/even-layout fallback helper as dynamic add/remove, and
+  returns `arrange_status`, `reflowed_windows`, `reflow_errors`, namespace
+  data, and latest layout status. It does not create panes, remove panes, move
+  agents across windows, rewrite `.ccb/ccb.config`, or restart provider
+  sessions. The source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/layout-arrange-smoke.json` proved a disturbed
+  horizontal `plan-orchestrate` window returns to the managed two-column
+  layout while preserving agent order.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.
@@ -755,6 +766,7 @@ Internal or advanced commands can be added later:
 
 ```bash
 ccb layout status --json
+ccb layout arrange --window <window>
 ccb layout ensure-window --class <class> --name <name>
 ccb layout assign-agent --agent <agent> --window <window>
 ccb layout release-agent --agent <agent> --idle-only

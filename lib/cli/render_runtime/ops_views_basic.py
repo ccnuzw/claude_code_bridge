@@ -302,6 +302,17 @@ def render_layout(summary) -> tuple[str, ...]:
                 f'addable: {payload.get("addable", "")}',
             ]
         )
+    if str(payload.get('action') or '') == 'arrange':
+        lines.extend(
+            [
+                f'arrange_status: {payload.get("arrange_status", "")}',
+                f'window_name: {payload.get("window_name", "")}',
+                f'reflowed_windows: {", ".join(str(item) for item in tuple(payload.get("reflowed_windows") or ()))}',
+            ]
+        )
+        reflow_errors = payload.get('reflow_errors') if isinstance(payload.get('reflow_errors'), Mapping) else {}
+        for window_name, error in reflow_errors.items():
+            lines.append(f'reflow_error: window={window_name} error={error}')
     if str(payload.get('action') or '') == 'status':
         lines.extend(
             [

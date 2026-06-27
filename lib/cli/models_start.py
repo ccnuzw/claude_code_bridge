@@ -91,6 +91,7 @@ class ParsedLayoutCommand:
     window_class: str | None = None
     loop_id: str | None = None
     node_id: str | None = None
+    timeout_s: float = 5.0
     session_name: str | None = None
     cleanup: bool = True
     json_output: bool = False

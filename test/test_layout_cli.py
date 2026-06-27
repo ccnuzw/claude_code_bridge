@@ -4,11 +4,20 @@ from io import StringIO
 import json
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 
 from cli.models import ParsedLayoutCommand
 from cli.parser import CliParser
 from cli.phase2 import maybe_handle_phase2
+from ccbd.services.project_namespace_state import ProjectNamespaceState, ProjectNamespaceStateStore
+from storage.paths import PathLayout
 import pytest
+
+
+def _write_config(project_root: Path, text: str) -> None:
+    path = project_root / '.ccb' / 'ccb.config'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding='utf-8')
 
 
 def test_layout_parser_supports_plan_and_smoke() -> None:
@@ -58,6 +67,131 @@ def test_layout_parser_supports_plan_and_smoke() -> None:
         node_id='node1',
         json_output=True,
     )
+    assert parser.parse(['layout', 'arrange', '--window', 'plan-orchestrate', '--timeout', '2.5', '--json']) == ParsedLayoutCommand(
+        project=None,
+        action='arrange',
+        window_name='plan-orchestrate',
+        timeout_s=2.5,
+        json_output=True,
+    )
+
+
+def test_layout_arrange_reflows_mounted_window(tmp_path: Path, monkeypatch) -> None:
+    import cli.services.layout as layout_service
+
+    project_root = tmp_path / 'repo-layout-arrange'
+    _write_config(
+        project_root,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+plan-orchestrate = "planner:fake, helper:fake"
+""",
+    )
+    paths = PathLayout(project_root)
+    ProjectNamespaceStateStore(paths).save(
+        ProjectNamespaceState(
+            project_id=paths.project_id,
+            namespace_epoch=1,
+            tmux_socket_path=str(project_root / 'tmux.sock'),
+            tmux_session_name='ccb-test',
+            workspace_window_name='main',
+            workspace_window_id='@1',
+        )
+    )
+    context = SimpleNamespace(
+        project=SimpleNamespace(project_root=project_root, project_id=paths.project_id),
+        paths=paths,
+    )
+    calls = {}
+
+    class FakeBackend:
+        def __init__(self, *, socket_path: str) -> None:
+            calls['socket_path'] = socket_path
+
+    def fake_reflow(controller, backend, *, current, topology_plan, window_name, result, timeout_s):
+        calls['project_id'] = controller._project_id
+        calls['backend_type'] = type(backend).__name__
+        calls['session'] = current.tmux_session_name
+        calls['agents'] = [list(window.agent_names) for window in topology_plan.windows if window.name == window_name][0]
+        calls['window_name'] = window_name
+        calls['timeout_s'] = timeout_s
+        result.reflowed_windows.append(window_name)
+
+    monkeypatch.setattr(layout_service, 'TmuxBackend', FakeBackend)
+    monkeypatch.setattr(layout_service, 'ping_local_state', lambda _context: SimpleNamespace(mount_state='mounted', socket_connectable=True))
+    monkeypatch.setattr(layout_service, 'session_alive', lambda _backend, _session, timeout_s=None: True)
+    monkeypatch.setattr(layout_service, 'reflow_window_after_agent_change', fake_reflow)
+    monkeypatch.setattr(
+        layout_service,
+        'layout_status',
+        lambda _context: {
+            'namespace': {'status': 'mounted'},
+            'observed': {'observe_status': 'ok'},
+            'pane_count': 3,
+            'window_count': 2,
+            'windows': [{'name': 'plan-orchestrate', 'agent_names': ['planner', 'helper']}],
+        },
+    )
+
+    payload = layout_service.layout_command(
+        context,
+        ParsedLayoutCommand(project=None, action='arrange', window_name='plan-orchestrate', timeout_s=2.5, json_output=True),
+    )
+
+    assert payload['layout_status'] == 'ok'
+    assert payload['arrange_status'] == 'ok'
+    assert payload['window_name'] == 'plan-orchestrate'
+    assert payload['reflowed_windows'] == ['plan-orchestrate']
+    assert payload['reflow_errors'] == {}
+    assert payload['windows'] == [{'name': 'plan-orchestrate', 'agent_names': ['planner', 'helper']}]
+    assert calls == {
+        'socket_path': str(project_root / 'tmux.sock'),
+        'project_id': paths.project_id,
+        'backend_type': 'FakeBackend',
+        'session': 'ccb-test',
+        'agents': ['planner', 'helper'],
+        'window_name': 'plan-orchestrate',
+        'timeout_s': 2.5,
+    }
+
+
+def test_layout_arrange_requires_mounted_namespace(tmp_path: Path, monkeypatch) -> None:
+    import cli.services.layout as layout_service
+
+    project_root = tmp_path / 'repo-layout-arrange-unmounted'
+    _write_config(
+        project_root,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+""",
+    )
+    paths = PathLayout(project_root)
+    context = SimpleNamespace(
+        project=SimpleNamespace(project_root=project_root, project_id=paths.project_id),
+        paths=paths,
+    )
+
+    def fail_reflow(*_args, **_kwargs):
+        raise AssertionError('unmounted arrange must not call reflow')
+
+    monkeypatch.setattr(layout_service, 'ping_local_state', lambda _context: SimpleNamespace(mount_state='unmounted', socket_connectable=False))
+    monkeypatch.setattr(layout_service, 'reflow_window_after_agent_change', fail_reflow)
+
+    payload = layout_service.layout_command(
+        context,
+        ParsedLayoutCommand(project=None, action='arrange', window_name='main', json_output=True),
+    )
+
+    assert payload['layout_status'] == 'failed'
+    assert payload['arrange_status'] == 'blocked'
+    assert payload['reason'] == 'namespace_not_mounted'
+    assert payload['window_name'] == 'main'
 
 
 def test_layout_plan_json_reports_one_to_six_and_overflow(tmp_path: Path) -> None:
