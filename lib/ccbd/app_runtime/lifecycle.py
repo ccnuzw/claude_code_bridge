@@ -7,11 +7,13 @@ from agents.models import AgentState, RuntimeBindingSource, normalize_runtime_bi
 from ccbd.models import CcbdShutdownReport, CcbdStartupReport, cleanup_summaries_from_objects
 from ccbd.services.lifecycle import build_lifecycle, current_socket_inode
 from ccbd.stop_flow import build_shutdown_runtime_snapshots
+from runtime_accelerator.lifecycle import maybe_start_runtime_accelerator, stop_runtime_accelerator
 from storage.path_helpers import socket_placement_payload
 
 from .request_guard import lifecycle_is_stopping
 
 DEFAULT_CCBD_POLL_INTERVAL_S = 1.0
+DEFAULT_IDLE_FULL_HEARTBEAT_INTERVAL_S = 30.0
 
 
 def start(app):
@@ -53,7 +55,9 @@ def start(app):
             app.restore_report_store.save(restore_report)
         _update_startup_progress(app, 'publishing_mounted')
         _mark_lifecycle_mounted(app)
+        app.runtime_accelerator = maybe_start_runtime_accelerator(app.project_root)
         startup_actions = ['mount_backend', 'listen_socket', 'restore_running_jobs']
+        startup_actions.extend(_runtime_accelerator_startup_actions(app))
         if adopted_agents:
             startup_actions.append(f'adopt_runtime_authority:{",".join(adopted_agents)}')
         record_startup_report(
@@ -83,7 +87,9 @@ def heartbeat(app):
         failures = ()
         if _begin_maintenance_tick(app):
             try:
-                failures = _heartbeat_failures(app)
+                if full_heartbeat_due(app, started=started):
+                    failures = _heartbeat_failures(app)
+                    app._last_full_heartbeat_at = started
             finally:
                 _end_maintenance_tick(app)
         app.lease = app.mount_manager.refresh_heartbeat(
@@ -116,6 +122,42 @@ def _end_maintenance_tick(app) -> None:
         lock.release()
     except RuntimeError:
         return
+
+
+def full_heartbeat_due(app, *, started: float) -> bool:
+    if hot_loop_work_pending(app):
+        return True
+    try:
+        last = float(getattr(app, '_last_full_heartbeat_at', 0.0) or 0.0)
+    except Exception:
+        last = 0.0
+    return started - last >= idle_full_heartbeat_interval_s()
+
+
+def idle_full_heartbeat_interval_s() -> float:
+    try:
+        return max(0.0, float(os.environ.get('CCB_CCBD_IDLE_FULL_HEARTBEAT_INTERVAL_S', DEFAULT_IDLE_FULL_HEARTBEAT_INTERVAL_S)))
+    except Exception:
+        return DEFAULT_IDLE_FULL_HEARTBEAT_INTERVAL_S
+
+
+def hot_loop_work_pending(app) -> bool:
+    execution_active = getattr(getattr(app, 'execution_service', None), '_active', None)
+    if isinstance(execution_active, dict) and execution_active:
+        return True
+    dispatcher_state = getattr(getattr(app, 'dispatcher', None), '_state', None)
+    if dispatcher_state is None:
+        return False
+    try:
+        if dispatcher_state.active_items():
+            return True
+    except Exception:
+        return True
+    queues = getattr(dispatcher_state, '_queues', {})
+    try:
+        return any(len(queue) > 0 for queue in queues.values())
+    except Exception:
+        return True
 
 
 def serve_forever(app, *, poll_interval: float = DEFAULT_CCBD_POLL_INTERVAL_S) -> None:
@@ -155,10 +197,22 @@ def mark_current_daemon_unmounted(app):
 
 
 def release_backend_ownership(app, *, desired_state: str | None = None):
+    stop_runtime_accelerator(getattr(app, 'runtime_accelerator', None))
+    app.runtime_accelerator = None
     lease = mark_current_daemon_unmounted(app)
     app.socket_server.shutdown()
     _mark_lifecycle_unmounted(app, desired_state=desired_state)
     return lease
+
+
+def _runtime_accelerator_startup_actions(app) -> list[str]:
+    handle = getattr(app, 'runtime_accelerator', None)
+    if handle is None or not getattr(handle, 'enabled', False):
+        return []
+    if getattr(handle, 'process', None) is not None:
+        return ['start_runtime_accelerator']
+    error = str(getattr(handle, 'error', '') or 'unavailable')
+    return [f'runtime_accelerator_fallback:{error}']
 
 
 def execute_project_stop(

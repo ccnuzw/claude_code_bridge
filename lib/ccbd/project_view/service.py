@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ from .sequence import ProjectViewSequenceCache
 
 PROJECT_VIEW_SCHEMA_VERSION = 1
 PROJECT_VIEW_TTL_MS = 1000
+PROJECT_VIEW_IDLE_TTL_MS = 5000
 PROJECT_VIEW_COMMS_LIMIT = 8
 _RECENT_JOB_RESULT_LIMIT = PROJECT_VIEW_COMMS_LIMIT * 8
 _RECENT_JOB_SCAN_LIMIT_PER_AGENT = 128
@@ -240,6 +242,7 @@ class _CommsLookup:
 class _CachedProjectViewResponse:
     response: dict[str, object]
     expires_at: float
+    dispatcher_revision: int
 
 
 class ProjectViewService:
@@ -265,10 +268,15 @@ class ProjectViewService:
         ttl_ms = _project_view_ttl_ms(self._deps)
         ttl_s = max(0.0, ttl_ms / 1000.0)
         now = monotonic()
+        dispatcher_revision = _dispatcher_project_view_revision(self._deps.dispatcher)
         did_refresh_sidebar = False
         if ttl_s > 0:
             cached = self._cached_response
-            if cached is not None and now < cached.expires_at:
+            if (
+                cached is not None
+                and now < cached.expires_at
+                and cached.dispatcher_revision == dispatcher_revision
+            ):
                 did_refresh_sidebar = self._consume_sidebar_refresh_request()
                 if did_refresh_sidebar:
                     sidebar_refresh_started = monotonic()
@@ -295,6 +303,7 @@ class ProjectViewService:
             self._cached_response = _CachedProjectViewResponse(
                 response=response,
                 expires_at=monotonic() + ttl_s,
+                dispatcher_revision=dispatcher_revision,
             )
         _record_project_view_cache_miss(
             self._deps.metrics,
@@ -402,9 +411,51 @@ def build_project_view(
     }
 
 
+def _dispatcher_project_view_revision(dispatcher: object | None) -> int:
+    value = getattr(dispatcher, 'project_view_revision', 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _project_view_ttl_ms(deps: ProjectViewDependencies) -> int:
-    ttl_ms = PROJECT_VIEW_TTL_MS if deps.cache_ttl_ms is None else int(deps.cache_ttl_ms)
+    if deps.cache_ttl_ms is not None:
+        ttl_ms = int(deps.cache_ttl_ms)
+    elif _project_view_work_pending(deps):
+        ttl_ms = _env_int('CCB_PROJECT_VIEW_TTL_MS', PROJECT_VIEW_TTL_MS)
+    else:
+        ttl_ms = _env_int('CCB_PROJECT_VIEW_IDLE_TTL_MS', PROJECT_VIEW_IDLE_TTL_MS)
     return max(0, ttl_ms)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _project_view_work_pending(deps: ProjectViewDependencies) -> bool:
+    dispatcher_state = getattr(getattr(deps, 'dispatcher', None), '_state', None)
+    if dispatcher_state is not None:
+        try:
+            if dispatcher_state.active_items():
+                return True
+        except Exception:
+            return True
+        queues = getattr(dispatcher_state, '_queues', {})
+        try:
+            if any(len(queue) > 0 for queue in queues.values()):
+                return True
+        except Exception:
+            return True
+    registry = getattr(deps, 'registry', None)
+    try:
+        runtimes = registry.list_all() if registry is not None else ()
+    except Exception:
+        return True
+    return any(getattr(runtime, 'state', None) in {AgentState.STARTING, AgentState.BUSY, AgentState.DEGRADED} for runtime in runtimes)
 
 
 def _record_project_view_cache_hit(metrics, *, response_started: float) -> None:

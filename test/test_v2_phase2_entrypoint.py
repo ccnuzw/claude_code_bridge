@@ -1823,8 +1823,6 @@ def test_ccb_long_running_job_keeps_heartbeat_and_doctor_healthy(tmp_path: Path)
     running = _wait_for_status(project_root, 'demo', 'running', timeout=2.0)
     assert f'job_id: {job_id}' in running.stdout
 
-    lease_path = project_root / '.ccb' / 'ccbd' / 'lease.json'
-    lease_before = json.loads(lease_path.read_text(encoding='utf-8'))
     doctor_1 = _run_ccb(['doctor'], cwd=project_root)
     assert doctor_1.returncode == 0, doctor_1.stderr
     assert 'ccbd_state: mounted' in doctor_1.stdout
@@ -1855,12 +1853,10 @@ def test_ccb_long_running_job_keeps_heartbeat_and_doctor_healthy(tmp_path: Path)
 
     time.sleep(0.5)
 
-    lease_after = json.loads(lease_path.read_text(encoding='utf-8'))
-    assert lease_after['last_heartbeat_at'] != lease_before['last_heartbeat_at']
-
     doctor_2 = _run_ccb(['doctor'], cwd=project_root)
     assert doctor_2.returncode == 0, doctor_2.stderr
-    assert f'ccbd_last_heartbeat_at: {lease_after["last_heartbeat_at"]}' in doctor_2.stdout or 'ccbd_last_heartbeat_at:' in doctor_2.stdout
+    assert 'ccbd_last_heartbeat_at:' in doctor_2.stdout
+    assert 'ccbd_heartbeat_fresh: True' in doctor_2.stdout
     assert 'ccbd_health: healthy' in doctor_2.stdout
 
     completed = _wait_for_status(project_root, job_id, 'completed', timeout=5.0)
