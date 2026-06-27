@@ -782,13 +782,23 @@ Date: 2026-06-24
   `window-class-continuous` flows; source-wrapper CI-equivalent evidence in
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-arrange-latest.json` passed
   all three flow checks.
+- Ran opt-in real-provider `arrange-window` smokes for both Codex and Claude.
+  Codex evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-codex-real-latest.json`
+  and Claude evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-claude-real-latest.json`
+  both returned `dynamic_layout_smoke_status=ok` with
+  `arrange_window_disturb_restore=true`: hot add used `add_agent`, disturbance
+  made the layout non-fixed, `layout arrange` restored fixed columns, pane ids
+  and agent order were preserved, post-arrange ask reached the helper, and
+  reverse unload returned to static `frontdesk` plus `planner`.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
-   middle-removal cases, especially opt-in Codex/Claude tolerance for the now
-   repeatable `arrange-window` flow.
+   middle-removal cases, especially cases that require manual move planning or
+   dynamic visibility changes rather than pure reflow.
 2. Decide the next public CLI surface for dynamic rearrangement beyond
    `layout arrange`: manual move/park/hide workflows still need separate
    commands and safety contracts.

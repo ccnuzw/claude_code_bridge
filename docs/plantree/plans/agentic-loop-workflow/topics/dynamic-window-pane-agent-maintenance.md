@@ -762,6 +762,12 @@ Evidence:
   `window-class-continuous`; the CI-equivalent source-wrapper artifact
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-arrange-latest.json` passed
   all three flows.
+- Opt-in real-provider `arrange-window` smokes now pass for Codex and Claude.
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-codex-real-latest.json`
+  and
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-claude-real-latest.json`
+  both prove the same disturbance/arrange/ask/unload chain with real provider
+  panes while preserving pane ids and agent order.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.
