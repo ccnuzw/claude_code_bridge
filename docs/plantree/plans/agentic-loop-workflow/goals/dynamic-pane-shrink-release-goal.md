@@ -164,3 +164,8 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
   agents, and unloaded agents from the reload transaction itself, so scripts
   can verify hot-load/hot-unload effects without immediately re-querying raw
   tmux state.
+- `layout status --json` now exposes best-effort tmux pane geometry
+  (`pane_index`, `pane_width`, and `pane_height`) for observed panes. Dynamic
+  layout smokes use this metadata to prove same-window `1->6->1` and
+  multi-window add/remove preserve observable agent pane geometry while
+  excluding sidebar panes from agent layout counts.

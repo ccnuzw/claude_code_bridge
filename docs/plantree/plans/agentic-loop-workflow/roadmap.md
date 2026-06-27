@@ -680,15 +680,27 @@ Date: 2026-06-24
   `/home/bfly/yunwei/test_ccb2/multi-window-continuous-smoke-multi-window-continuous`
   with `dynamic_layout_smoke_status=ok`; focused dynamic layout regression
   passed with `69 passed`.
+- Strengthened runtime layout verification with pane geometry diagnostics.
+  `ccb layout status --json` now captures best-effort tmux `pane_index`,
+  `pane_width`, and `pane_height` for observed panes, while dynamic smoke
+  checks count only effective agent panes so sidebar panes remain visible
+  diagnostics without polluting agent layout assertions. The same-window
+  continuous CI gate now asserts observed growth to six agent panes, contiguous
+  pane indexes, geometry presence, and shrink back to one agent pane. Focused
+  tests passed with `32 passed`, the broader dynamic layout regression passed
+  with `78 passed`, and the source-wrapper fake-provider smoke in
+  `/home/bfly/yunwei/test_ccb2/observed-geometry-smoke.json` passed both
+  `same-window-continuous` and `multi-window-continuous` flows with all
+  observed geometry checks green.
 
 ## Next
 
 1. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases.
-2. Wire the verified deterministic layout planner and dynamic smoke behavior
-   into live dynamic capacity only after `layout status` can read current pane
-   metadata and release can distinguish idle from busy agents.
+2. Use the new observed pane geometry to decide whether `select-layout -E`
+   remains sufficient or should be replaced by a CCB-owned fixed `1->6` /
+   `6->1` live reflow policy.
 3. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and

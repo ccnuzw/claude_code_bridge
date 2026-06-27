@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from io import StringIO
+import importlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from cli.models import ParsedLayoutCommand
 from cli.parser import CliParser
@@ -382,3 +384,81 @@ main = "main:fake"
         'observe_status': 'skipped',
         'reason': 'namespace_unmounted',
     }
+
+
+def test_layout_status_observes_tmux_pane_geometry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    layout_status_service = importlib.import_module('cli.services.layout_status')
+
+    project_root = tmp_path / 'repo-layout-status-observed'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "main:fake, helper:fake"
+""",
+    )
+    layout = PathLayout(project_root)
+    _write_json(
+        layout.ccbd_state_path,
+        {
+            'schema_version': 2,
+            'record_type': 'ccbd_project_namespace_state',
+            'project_id': layout.project_id,
+            'namespace_epoch': 1,
+            'tmux_socket_path': str(layout.ccbd_tmux_socket_path),
+            'tmux_session_name': layout.ccbd_tmux_session_name,
+            'layout_version': 3,
+            'layout_signature': 'signature',
+            'workspace_window_name': 'main',
+            'workspace_window_id': '@1',
+            'workspace_epoch': 1,
+            'ui_attachable': True,
+        },
+    )
+
+    class FakeTmuxBackend:
+        def __init__(self, *, socket_path: str):
+            self.socket_path = socket_path
+
+        def _tmux_run(self, args, **_kwargs):
+            assert args[:4] == ['list-panes', '-a', '-t', layout.ccbd_tmux_session_name]
+            assert 'pane_index' in args[-1]
+            assert 'pane_width' in args[-1]
+            assert 'pane_height' in args[-1]
+            return SimpleNamespace(
+                stdout=(
+                    f"main\t@1\t%1\tmain\tmain\tmain\tmain\t{layout.project_id}\tccb\t1\t0\t0\t100\t30\n"
+                    f"main\t@1\t%2\thelper\thelper\thelper\tmain\t{layout.project_id}\tccb\t0\t0\t1\t80\t30\n"
+                )
+            )
+
+    monkeypatch.setattr(layout_status_service, 'TmuxBackend', FakeTmuxBackend)
+    monkeypatch.setattr(layout_status_service.shutil, 'which', lambda _name: '/usr/bin/tmux')
+    monkeypatch.setattr(
+        layout_status_service,
+        'ping_local_state',
+        lambda _context: SimpleNamespace(
+            mount_state='mounted',
+            socket_connectable=True,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+        ),
+    )
+
+    result, payload, stderr = _run_phase2(['layout', 'status', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    assert payload['observed']['observe_status'] == 'ok'
+    windows = {window['name']: window for window in payload['windows']}
+    observed_panes = windows['main']['observed']['panes']
+    assert [(pane['pane_id'], pane['pane_index'], pane['pane_width'], pane['pane_height']) for pane in observed_panes] == [
+        ('%1', 0, 100, 30),
+        ('%2', 1, 80, 30),
+    ]
+    agents = {agent['agent']: agent for agent in windows['main']['agents']}
+    assert agents['main']['observed']['pane_index'] == 0
+    assert agents['helper']['observed']['pane_width'] == 80

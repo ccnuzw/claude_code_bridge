@@ -257,7 +257,7 @@ def _observe_project_namespace(namespace: dict[str, object]) -> dict[str, object
                 '-t',
                 session_name,
                 '-F',
-                '#{window_name}\t#{window_id}\t#{pane_id}\t#{pane_title}\t#{@ccb_agent}\t#{@ccb_slot}\t#{@ccb_window}\t#{@ccb_project_id}\t#{@ccb_managed_by}\t#{pane_active}\t#{pane_dead}',
+                '#{window_name}\t#{window_id}\t#{pane_id}\t#{pane_title}\t#{@ccb_agent}\t#{@ccb_slot}\t#{@ccb_window}\t#{@ccb_project_id}\t#{@ccb_managed_by}\t#{pane_active}\t#{pane_dead}\t#{pane_index}\t#{pane_width}\t#{pane_height}',
             ],
             check=True,
             capture=True,
@@ -306,6 +306,9 @@ def _observed_pane_record(line: str) -> dict[str, object] | None:
         'ccb_managed_by': parts[8],
         'pane_active': parts[9] == '1',
         'pane_state': 'dead' if parts[10] == '1' else 'alive',
+        'pane_index': _optional_int(parts[11]) if len(parts) > 11 else None,
+        'pane_width': _optional_int(parts[12]) if len(parts) > 12 else None,
+        'pane_height': _optional_int(parts[13]) if len(parts) > 13 else None,
     }
 
 
@@ -378,6 +381,15 @@ def _optional_text(value: object | None) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _optional_int(value: object | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = ['layout_status']

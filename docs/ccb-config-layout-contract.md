@@ -282,6 +282,10 @@ Contract:
   close that window before an explicit `kill-window`, the apply path must treat
   the window as already removed, record it in `namespace_removed_windows`, and
   preserve `namespace_removed_agents` / `namespace_removed_panes` diagnostics.
+- Runtime layout diagnostics may observe every tmux pane in a managed window,
+  including sidebar or tool panes. Agent layout checks must count only panes
+  whose CCB identity matches that window's configured/effective `agent_names`;
+  `runtime_pane_count` is allowed to be larger than agent `pane_count`.
 - `[ui.sidebar]` is valid only with windows topology. Defaults are `mode = "every_window"`, `width = "15%"`, `bottom_height = 20`, and `position = "left"`; `width` accepts either a positive integer column count or a percentage string.
 - `position` accepts only `left` or `right`. `left` keeps the sidebar as the first horizontal pane before the user layout; `right` keeps the same vertical sidebar pane after the user layout. Bottom or horizontal sidebar placement is not part of this contract.
 - In `mode = "every_window"`, CCB treats `width` as a project-wide sidebar width regardless of left/right position. Topology refreshes must resize every managed sidebar pane to the same configured share of its tmux window so page/window switches do not leave sidebars at different widths. If the user drags a sidebar border, CCB stores that runtime column width in the project tmux session and applies it to every managed sidebar window until the session is recreated. If tmux later resizes a window because a terminal client attaches or changes size, CCB reapplies the stored runtime width instead of treating the auto-resized pane width as a new user preference.

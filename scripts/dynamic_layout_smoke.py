@@ -593,6 +593,13 @@ def _run_multi_window_continuous_flow(
         checks = {
             "add_window_plans": [_payload(item).get("apply", {}).get("plan_class") for item in commands[2:5]] == ["add_window"] * 3,
             "grew_to_four_windows": _window_agents(after_add) == expected_windows,
+            "observed_grew_to_four_windows": _observed_window_agent_pane_counts(after_add) == {
+                "main": 1,
+                "review1": 1,
+                "review2": 1,
+                "review3": 1,
+            },
+            "observed_window_geometry": _observed_all_windows_have_geometry(after_add, ("main", "review1", "review2", "review3")),
             "helper_ask_accepted": _accepted(helper_ask),
             "helper_ask_terminal": _watch_commands_terminal(commands),
             "release_remove_agent_plans": [apply.get("plan_class") for apply in release_apply] == ["remove_agent"] * 3,
@@ -600,6 +607,7 @@ def _run_multi_window_continuous_flow(
             "removed_agent_panes_match": all(removed_agents[helper] == after_add_panes.get(helper) for helper, _window in targets),
             "main_pane_preserved": after_release_panes.get("main") == after_add_panes.get("main"),
             "returned_to_main_window": _window_agents(after_release) == {"main": ["main"]},
+            "observed_returned_to_main_pane": _observed_window_agent_pane_counts(after_release) == {"main": 1},
             "dynamic_agents_cleaned": _payload(after_release).get("dynamic_agent_count") == 0,
             "ask_main_accepted": _accepted(commands[-1]),
         }
@@ -787,6 +795,9 @@ def _run_same_window_continuous_flow(
         checks = {
             "grow_add_agent_plans": [_payload(item).get("apply", {}).get("plan_class") for item in commands[2:7]] == ["add_agent"] * 5,
             "grew_to_six_order": _window_agents(after_add).get("main") == ["main", *helpers],
+            "observed_grew_to_six_panes": _observed_window_agent_pane_count(after_add, "main") == 6,
+            "observed_grow_geometry": _observed_panes_have_geometry(_observed_window_agent_panes(after_add, "main")),
+            "observed_grow_indexes_contiguous": _observed_pane_indexes_contiguous(_observed_window_agent_panes(after_add, "main")),
             "helper_ask_accepted": _accepted(helper_ask),
             "helper_ask_terminal": _watch_commands_terminal(commands),
             "release_remove_agent_plans": [apply.get("plan_class") for apply in release_apply] == ["remove_agent"] * 5,
@@ -794,6 +805,8 @@ def _run_same_window_continuous_flow(
             "removed_helper_panes_match": all(removed_agents[helper] == after_add_panes.get(helper) for helper in helpers),
             "main_pane_preserved": after_release_panes.get("main") == after_add_panes.get("main"),
             "shrunk_to_one_order": _window_agents(after_release) == {"main": ["main"]},
+            "observed_shrunk_to_one_pane": _observed_window_agent_pane_count(after_release, "main") == 1,
+            "observed_shrink_geometry": _observed_panes_have_geometry(_observed_window_agent_panes(after_release, "main")),
             "dynamic_agents_cleaned": _payload(after_release).get("dynamic_agent_count") == 0,
             "ask_main_accepted": _accepted(commands[-1]),
         }
@@ -1567,14 +1580,39 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
     windows = payload.get("windows")
     if isinstance(windows, list):
         summary["windows"] = [
-            {
-                "name": raw.get("name"),
-                "agents": raw.get("agent_names"),
-                "pane_count": raw.get("pane_count"),
-            }
+            _compact_window_summary(raw)
             for raw in windows
             if isinstance(raw, dict)
         ]
+    return summary
+
+
+def _compact_window_summary(raw: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "name": raw.get("name"),
+        "agents": raw.get("agent_names"),
+        "pane_count": raw.get("pane_count"),
+    }
+    if "runtime_pane_count" in raw:
+        summary["runtime_pane_count"] = raw.get("runtime_pane_count")
+    observed = raw.get("observed")
+    panes = observed.get("panes") if isinstance(observed, dict) else None
+    if isinstance(panes, list):
+        compact_panes = []
+        for pane in panes:
+            if not isinstance(pane, dict):
+                continue
+            compact_pane = {
+                "pane_id": pane.get("pane_id"),
+                "pane_index": pane.get("pane_index"),
+                "pane_width": pane.get("pane_width"),
+                "pane_height": pane.get("pane_height"),
+            }
+            agent = pane.get("ccb_agent") or pane.get("ccb_slot")
+            if agent:
+                compact_pane["agent"] = agent
+            compact_panes.append(compact_pane)
+        summary["observed_panes"] = compact_panes
     return summary
 
 
@@ -1623,6 +1661,85 @@ def _agent_panes(result: dict[str, Any]) -> dict[str, str]:
             if agent and pane_id:
                 panes[agent] = pane_id
     return panes
+
+
+def _observed_window_panes(result: dict[str, Any], window_name: str) -> list[dict[str, Any]]:
+    raw_window = _payload_window(result, window_name)
+    if raw_window is None:
+        return []
+    observed = raw_window.get("observed")
+    panes = observed.get("panes") if isinstance(observed, dict) else None
+    return [dict(pane) for pane in panes if isinstance(pane, dict)] if isinstance(panes, list) else []
+
+
+def _payload_window(result: dict[str, Any], window_name: str) -> dict[str, Any] | None:
+    payload = _payload(result)
+    windows = payload.get("windows")
+    if not isinstance(windows, list):
+        return None
+    for raw_window in windows:
+        if not isinstance(raw_window, dict) or raw_window.get("name") != window_name:
+            continue
+        return raw_window
+    return None
+
+
+def _observed_window_agent_panes(result: dict[str, Any], window_name: str) -> list[dict[str, Any]]:
+    raw_window = _payload_window(result, window_name)
+    if raw_window is None:
+        return []
+    raw_agents = raw_window.get("agent_names")
+    expected_agents = {str(agent) for agent in raw_agents} if isinstance(raw_agents, list) else set()
+    return [
+        pane
+        for pane in _observed_window_panes(result, window_name)
+        if str(pane.get("ccb_agent") or pane.get("ccb_slot") or "").strip() in expected_agents
+    ]
+
+
+def _observed_window_agent_pane_count(result: dict[str, Any], window_name: str) -> int:
+    return len(_observed_window_agent_panes(result, window_name))
+
+
+def _observed_window_agent_pane_counts(result: dict[str, Any]) -> dict[str, int]:
+    payload = _payload(result)
+    windows = payload.get("windows")
+    if not isinstance(windows, list):
+        return {}
+    counts: dict[str, int] = {}
+    for raw_window in windows:
+        if not isinstance(raw_window, dict):
+            continue
+        name = str(raw_window.get("name") or "")
+        if not name:
+            continue
+        counts[name] = _observed_window_agent_pane_count(result, name)
+    return counts
+
+
+def _observed_all_windows_have_geometry(result: dict[str, Any], names: tuple[str, ...]) -> bool:
+    return all(_observed_panes_have_geometry(_observed_window_agent_panes(result, name)) for name in names)
+
+
+def _observed_panes_have_geometry(panes: list[dict[str, Any]]) -> bool:
+    if not panes:
+        return False
+    for pane in panes:
+        width = pane.get("pane_width")
+        height = pane.get("pane_height")
+        if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+            return False
+    return True
+
+
+def _observed_pane_indexes_contiguous(panes: list[dict[str, Any]]) -> bool:
+    if not panes:
+        return False
+    indexes = [pane.get("pane_index") for pane in panes]
+    if not all(isinstance(index, int) for index in indexes):
+        return False
+    ordered = sorted(indexes)
+    return ordered == list(range(ordered[0], ordered[0] + len(ordered)))
 
 
 def _accepted(result: dict[str, Any]) -> bool:

@@ -19,6 +19,22 @@ def _load_module():
     return module
 
 
+def _observed_window(pane_ids: list[str], agent_names: list[str] | None = None) -> dict[str, object]:
+    names = agent_names or [f"agent{index}" for index, _pane_id in enumerate(pane_ids, start=1)]
+    return {
+        "panes": [
+            {
+                "pane_id": pane_id,
+                "ccb_agent": names[index],
+                "pane_index": index,
+                "pane_width": 80,
+                "pane_height": 24,
+            }
+            for index, pane_id in enumerate(pane_ids)
+        ]
+    }
+
+
 def test_build_multi_node_config_declares_explicit_windows_and_loop_profiles() -> None:
     module = _load_module()
 
@@ -275,6 +291,7 @@ def test_same_window_continuous_flow_grows_to_six_and_shrinks_to_one(
                         {
                             "name": "main",
                             "agent_names": ["main", *helper_panes],
+                            "observed": _observed_window(["%1", *helper_panes.values()], ["main", *helper_panes.keys()]),
                             "agents": [
                                 {"agent": "main", "pane_id": "%1"},
                                 *[
@@ -313,6 +330,7 @@ def test_same_window_continuous_flow_grows_to_six_and_shrinks_to_one(
                         {
                             "name": "main",
                             "agent_names": ["main"],
+                            "observed": _observed_window(["%1"], ["main"]),
                             "agents": [{"agent": "main", "pane_id": "%1"}],
                         }
                     ],
@@ -336,7 +354,11 @@ def test_same_window_continuous_flow_grows_to_six_and_shrinks_to_one(
 
     assert payload["flow_status"] == "ok"
     assert payload["checks"]["grew_to_six_order"] is True
+    assert payload["checks"]["observed_grew_to_six_panes"] is True
+    assert payload["checks"]["observed_grow_geometry"] is True
+    assert payload["checks"]["observed_grow_indexes_contiguous"] is True
     assert payload["checks"]["shrunk_to_one_order"] is True
+    assert payload["checks"]["observed_shrunk_to_one_pane"] is True
     add_names = [name for name, _command in calls if name.startswith("add_helper")]
     remove_names = [name for name, _command in calls if name.startswith("remove_helper")]
     assert add_names == ["add_helper1", "add_helper2", "add_helper3", "add_helper4", "add_helper5"]
@@ -406,12 +428,14 @@ def test_multi_window_continuous_flow_adds_and_removes_windows(
                         {
                             "name": "main",
                             "agent_names": ["main"],
+                            "observed": _observed_window(["%1"], ["main"]),
                             "agents": [{"agent": "main", "pane_id": "%1"}],
                         },
                         *[
                             {
                                 "name": f"review{index}",
                                 "agent_names": [helper],
+                                "observed": _observed_window([pane], [helper]),
                                 "agents": [{"agent": helper, "pane_id": pane}],
                             }
                             for index, (helper, pane) in enumerate(helpers.items(), start=1)
@@ -447,6 +471,7 @@ def test_multi_window_continuous_flow_adds_and_removes_windows(
                         {
                             "name": "main",
                             "agent_names": ["main"],
+                            "observed": _observed_window(["%1"], ["main"]),
                             "agents": [{"agent": "main", "pane_id": "%1"}],
                         }
                     ],
@@ -470,7 +495,10 @@ def test_multi_window_continuous_flow_adds_and_removes_windows(
 
     assert payload["flow_status"] == "ok"
     assert payload["checks"]["grew_to_four_windows"] is True
+    assert payload["checks"]["observed_grew_to_four_windows"] is True
+    assert payload["checks"]["observed_window_geometry"] is True
     assert payload["checks"]["returned_to_main_window"] is True
+    assert payload["checks"]["observed_returned_to_main_pane"] is True
     add_names = [name for name, _command in calls if name.startswith("add_helper")]
     remove_names = [name for name, _command in calls if name.startswith("remove_helper")]
     assert add_names == ["add_helper1_review1", "add_helper2_review2", "add_helper3_review3"]
@@ -667,6 +695,13 @@ def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -
                                     "name": "node-round1-node1",
                                     "agent_names": ["worker", "checker"],
                                     "pane_count": 2,
+                                    "runtime_pane_count": 2,
+                                    "observed": {
+                                        "panes": [
+                                            {"pane_id": "%1", "pane_index": 0, "pane_width": 80, "pane_height": 24},
+                                            {"pane_id": "%2", "pane_index": 1, "pane_width": 80, "pane_height": 24},
+                                        ],
+                                    },
                                     "large": "ignored",
                                 }
                             ],
@@ -699,6 +734,11 @@ def test_compact_payload_keeps_checks_and_window_summary_without_full_stdout() -
                 "name": "node-round1-node1",
                 "agents": ["worker", "checker"],
                 "pane_count": 2,
+                "runtime_pane_count": 2,
+                "observed_panes": [
+                    {"pane_id": "%1", "pane_index": 0, "pane_width": 80, "pane_height": 24},
+                    {"pane_id": "%2", "pane_index": 1, "pane_width": 80, "pane_height": 24},
+                ],
             }
         ],
     }
@@ -716,7 +756,12 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert 'payload["dynamic_layout_smoke_status"] == "ok"' in text
     assert 'payload["checks"]["same_window_continuous_1_to_6_to_1"] is True' in text
     assert 'checks["grew_to_six_order"] is True' in text
+    assert 'checks["observed_grew_to_six_panes"] is True' in text
+    assert 'checks["observed_grow_geometry"] is True' in text
+    assert 'checks["observed_grow_indexes_contiguous"] is True' in text
     assert 'checks["shrunk_to_one_order"] is True' in text
+    assert 'checks["observed_shrunk_to_one_pane"] is True' in text
+    assert 'checks["observed_shrink_geometry"] is True' in text
     step = text.split("Guard same-window continuous dynamic layout smoke", 1)[1].split("Guard workflow closure layout cleanup smoke", 1)[0]
     assert "--run" not in step
     assert "codex" not in step
