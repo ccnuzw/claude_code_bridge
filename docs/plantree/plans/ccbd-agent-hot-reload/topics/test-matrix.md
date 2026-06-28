@@ -309,6 +309,14 @@ Date: 2026-05-29
     both helpers are released.
   - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-move-shared-source-latest.json`
     passed the same real-home `move-shared-source` checks for `claude`.
+  - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-codex-resolve-preflight-latest.json`
+    passed `codex` `resolve-preflight` with `fake` static filler panes: resolve
+    window-class overflow to `plan-orchestrate-2`, add/release the real
+    `review_helper1`, resolve execution-node placement to `node-round3-node1`,
+    ensure real worker/reviewer loop capacity, then release the node cleanly.
+  - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-resolve-preflight-latest.json`
+    passed the same real dynamic-provider `resolve-preflight` checks for
+    `claude` with `fake` static filler panes.
 - 2026-06-28 dynamic lifecycle smoke evidence:
   - `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with
     `5 passed` before workflow promotion; after adding the CI gate, targeted

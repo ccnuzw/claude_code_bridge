@@ -224,6 +224,16 @@ Date: 2026-06-28
   helper, keep the source window alive, preserve both moved and staying pane ids,
   keep both helpers ask-reachable after the move, move the helper back, and only
   remove the source window after the final helper is released.
+- Extended live-provider evidence to resolve/preflight and loop capacity:
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-codex-resolve-preflight-latest.json`
+  and
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-resolve-preflight-latest.json`
+  passed `resolve-preflight` with real dynamic providers and fake static filler
+  panes. These prove window-class overflow resolution predicts
+  `plan-orchestrate-2`, the subsequent real provider `agent add` matches the
+  resolved target, release removes the overflow window, execution-node
+  resolution predicts `node-round3-node1`, `loop capacity ensure` creates the
+  real worker/reviewer node window, and `loop capacity release` removes it.
 - Verified dynamic lifecycle policy smoke for park/resume and auto release:
   `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with
   `5 passed`; source-wrapper fake smoke
@@ -321,7 +331,7 @@ Date: 2026-06-28
   `[windows]` reload. Live `codex` and `claude` move, same-window `1->6->1`,
   lifecycle park/resume, multi-window batch-release, window-class-continuous,
   mixed move-plus-add, batch window-class move, arrange-window, and
-  shared-source move smokes have passed; remaining provider edge-flow coverage,
+  shared-source move, plus resolve/preflight loop-capacity smokes have passed;
   daemon-pushed sidebar refresh, replacement, arbitrary layout reshapes, and
   background config watching remain deferred.
 
@@ -333,9 +343,10 @@ Date: 2026-06-28
    `move-agent`, `claude` `same-window-continuous`, and `claude` lifecycle
    park/resume, plus `codex`/`claude` `batch-release`,
    `window-class-continuous`, `mixed-move-add`, `batch-move-window-class`,
-   `arrange-window`, and `move-shared-source`, have passed with real-home auth.
-   Remaining edge flows such as `resolve-preflight` need the same guarded
-   account-boundary treatment before being promoted to release gates.
+   `arrange-window`, `move-shared-source`, and `resolve-preflight` have passed
+   with real-home auth. Before promoting these to routine release gates, decide
+   which flows are cheap enough for CI and which remain manual live-provider
+   evidence only.
 2. Run or update the automatic and manual additive reload matrix in
    [topics/test-matrix.md](topics/test-matrix.md), including `test_ccb2`
    evidence for unchanged old panes, newly-mounted agents, released dynamic
