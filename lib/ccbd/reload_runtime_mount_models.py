@@ -12,6 +12,7 @@ class AdditiveRuntimeMountResult:
     moved_agents: tuple[str, ...] = ()
     runtime_authority_moved_agents: tuple[str, ...] = ()
     unloaded_agents: tuple[str, ...] = ()
+    replaced_agents: tuple[str, ...] = ()
     runtime_authority_stopped_agents: tuple[str, ...] = ()
     helper_terminated_agents: tuple[str, ...] = ()
     preserved_runtime_unchanged_agents: tuple[str, ...] = ()
@@ -32,6 +33,7 @@ class AdditiveRuntimeMountResult:
                 self.runtime_authority_moved_agents
             ),
             'unloaded_agents': list(self.unloaded_agents),
+            'replaced_agents': list(self.replaced_agents),
             'runtime_authority_stopped_agents': list(
                 self.runtime_authority_stopped_agents
             ),
@@ -152,8 +154,39 @@ def unloaded_result(
         diagnostics={
             'reason': None,
             'runtime_authority_scope': 'removed_agents_only',
-            'unload_or_replace_executed': bool(unloaded_agents or stopped_agents),
             **_no_publish_diagnostics(),
+            'unload_or_replace_executed': bool(unloaded_agents or stopped_agents),
+        },
+    )
+
+
+def replaced_result(
+    *,
+    requested_agents: tuple[str, ...],
+    replaced_agents: tuple[str, ...],
+    mounted_agents: tuple[str, ...],
+    written_agents: tuple[str, ...],
+    stopped_agents: tuple[str, ...],
+    helper_terminated_agents: tuple[str, ...],
+    preserved_agents: tuple[str, ...],
+    summary: dict[str, object] | None,
+) -> AdditiveRuntimeMountResult:
+    return AdditiveRuntimeMountResult(
+        status='replaced',
+        requested_agents=requested_agents,
+        replaced_agents=replaced_agents,
+        mounted_agents=mounted_agents,
+        runtime_authority_written_agents=written_agents,
+        runtime_authority_stopped_agents=stopped_agents,
+        helper_terminated_agents=helper_terminated_agents,
+        preserved_runtime_unchanged_agents=preserved_agents,
+        partial=False,
+        summary=summary,
+        diagnostics={
+            'reason': None,
+            'runtime_authority_scope': 'replaced_agents_only',
+            **_no_publish_diagnostics(),
+            'unload_or_replace_executed': bool(replaced_agents or stopped_agents),
         },
     )
 
@@ -196,5 +229,6 @@ __all__ = [
     'mounted_result',
     'moved_result',
     'noop_mount_result',
+    'replaced_result',
     'unloaded_result',
 ]

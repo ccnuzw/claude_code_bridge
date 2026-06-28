@@ -15,6 +15,7 @@ _ALLOWED_PLAN_CLASSES = frozenset({
     'add_agent',
     'add_window',
     'remove_agent',
+    'replace_agent',
     'move_agent',
     'add_tool_window',
     'remove_tool_window',
@@ -25,26 +26,24 @@ _ALLOWED_OPERATIONS = frozenset({
     'add_agent',
     'add_window',
     'remove_agent',
+    'replace_agent',
     'move_agent',
     'add_tool_window',
     'remove_tool_window',
     'layout_change',
 })
-_REPLACE_DEFERRED_PLAN_CLASS = 'replace_agent'
 
 
 def plan_blocker(plan: dict[str, object]) -> tuple[object, ...] | None:
     if str(plan.get('status') or '') != 'ok':
         return ('plan_not_ok', 'reload apply requires a valid dry-run plan')
     plan_class = str(plan.get('plan_class') or '')
-    if plan_class == _REPLACE_DEFERRED_PLAN_CLASS:
-        return _replace_agent_deferred_blocker(plan)
     if plan_class not in _ALLOWED_PLAN_CLASSES:
         return (
             'unsupported_plan_class',
             'reload apply currently accepts view_only_change, maintenance_change, no_change, '
-            'add_agent, add_window, idle remove_agent, guarded move_agent, add_tool_window, '
-            'and remove_tool_window',
+            'add_agent, add_window, idle remove_agent, idle replace_agent, guarded move_agent, '
+            'add_tool_window, and remove_tool_window',
         )
     operation_blocker = _operation_blocker(plan)
     if operation_blocker is not None:
@@ -54,7 +53,15 @@ def plan_blocker(plan: dict[str, object]) -> tuple[object, ...] | None:
             'plan_not_future_safe',
             'dry-run plan is not future-safe for additive apply',
         )
-    if plan_class in {'add_agent', 'add_window', 'remove_agent', 'move_agent', 'add_tool_window', 'remove_tool_window'}:
+    if plan_class in {
+        'add_agent',
+        'add_window',
+        'remove_agent',
+        'replace_agent',
+        'move_agent',
+        'add_tool_window',
+        'remove_tool_window',
+    }:
         return _namespace_patch_blocker(plan)
     return None
 
@@ -92,30 +99,6 @@ def _blocker_parts(blocker: tuple[object, ...]) -> tuple[str, str, dict[str, obj
     if isinstance(extra, Mapping):
         return reason, message, dict(extra)
     return reason, message, {}
-
-
-def _replace_agent_deferred_blocker(plan: dict[str, object]) -> tuple[str, str, dict[str, object]]:
-    operations = tuple(dict(item) for item in tuple(plan.get('operations') or ()) if isinstance(item, Mapping))
-    replace_operations = tuple(item for item in operations if _operation_name(item) == _REPLACE_DEFERRED_PLAN_CLASS)
-    replace_agents = tuple(
-        str(item.get('agent') or '').strip()
-        for item in replace_operations
-        if str(item.get('agent') or '').strip()
-    )
-    replace_drain_intents = tuple(
-        dict(item)
-        for item in tuple(plan.get('drain_intents') or ())
-        if isinstance(item, Mapping) and str(item.get('intent_kind') or '') == 'replace'
-    )
-    return (
-        'replace_agent_deferred',
-        'replace_agent is classified and bounded drain intents are planned, but mutating replacement is not enabled yet',
-        {
-            'replace_agents': list(replace_agents),
-            'replace_drain_intents': list(replace_drain_intents),
-            'next_supported_action': 'inspect ccb reload --dry-run replace drains; restart or remove/add until replace apply lands',
-        },
-    )
 
 
 def _operation_blocker(plan: dict[str, object]) -> tuple[str, str] | None:

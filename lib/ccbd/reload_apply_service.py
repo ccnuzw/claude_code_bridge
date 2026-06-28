@@ -5,6 +5,7 @@ from ccbd.reload_apply_graph import build_reload_service_graph
 from ccbd.reload_apply_namespace import (
     apply_namespace_patch,
     current_namespace,
+    replace_agent_namespace_patch_result,
     topology_for,
 )
 from ccbd.reload_apply_plan import plan_blocked_result, plan_blocker
@@ -21,6 +22,7 @@ from ccbd.reload_apply_stages import (
 from ccbd.reload_handoff import begin_reload_handoff, clear_reload_handoff
 from ccbd.reload_plan import build_reload_dry_run_plan
 from ccbd.reload_runtime_unload import pre_namespace_unload_blocker
+from ccbd.reload_runtime_replace import pre_namespace_replace_blocker
 
 
 def run_additive_reload_apply(
@@ -98,6 +100,8 @@ def _run_locked(
     blocker = plan_blocker(plan)
     if blocker is None:
         blocker = pre_namespace_unload_blocker(app, old_graph, plan)
+    if blocker is None:
+        blocker = pre_namespace_replace_blocker(app, old_graph, plan)
     if blocker is not None:
         return plan_blocked_result(
             old_graph,
@@ -172,6 +176,8 @@ def _dry_run_plan(app, old_graph, new_config, namespace):
 
 
 def _namespace_patch_stage(app, old_graph, new_config, plan, apply_namespace_patch_fn):
+    if str(plan.get('plan_class') or '') == 'replace_agent':
+        return replace_agent_namespace_patch_result(old_graph, plan)
     return apply_namespace_patch(
         app,
         plan=plan,

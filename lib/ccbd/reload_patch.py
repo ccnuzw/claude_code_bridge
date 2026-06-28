@@ -16,11 +16,12 @@ _SUPPORTED_OPS = {
     'add_agent',
     'add_window',
     'remove_agent',
+    'replace_agent',
     'move_agent',
     'add_tool_window',
     'remove_tool_window',
 }
-_MUTATING_OPS = {'add_agent', 'add_window', 'remove_agent', 'move_agent', 'add_tool_window', 'remove_tool_window'}
+_MUTATING_OPS = {'add_agent', 'add_window', 'remove_agent', 'replace_agent', 'move_agent', 'add_tool_window', 'remove_tool_window'}
 _REQUIRED_PROOFS = (
     'project_id',
     'tmux_socket_path',
@@ -69,6 +70,7 @@ def build_namespace_patch_plan(
     new_topology = build_namespace_topology_plan(new_config)
     scope = _scope_payload(project_id=project_id, current_namespace=current_namespace)
     steps: list[NamespacePatchStep] = []
+    replace_agents = _replace_agent_names(op_records)
 
     if any(str(item.get('op') or '') in _MUTATING_OPS for item in op_records) and not scope['verified']:
         blocked.append(
@@ -80,6 +82,7 @@ def build_namespace_patch_plan(
 
     if not blocked:
         steps.extend(_view_refresh_steps(op_records))
+        steps.extend(_replace_agent_steps(op_records, step_factory=NamespacePatchStep))
         move_result = move_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep)
         moved_agents = tuple(move_result.get('moved_agents') or ())
         steps.extend(_additive_window_steps(old_topology, new_topology, excluded_agents=moved_agents))
@@ -94,6 +97,7 @@ def build_namespace_patch_plan(
         steps.extend(_remove_tool_window_steps(old_topology, new_topology))
         blocked.extend(_missing_additive_agent_steps(op_records, steps))
         blocked.extend(_missing_remove_agent_steps(op_records, steps))
+        blocked.extend(_missing_replace_agent_steps(op_records, steps))
         blocked.extend(_missing_move_agent_steps(op_records, steps))
         blocked.extend(_missing_tool_window_steps(op_records, steps))
 
@@ -105,7 +109,7 @@ def build_namespace_patch_plan(
         'scope': scope,
         'supported_operations': sorted(_SUPPORTED_OPS),
         'required_proofs': list(_REQUIRED_PROOFS),
-        'preserved_agents': _preserved_agents(old_topology, new_topology),
+        'preserved_agents': _preserved_agents(old_topology, new_topology, excluded_agents=replace_agents),
         'steps': [step.to_record() for step in steps],
         'blocked_operations': blocked,
         'warnings': _warnings_for_status(status),
@@ -205,6 +209,27 @@ def _view_refresh_steps(operations: tuple[dict[str, object], ...]) -> list[Names
             reason=reason,
         )
     ]
+
+
+def _replace_agent_steps(operations: tuple[dict[str, object], ...], *, step_factory) -> list[NamespacePatchStep]:
+    steps: list[NamespacePatchStep] = []
+    for item in operations:
+        if str(item.get('op') or '') != 'replace_agent':
+            continue
+        agent_name = str(item.get('agent') or '').strip()
+        if not agent_name:
+            continue
+        steps.append(
+            step_factory(
+                action='reuse_agent_pane_for_replace',
+                window=_clean_text(item.get('window')),
+                agent=agent_name,
+                role='agent',
+                slot_key=agent_name,
+                reason='agent spec changed; existing pane will be respawned for replacement',
+            )
+        )
+    return steps
 
 
 def _additive_window_steps(old_topology, new_topology, *, excluded_agents: tuple[str, ...] = ()) -> list[NamespacePatchStep]:
@@ -319,6 +344,26 @@ def _missing_remove_agent_steps(
     ]
 
 
+def _missing_replace_agent_steps(
+    operations: tuple[dict[str, object], ...],
+    steps: list[NamespacePatchStep],
+) -> list[dict[str, object]]:
+    expected = {
+        str(item.get('agent') or '').strip()
+        for item in operations
+        if str(item.get('op') or '') == 'replace_agent' and str(item.get('agent') or '').strip()
+    }
+    planned = {str(step.agent) for step in steps if step.action == 'reuse_agent_pane_for_replace' and step.agent}
+    return [
+        {
+            'op': 'replace_agent',
+            'agent': agent_name,
+            'reason': 'replace_agent operation was not covered by a same-slot runtime replacement step',
+        }
+        for agent_name in sorted(expected - planned)
+    ]
+
+
 def _missing_move_agent_steps(
     operations: tuple[dict[str, object], ...],
     steps: list[NamespacePatchStep],
@@ -376,7 +421,20 @@ def _missing_tool_window_steps(
     return missing
 
 
-def _preserved_agents(old_topology, new_topology) -> list[str]:
+def _replace_agent_names(operations: tuple[dict[str, object], ...]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(item.get('agent') or '').strip()
+                for item in operations
+                if str(item.get('op') or '') == 'replace_agent' and str(item.get('agent') or '').strip()
+            }
+        )
+    )
+
+
+def _preserved_agents(old_topology, new_topology, *, excluded_agents: tuple[str, ...] = ()) -> list[str]:
+    excluded = set(excluded_agents)
     old_agents = {
         str(agent_name)
         for window in tuple(getattr(old_topology, 'windows', ()) or ())
@@ -387,12 +445,12 @@ def _preserved_agents(old_topology, new_topology) -> list[str]:
         for window in tuple(getattr(new_topology, 'windows', ()) or ())
         for agent_name in tuple(getattr(window, 'agent_names', ()) or ())
     }
-    return sorted(old_agents & new_agents)
+    return sorted((old_agents & new_agents) - excluded)
 
 
 def _warnings_for_status(status: str) -> list[str]:
     if status == 'planned':
-        return ['Namespace patch apply is explicit and only supports additive, idle remove_agent, or guarded move_agent operations.']
+        return ['Namespace patch apply is explicit and only supports additive, idle remove_agent, idle replace_agent, or guarded move_agent operations.']
     if status == 'blocked':
         return ['Namespace patch plan is blocked; reload must remain dry-run/rejected.']
     return []

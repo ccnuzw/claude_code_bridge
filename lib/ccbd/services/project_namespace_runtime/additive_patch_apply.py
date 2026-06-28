@@ -25,6 +25,7 @@ class NamespacePatchApplyResult:
     removed_windows: tuple[str, ...] = ()
     removed_panes: tuple[str, ...] = ()
     removed_agents: dict[str, str] = field(default_factory=dict)
+    replaced_agents: dict[str, str] = field(default_factory=dict)
     moved_agents: dict[str, str] = field(default_factory=dict)
     moved_agent_windows: dict[str, str] = field(default_factory=dict)
     reflowed_windows: tuple[str, ...] = ()
@@ -46,6 +47,7 @@ class NamespacePatchApplyResult:
             'removed_windows': list(self.removed_windows),
             'removed_panes': list(self.removed_panes),
             'removed_agents': dict(self.removed_agents),
+            'replaced_agents': dict(self.replaced_agents),
             'moved_agents': dict(self.moved_agents),
             'moved_agent_windows': dict(self.moved_agent_windows),
             'reflowed_windows': list(self.reflowed_windows),

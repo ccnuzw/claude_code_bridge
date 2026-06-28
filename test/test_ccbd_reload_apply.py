@@ -693,33 +693,190 @@ def test_additive_reload_apply_idle_retry_retires_busy_remove_drain_record(tmp_p
     assert drain_queue.records[0].phase == 'retired'
 
 
-def test_reload_apply_reports_deferred_replace_without_mutation(tmp_path: Path) -> None:
-    app = _started_app(tmp_path / 'repo-replace-deferred', BASE_CONFIG)
+def test_reload_apply_busy_replace_records_drain_without_mutation(tmp_path: Path) -> None:
+    app = _started_app(tmp_path / 'repo-replace-busy', BASE_CONFIG)
+    app.reload_drain_clock_s = lambda: 10.0
     old_graph = app.service_graph
     new_config = _load_config(app.project_root, REPLACE_AGENT_CONFIG)
     _seed_runtime(app.runtime_service, 'agent1', pane_id='%1')
-    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2', provider='claude')
+    runtime = old_graph.registry.get('agent2')
+    assert runtime is not None
+    app.runtime_service.patch_runtime_state(runtime, state=AgentState.BUSY)
 
     result = run_additive_reload_apply(
         app,
         new_config,
         current_namespace=_namespace(app),
-        apply_namespace_patch_fn=_fail_with('deferred replace must not patch namespace'),
-        run_runtime_mount_fn=_fail_with('deferred replace must not mutate runtime'),
-        publish_transaction_fn=_fail_with('deferred replace must not publish'),
+        apply_namespace_patch_fn=_fail_with('busy replace must not patch namespace'),
+        run_runtime_mount_fn=_fail_with('busy replace must not mutate runtime'),
+        publish_transaction_fn=_fail_with('busy replace must not publish'),
     )
 
     assert result.status == 'blocked'
     assert result.stage == 'plan'
     assert result.plan_class == 'replace_agent'
-    assert result.diagnostics['reason'] == 'replace_agent_deferred'
-    assert result.diagnostics['replace_agents'] == ['agent2']
-    assert result.diagnostics['replace_drain_intents'][0]['intent_kind'] == 'replace'
-    assert result.diagnostics['replace_drain_intents'][0]['agent'] == 'agent2'
+    assert result.diagnostics['reason'] == 'agent_busy'
+    assert result.diagnostics['drain_action'] == 'enqueued'
+    assert result.diagnostics['drain_accepted'] is True
+    assert result.diagnostics['drain_record']['intent']['intent_kind'] == 'replace'
+    assert result.diagnostics['drain_record']['phase'] == 'draining'
+    assert result.diagnostics['drain_record']['status'] == 'waiting'
     assert result.diagnostics['graph_published'] is False
     assert result.diagnostics['unload_or_replace_executed'] is False
     assert app.service_graph is old_graph
+    drain_records = app.reload_drain_store.load().active_records_for('agent2')
+    assert len(drain_records) == 1
+    assert drain_records[0].intent.intent_kind == 'replace'
+    assert drain_records[0].status == 'waiting'
+
+
+def test_reload_apply_idle_replace_respawns_same_slot_and_publishes(tmp_path: Path) -> None:
+    app = _started_app(tmp_path / 'repo-replace-idle', BASE_CONFIG)
+    old_graph = app.service_graph
+    old_lease = app.mount_manager.load_state().to_record()
+    new_config = _load_config(app.project_root, REPLACE_AGENT_CONFIG)
+    _seed_runtime(app.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2', provider='claude')
+    calls: list[dict[str, object]] = []
+
+    result = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=_fail_with('idle replace must not mutate tmux namespace before runtime respawn'),
+        run_start_flow_fn=_mounting_start_flow(app, calls),
+    )
+
+    assert result.status == 'published'
+    assert result.stage == 'publish_transaction'
+    assert result.plan_class == 'replace_agent'
+    assert result.namespace_patch['status'] == 'applied'
+    assert result.namespace_patch['replaced_agents'] == {'agent2': '%2'}
+    assert result.namespace_patch['agent_panes'] == {}
+    assert result.runtime_mount['status'] == 'replaced'
+    assert result.runtime_mount['requested_agents'] == ['agent2']
+    assert result.runtime_mount['replaced_agents'] == ['agent2']
+    assert result.runtime_mount['mounted_agents'] == ['agent2']
+    assert result.runtime_mount['runtime_authority_stopped_agents'] == ['agent2']
+    assert result.runtime_mount['runtime_authority_written_agents'] == ['agent2']
+    assert result.runtime_mount['helper_terminated_agents'] == []
+    assert calls[0]['requested_agents'] == ('agent2',)
+    assert calls[0]['namespace_agent_panes'] == {'agent2': '%2'}
+    runtime = app.service_graph.registry.get('agent2')
+    assert runtime is not None
+    assert runtime.provider == 'codex'
+    assert runtime.pane_id == '%2'
+    assert runtime.active_pane_id == '%2'
+    assert runtime.runtime_ref == 'tmux:%2'
+    assert runtime.session_ref == 'session-agent2'
+    assert app.service_graph is not old_graph
+    assert app.service_graph.version == 2
+    assert app.mount_manager.load_state().config_signature != old_lease['config_signature']
+    assert app.mount_manager.load_state().config_signature == app.config_identity['config_signature']
     assert app.reload_drain_store.load().active_records_for('agent2') == ()
+
+
+def test_reload_apply_idle_replace_uses_default_start_flow_when_not_injected(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _started_app(tmp_path / 'repo-replace-default-start-flow', BASE_CONFIG)
+    new_config = _load_config(app.project_root, REPLACE_AGENT_CONFIG)
+    _seed_runtime(app.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2', provider='claude')
+    calls: list[object] = []
+
+    def fake_mounts(_app, graph, *, namespace, patch_result, run_start_flow_fn):
+        del namespace, patch_result
+        calls.append(run_start_flow_fn)
+        assert callable(run_start_flow_fn)
+        graph.runtime_service.attach(
+            agent_name='agent2',
+            workspace_path=str(graph.runtime_service._layout.workspace_path('agent2')),
+            backend_type='pane-backed',
+            runtime_ref='tmux:%2',
+            session_ref='session-agent2-new',
+            health='healthy',
+            provider='codex',
+            terminal_backend='tmux',
+            pane_id='%2',
+            active_pane_id='%2',
+            tmux_window_name='main',
+            slot_key='agent2',
+            window_id='@0',
+            workspace_epoch=1,
+            lifecycle_state='idle',
+            managed_by='ccbd',
+            binding_source='provider-session',
+        )
+        return AdditiveRuntimeMountResult(
+            status='mounted',
+            requested_agents=('agent2',),
+            mounted_agents=('agent2',),
+            runtime_authority_written_agents=('agent2',),
+        )
+
+    monkeypatch.setattr(
+        'ccbd.reload_runtime_replace.run_additive_agent_mounts',
+        fake_mounts,
+    )
+
+    result = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=_fail_with('idle replace must not mutate tmux namespace before runtime respawn'),
+    )
+
+    assert result.status == 'published'
+    assert result.plan_class == 'replace_agent'
+    assert result.runtime_mount['status'] == 'replaced'
+    assert len(calls) == 1
+
+
+def test_reload_apply_idle_retry_retires_busy_replace_drain_record(tmp_path: Path) -> None:
+    app = _started_app(tmp_path / 'repo-replace-busy-retry', BASE_CONFIG)
+    times = iter([10.0, 20.0])
+    app.reload_drain_clock_s = lambda: next(times)
+    new_config = _load_config(app.project_root, REPLACE_AGENT_CONFIG)
+    _seed_runtime(app.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2', provider='claude')
+    runtime = app.service_graph.registry.get('agent2')
+    assert runtime is not None
+    app.runtime_service.patch_runtime_state(runtime, state=AgentState.BUSY)
+
+    blocked = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=_fail_with('busy replace must not patch namespace'),
+        run_runtime_mount_fn=_fail_with('busy replace must not mutate runtime'),
+        publish_transaction_fn=_fail_with('busy replace must not publish'),
+    )
+    assert blocked.status == 'blocked'
+    assert app.reload_drain_store.load().active_records_for('agent2')
+
+    app.runtime_service.patch_runtime_state(runtime, state=AgentState.IDLE)
+    calls: list[dict[str, object]] = []
+    published = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=_fail_with('idle replace retry must not mutate tmux namespace before runtime respawn'),
+        run_start_flow_fn=_mounting_start_flow(app, calls),
+    )
+
+    assert published.status == 'published'
+    assert published.plan_class == 'replace_agent'
+    assert published.runtime_mount['status'] == 'replaced'
+    assert published.runtime_mount['replaced_agents'] == ['agent2']
+    assert calls[0]['namespace_agent_panes'] == {'agent2': '%2'}
+    drain_queue = app.reload_drain_store.load()
+    assert drain_queue.active_records_for('agent2') == ()
+    assert drain_queue.records[0].intent.intent_kind == 'replace'
+    assert drain_queue.records[0].status == 'retired'
+    assert drain_queue.records[0].phase == 'retired'
 
 
 def test_additive_reload_apply_namespace_patch_failure_stops_before_runtime_and_publish(
@@ -1126,17 +1283,21 @@ def test_project_reload_non_dry_run_busy_remove_blocks_without_namespace_mutatio
     assert dry_run_payload['reload_drains']['active_records'][0]['agent'] == 'agent2'
 
 
-def test_project_reload_non_dry_run_replace_reports_deferred_diagnostics(
+def test_project_reload_non_dry_run_busy_replace_reports_drain_diagnostics(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     app = _started_app(tmp_path / 'repo-replace-handler', BASE_CONFIG)
+    app.reload_drain_clock_s = lambda: 10.0
     old_graph = app.service_graph
-    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2')
+    _seed_runtime(app.runtime_service, 'agent2', pane_id='%2', provider='claude')
+    runtime = old_graph.registry.get('agent2')
+    assert runtime is not None
+    app.runtime_service.patch_runtime_state(runtime, state=AgentState.BUSY)
     _project(app.project_root, REPLACE_AGENT_CONFIG)
     monkeypatch.setattr(
         'ccbd.reload_apply_service.apply_namespace_patch',
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError('deferred replace must not patch namespace')),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError('busy replace must not patch namespace')),
     )
 
     payload = app.socket_server._handlers['project_reload_config']({'dry_run': False})
@@ -1145,12 +1306,11 @@ def test_project_reload_non_dry_run_replace_reports_deferred_diagnostics(
     assert payload['stage'] == 'plan'
     assert payload['plan_class'] == 'replace_agent'
     assert payload['mutation_enabled'] is False
-    assert payload['diagnostics']['reason'] == 'replace_agent_deferred'
-    assert payload['diagnostics']['replace_agents'] == ['agent2']
-    assert payload['diagnostics']['replace_drain_intents'][0]['intent_kind'] == 'replace'
-    assert payload['diagnostics']['replace_drain_intents'][0]['agent'] == 'agent2'
-    assert payload['reload_drains']['active_count'] == 0
-    assert app.reload_drain_store.load().active_records_for('agent2') == ()
+    assert payload['diagnostics']['reason'] == 'agent_busy'
+    assert payload['diagnostics']['drain_record']['intent']['intent_kind'] == 'replace'
+    assert payload['diagnostics']['drain_record']['status'] == 'waiting'
+    assert payload['reload_drains']['active_count'] == 1
+    assert len(app.reload_drain_store.load().active_records_for('agent2')) == 1
     assert payload['diagnostics']['graph_published'] is False
     assert app.service_graph is old_graph
 
@@ -1390,7 +1550,7 @@ def _mounting_start_flow(app: CcbdApp, calls: list[dict[str, object]]):
     return _fake_start_flow
 
 
-def _seed_runtime(runtime_service, agent_name: str, *, pane_id: str):
+def _seed_runtime(runtime_service, agent_name: str, *, pane_id: str, provider: str = 'codex'):
     return runtime_service.attach(
         agent_name=agent_name,
         workspace_path=str(runtime_service._layout.workspace_path(agent_name)),
@@ -1398,7 +1558,7 @@ def _seed_runtime(runtime_service, agent_name: str, *, pane_id: str):
         runtime_ref=f'tmux:{pane_id}',
         session_ref=f'session-{agent_name}',
         health='healthy',
-        provider='codex',
+        provider=provider,
         terminal_backend='tmux',
         pane_id=pane_id,
         active_pane_id=pane_id,

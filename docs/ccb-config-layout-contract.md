@@ -282,6 +282,12 @@ Contract:
   close that window before an explicit `kill-window`, the apply path must treat
   the window as already removed, record it in `namespace_removed_windows`, and
   preserve `namespace_removed_agents` / `namespace_removed_panes` diagnostics.
+- Guarded reload may replace an existing agent only when the old and new
+  `[windows]` topology keep the same agent in the same logical slot. A provider
+  suffix or provider-spec change on that leaf is classified as `replace_agent`,
+  not `layout_change`; apply reuses the managed pane as namespace evidence and
+  respawns the agent runtime in that pane instead of reflowing or recreating
+  unrelated panes.
 - Guarded reload should reflow a window after successful append-only
   `add_agent` and idle `remove_agent` mutations, then reapply managed sidebar
   width. For fully CCB-managed agent windows with one to six effective agent

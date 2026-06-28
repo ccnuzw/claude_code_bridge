@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from agents.models import LayoutLeaf, LayoutNode, parse_layout_spec
 from agents.config_identity import project_config_identity_payload
 from ccbd.reload_drain import drain_intent_suggestions_for_reload_operations
 from ccbd.reload_patch import build_invalid_namespace_patch_plan, build_namespace_patch_plan
@@ -257,6 +258,7 @@ def _build_operations(current_config, new_config) -> list[dict[str, object]]:
                 {
                     'op': 'replace_agent',
                     'agent': agent_name,
+                    'window': old_window,
                     'fields': changed_fields,
                     'reason': 'existing agent spec changed',
                 }
@@ -289,9 +291,11 @@ def _topology_operations(current_config, new_config, *, old_windows: dict[str, d
             continue
         changed = [
             field
-            for field in ('order', 'layout_spec', 'agent_names')
+            for field in ('order', 'agent_names')
             if old_record.get(field) != new_record.get(field)
         ]
+        if _provider_neutral_layout_spec(current_config, old_record) != _provider_neutral_layout_spec(new_config, new_record):
+            changed.append('layout_spec')
         if changed:
             operations.append(
                 {
@@ -341,6 +345,8 @@ def _future_safe_to_apply(plan_class: str, operations: list[dict[str, object]]) 
         return not any(str(item.get('op') or '') in unsafe_tool_ops | unsafe_agent_ops for item in operations)
     if plan_class == 'remove_agent':
         return _remove_agent_operations_are_safe(operations)
+    if plan_class == 'replace_agent':
+        return _replace_agent_operations_are_safe(operations)
     if plan_class == 'move_agent':
         return _move_agent_operations_are_safe(operations)
     unsafe_ops = {'replace_agent', 'move_agent', 'layout_change', 'change_tool_window'}
@@ -416,6 +422,12 @@ def _move_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool
             continue
         return False
     return True
+
+
+def _replace_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool:
+    if not operations:
+        return False
+    return all(str(item.get('op') or '') == 'replace_agent' for item in operations)
 
 
 def _tool_window_operations(
@@ -558,6 +570,30 @@ def _window_record_map(config) -> dict[str, dict[str, object]]:
         str(getattr(window, 'name', '') or ''): dict(window.to_record())
         for window in tuple(getattr(config, 'windows', ()) or ())
     }
+
+
+def _provider_neutral_layout_spec(config, window_record: dict[str, object]) -> str:
+    del config
+    return _strip_layout_providers(parse_layout_spec(str(window_record.get('layout_spec') or ''))).render()
+
+
+def _strip_layout_providers(node: LayoutNode) -> LayoutNode:
+    if node.kind == 'leaf':
+        assert node.leaf is not None
+        return LayoutNode(
+            kind='leaf',
+            leaf=LayoutLeaf(
+                name=node.leaf.name,
+                percent=node.leaf.percent,
+            ),
+        )
+    assert node.left is not None
+    assert node.right is not None
+    return LayoutNode(
+        kind=node.kind,
+        left=_strip_layout_providers(node.left),
+        right=_strip_layout_providers(node.right),
+    )
 
 
 def _tool_window_record_map(config) -> dict[str, dict[str, object]]:

@@ -64,6 +64,7 @@ def namespace_residue(namespace_patch) -> dict[str, object]:
         'removed_windows': list(patch_record.get('removed_windows') or ()),
         'removed_panes': list(patch_record.get('removed_panes') or ()),
         'removed_agents': dict(patch_record.get('removed_agents') or {}),
+        'replaced_agents': dict(patch_record.get('replaced_agents') or {}),
         'moved_agents': dict(patch_record.get('moved_agents') or {}),
         'moved_agent_windows': dict(patch_record.get('moved_agent_windows') or {}),
         'reflowed_windows': list(patch_record.get('reflowed_windows') or ()),
@@ -87,6 +88,7 @@ def runtime_residue(runtime_mount) -> dict[str, object]:
             mount_record.get('runtime_authority_moved_agents') or ()
         ),
         'unloaded_agents': list(mount_record.get('unloaded_agents') or ()),
+        'replaced_agents': list(mount_record.get('replaced_agents') or ()),
         'runtime_authority_stopped_agents': list(
             mount_record.get('runtime_authority_stopped_agents') or ()
         ),

@@ -74,18 +74,26 @@ Rules:
 - Pending replacement must not block unrelated additive reloads forever.
 - Pending replacement must have a maximum age and maximum queue length.
 
-Phase 4 represents replacement as `pending_replace` drain intent records sharing
-the same bounded queue as unload. It does not yet execute the replacement path
-or supersede duplicate replacement requests.
+The first idle replacement slice is landed. A pure `replace_agent` diff now
+plans `reuse_agent_pane_for_replace`, treats the changed `[windows]` provider
+suffix as provider-neutral layout, and skips tmux namespace mutation. During
+apply, CCB uses the existing managed pane as assigned pane evidence, stops the
+old runtime authority/helper manifest, runs the normal provider start flow so
+the pane is respawned in place, publishes the new service graph/signature, and
+reports `replaced_agents`.
 
-The first apply-boundary slice is landed: a non-dry-run `replace_agent` reload
-now returns a structured `replace_agent_deferred` blocker instead of a generic
-unsupported-plan error. The response names the affected `replace_agents`,
-includes the planned replace drain intents, and renders a next supported action
-for CLI users. It intentionally does not patch tmux namespace, mutate runtime
-authority, publish a new service graph, or persist active drain records. This
-keeps the replace contract visible while preserving the old runtime until the
-idle replacement mutation path is implemented.
+Busy replacement now records a bounded `replace` drain intent and blocks before
+namespace/runtime/publish mutation. Retrying `ccb reload` after the agent
+becomes idle uses the same same-slot replacement path and retires the active
+replace drain after the replacement publishes. Automatic heartbeat execution of
+idle-ready replace drains is still pending.
+
+The source-wrapper fake smoke has proved the daemon path, not only unit-level
+start-flow injection: a mounted `main:fake-codex` pane can be changed to
+`main:fake-claude`, dry-run reports `replace_agent` with
+`reuse_agent_pane_for_replace`, non-dry-run reload publishes, the pane id is
+preserved, layout status reports the new provider, and `ask main` is accepted
+after replacement.
 
 ## Failure Handling
 

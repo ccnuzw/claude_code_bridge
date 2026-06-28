@@ -119,6 +119,7 @@ def _reload_residue_line(residue: Mapping[str, object]) -> str:
         'removed_windows',
         'removed_panes',
         'removed_agents',
+        'replaced_agents',
         'reflowed_windows',
         'reflow_errors',
         'rollback_actions',
@@ -126,6 +127,7 @@ def _reload_residue_line(residue: Mapping[str, object]) -> str:
         'mounted_agents',
         'runtime_authority_written_agents',
         'unloaded_agents',
+        'replaced_agents',
         'runtime_authority_stopped_agents',
         'helper_terminated_agents',
     ):

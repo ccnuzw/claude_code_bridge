@@ -365,6 +365,26 @@ Date: 2026-06-28
   test/test_ccbd_reload_drain.py test/test_ccbd_reload_dry_run.py
   test/test_v2_cli_render.py` (`99 passed`) and `python -m py_compile
   lib/ccbd/reload_apply_plan.py lib/cli/render_runtime/reload_view.py`.
+- Landed the first idle `replace_agent` mutation slice: pure existing-agent
+  provider/spec replacement now plans a same-slot runtime replacement, skips
+  tmux namespace mutation, stops old runtime authority, respawns the new
+  provider in the original pane, publishes the new service graph/signature, and
+  reports `replaced_agents`. Busy replacement records a bounded `replace`
+  drain and leaves namespace/runtime/publish untouched; a later manual idle
+  retry reuses the same replacement path and retires the active replace drain.
+  A real source-wrapper smoke in `/home/bfly/yunwei/test_ccb2` proved
+  `fake-codex -> fake-claude` same-slot replacement publishes, preserves pane
+  `%1`, updates layout status to the new provider, and keeps `ask` reachable.
+  Verification passed with `PYTHONPATH=lib pytest -q test/test_ccbd_reload_apply.py
+  test/test_ccbd_reload_patch.py test/test_ccbd_reload_drain.py
+  test/test_ccbd_reload_dry_run.py test/test_ccbd_reload_runtime_mount.py
+  test/test_ccbd_reload_transaction.py test/test_v2_cli_render.py
+  test/test_v2_cli_router.py` (`212 passed`) and external source-wrapper smoke
+  `scripts/guarded_core_dynamic_layout_smoke.py --test-root
+  /home/bfly/yunwei/test_ccb2 --ccb-test
+  /home/bfly/yunwei/ccb_source/ccb_test --provider fake --project-prefix
+  core-dynamic-layout-replace-safety --reset`, which passed all guarded core
+  dynamic layout checks.
 
 ## In Progress
 
@@ -382,9 +402,10 @@ Date: 2026-06-28
   shared-source move, plus resolve/preflight loop-capacity smokes have passed;
   the core fake-provider dynamic layout bundle is now a CI gate. Sidebar helper
   now renders active drain status from `project_view`, and a true tmux pane
-  capture smoke verifies the marker in a running sidebar. Replace-agent is
-  classified and reported through a structured deferred non-dry-run blocker,
-  but mutating replacement is still pending. Daemon-pushed sidebar refresh,
+  capture smoke verifies the marker in a running sidebar. Pure idle
+  replace-agent mutation is implemented for same-slot respawn and publish, and
+  busy replace has bounded drain plus manual idle-retry cleanup. Automatic
+  heartbeat retry for ready replace drains, daemon-pushed sidebar refresh,
   arbitrary layout reshapes, and background config watching remain deferred.
 
 ## Next
@@ -400,9 +421,9 @@ Date: 2026-06-28
    cleanup. The fake busy-remove drain path now has a dedicated CI smoke; the
    next matrix expansion should decide whether a guarded real-provider variant
    is useful or too slow for routine gates.
-3. Implement the first idle `replace_agent` mutation slice only after the
-   deferred blocker contract remains stable: old runtime retire, same logical
-   slot remount, signature publish, and no claimed provider session continuity.
+3. Extend the busy `replace_agent` drain path with heartbeat-driven retry
+   execution, using the landed same-slot replacement path once the active
+   replace drain becomes idle-ready.
 4. Keep daemon-pushed sidebar refresh deferred unless a real tmux visual check
    shows project-view polling is too slow for drain/reload state changes.
 

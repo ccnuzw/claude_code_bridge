@@ -11,6 +11,7 @@ from cli.router import (
     dispatch_auxiliary_command,
     dispatch_management_command,
     parse_start_args,
+    print_command_help,
 )
 
 
@@ -188,6 +189,17 @@ def test_parse_start_args_supports_safe_and_new_context() -> None:
     args = parse_start_args(["-n", "-s"])
     assert args.new_context is True
     assert args.safe is True
+
+
+def test_reload_help_describes_idle_replace_boundary() -> None:
+    stdout = StringIO()
+
+    assert print_command_help("reload", file=stdout) is True
+
+    text = stdout.getvalue()
+    assert "idle same-slot replace_agent" in text
+    assert "Busy remove_agent and replace_agent record bounded drain state" in text
+    assert "replace and full kill/reflow of existing panes are not implemented" not in text
 
 
 def test_run_cli_entrypoint_prints_start_help_without_phase2() -> None:

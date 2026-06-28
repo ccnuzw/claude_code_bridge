@@ -102,6 +102,47 @@ def config_only_namespace_patch_result(
     )
 
 
+def replace_agent_namespace_patch_result(
+    old_graph,
+    plan: dict[str, object],
+) -> NamespacePatchApplyResult:
+    agents = _replace_agents_from_plan(plan)
+    replaced: dict[str, str] = {}
+    missing: list[str] = []
+    registry = getattr(old_graph, 'registry', None)
+    for agent_name in agents:
+        runtime = registry.get(agent_name) if registry is not None else None
+        pane_id = _runtime_pane_id(runtime)
+        if pane_id is None:
+            missing.append(agent_name)
+            continue
+        replaced[agent_name] = pane_id
+    if missing:
+        return NamespacePatchApplyResult(
+            status='blocked',
+            diagnostics={
+                'reason': 'replace_pane_evidence_missing',
+                'message': 'replace_agent requires existing managed pane evidence: ' + ','.join(missing),
+                **not_published_diagnostics(runtime_authority_written=False),
+            },
+        )
+    preserved = _preserved_runtime_panes(old_graph, exclude=tuple(replaced))
+    return NamespacePatchApplyResult(
+        status='applied',
+        replaced_agents=replaced,
+        preserved_before=preserved,
+        preserved_after=preserved,
+        diagnostics={
+            'reason': 'replace_agent_same_slot',
+            'namespace_state_written': False,
+            'graph_published': False,
+            'runtime_authority_written': False,
+            'lease_or_lifecycle_written': False,
+            'unload_or_replace_executed': False,
+        },
+    )
+
+
 def exception_namespace_patch_result(exc: Exception) -> NamespacePatchApplyResult:
     return NamespacePatchApplyResult(
         status='failed',
@@ -114,10 +155,51 @@ def exception_namespace_patch_result(exc: Exception) -> NamespacePatchApplyResul
     )
 
 
+def _replace_agents_from_plan(plan: dict[str, object]) -> tuple[str, ...]:
+    agents: list[str] = []
+    for item in tuple(plan.get('operations') or ()):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get('op') or '') != 'replace_agent':
+            continue
+        agent_name = str(item.get('agent') or '').strip()
+        if agent_name and agent_name not in agents:
+            agents.append(agent_name)
+    return tuple(agents)
+
+
+def _runtime_pane_id(runtime) -> str | None:
+    pane_id = str(
+        getattr(runtime, 'active_pane_id', None)
+        or getattr(runtime, 'pane_id', None)
+        or ''
+    ).strip()
+    if pane_id.startswith('%'):
+        return pane_id
+    return None
+
+
+def _preserved_runtime_panes(old_graph, *, exclude: tuple[str, ...]) -> dict[str, str]:
+    excluded = set(exclude)
+    registry = getattr(old_graph, 'registry', None)
+    if registry is None:
+        return {}
+    preserved: dict[str, str] = {}
+    for runtime in tuple(registry.list_all() or ()):
+        agent_name = str(getattr(runtime, 'agent_name', '') or '').strip()
+        if not agent_name or agent_name in excluded:
+            continue
+        pane_id = _runtime_pane_id(runtime)
+        if pane_id is not None:
+            preserved[agent_name] = pane_id
+    return preserved
+
+
 __all__ = [
     'apply_namespace_patch',
     'config_only_namespace_patch_result',
     'current_namespace',
     'exception_namespace_patch_result',
+    'replace_agent_namespace_patch_result',
     'topology_for',
 ]

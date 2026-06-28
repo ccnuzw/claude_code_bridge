@@ -137,10 +137,9 @@ Date: 2026-05-29
   - `timeout_s`, `max_age_s`, and `max_pending` reject or terminate bounded
     records;
   - unload and replace intents share the queue bound without unbounded growth;
-  - non-dry-run `replace_agent` returns `replace_agent_deferred` with affected
-    agents, replace drain intents, and a CLI-visible next supported action, but
-    does not yet mutate namespace/runtime/published graph or persist active
-    drain records;
+  - non-dry-run idle `replace_agent` executes same-slot runtime replacement,
+    while busy replace persists a bounded replace drain before returning
+    blocked diagnostics;
   - `retired` is terminal;
   - busy/idle predicate is injectable;
   - state-machine and store tests do not call tmux, publish a service graph,
@@ -188,8 +187,19 @@ Date: 2026-05-29
   - new sidebar pane exists when sidebar mode is `every_window`;
   - new agents in that window are mounted.
 - Existing agent provider/workspace/model/key/url change:
-  - classified as `unsafe_requires_restart` while runtime is running;
-  - existing pane and runtime record are untouched.
+  - pure same-agent replacement is planned as `replace_agent` with
+    `reuse_agent_pane_for_replace`;
+  - provider suffix changes inside `[windows]` are compared as provider-neutral
+    layout so they do not create a false `layout_change`;
+  - idle replace stops old runtime authority and respawns the new provider in
+    the same pane before publishing;
+  - busy replace records a bounded `replace` drain and leaves namespace,
+    runtime authority, and graph publish untouched;
+  - a later successful idle retry retires the active replace drain after
+    publishing the same-slot replacement;
+  - source-wrapper fake smoke covers actual daemon `fake-codex -> fake-claude`
+    replacement, pane-id preservation, provider status update, and post-replace
+    ask reachability.
 - Existing agent removed from `[windows]`:
   - Phase 3 dry-run reports `remove_agent`;
   - idle unload retires runtime and removes only the target pane;
@@ -202,10 +212,10 @@ Date: 2026-05-29
   - after the runtime becomes idle, either a manual retry or daemon heartbeat
     auto-retry uses the same `remove_agent` path and retires the drain record;
   - existing unrelated processes are not killed by reload.
-- Existing agent provider/workspace/model/key/url change after replacement is
-  enabled:
-  - idle replace advances runtime authority epoch;
-  - busy replace enters bounded `pending_replace`;
+- Existing agent provider/workspace/model/key/url change after automatic busy
+  replace retry is enabled:
+  - idle-ready replace drains should execute the same same-slot replacement
+    path without requiring a manual `ccb reload`;
   - provider session continuity is not claimed without provider-specific proof.
 - Existing agent moved to another managed window:
   - explicit dynamic move plans `move_agent`;
