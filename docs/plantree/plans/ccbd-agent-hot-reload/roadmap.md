@@ -215,6 +215,15 @@ Date: 2026-06-28
   fixed-column target geometry with `ccb agent arrange`, preserve pane ids and
   agent order, keep a helper ask-reachable after arrange, then unload helpers
   back to the static `frontdesk` plus `planner` topology.
+- Extended live-provider evidence to the shared-source move edge case:
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-codex-move-shared-source-latest.json`
+  and
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-move-shared-source-latest.json`
+  passed `move-shared-source`. These prove real Codex and Claude sessions can
+  move one dynamic helper out of a source window that still contains another
+  helper, keep the source window alive, preserve both moved and staying pane ids,
+  keep both helpers ask-reachable after the move, move the helper back, and only
+  remove the source window after the final helper is released.
 - Verified dynamic lifecycle policy smoke for park/resume and auto release:
   `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with
   `5 passed`; source-wrapper fake smoke
@@ -311,10 +320,10 @@ Date: 2026-06-28
   move into explicit review/loop/node windows, and mixed move-plus-add explicit
   `[windows]` reload. Live `codex` and `claude` move, same-window `1->6->1`,
   lifecycle park/resume, multi-window batch-release, window-class-continuous,
-  mixed move-plus-add, batch window-class move, and arrange-window smokes have
-  passed; remaining provider edge-flow coverage, daemon-pushed sidebar refresh,
-  replacement, arbitrary layout reshapes, and background config watching remain
-  deferred.
+  mixed move-plus-add, batch window-class move, arrange-window, and
+  shared-source move smokes have passed; remaining provider edge-flow coverage,
+  daemon-pushed sidebar refresh, replacement, arbitrary layout reshapes, and
+  background config watching remain deferred.
 
 ## Next
 
@@ -323,9 +332,9 @@ Date: 2026-06-28
    `same-window-continuous`, `codex` lifecycle park/resume, `claude`
    `move-agent`, `claude` `same-window-continuous`, and `claude` lifecycle
    park/resume, plus `codex`/`claude` `batch-release`,
-   `window-class-continuous`, `mixed-move-add`, `batch-move-window-class`, and
-   `arrange-window`, have passed with real-home auth. Remaining edge flows such
-   as `move-shared-source` and `resolve-preflight` need the same guarded
+   `window-class-continuous`, `mixed-move-add`, `batch-move-window-class`,
+   `arrange-window`, and `move-shared-source`, have passed with real-home auth.
+   Remaining edge flows such as `resolve-preflight` need the same guarded
    account-boundary treatment before being promoted to release gates.
 2. Run or update the automatic and manual additive reload matrix in
    [topics/test-matrix.md](topics/test-matrix.md), including `test_ccb2`

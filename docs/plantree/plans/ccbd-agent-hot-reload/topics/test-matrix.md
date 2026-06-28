@@ -301,6 +301,14 @@ Date: 2026-05-29
     helpers back to the static `frontdesk` plus `planner` topology.
   - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-arrange-window-latest.json`
     passed the same real-home `arrange-window` checks for `claude`.
+  - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-codex-move-shared-source-latest.json`
+    passed `codex` `move-shared-source`: add two helpers to `review`, move one
+    helper to `main` while keeping the source `review` window alive for the
+    staying helper, preserve moved/staying pane ids, keep both helpers
+    ask-reachable, move the helper back, and remove the source window only after
+    both helpers are released.
+  - `/home/bfly/yunwei/test_ccb2/dynamic-layout-live-claude-move-shared-source-latest.json`
+    passed the same real-home `move-shared-source` checks for `claude`.
 - 2026-06-28 dynamic lifecycle smoke evidence:
   - `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with
     `5 passed` before workflow promotion; after adding the CI gate, targeted
