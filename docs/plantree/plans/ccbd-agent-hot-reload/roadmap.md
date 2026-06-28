@@ -235,16 +235,18 @@ Date: 2026-06-28
   resolution predicts `node-round3-node1`, `loop capacity ensure` creates the
   real worker/reviewer node window, and `loop capacity release` removes it.
 - Promoted the fake-provider core dynamic layout smoke into the regular
-  Ubuntu/Python 3.11 CI gate as `Guard core dynamic layout smoke`. The gate now
-  covers `same-window-continuous`, `batch-release`, `move-agent`,
-  `move-shared-source`, `window-class-continuous`, `arrange-window`,
-  `mixed-move-add`, `batch-move-window-class`, and `resolve-preflight`, while
-  keeping real Codex/Claude runs as guarded manual/release evidence. Workflow
-  text coverage and script tests passed with
+  Ubuntu/Python 3.11 CI gate as `Guard core dynamic layout smoke`, backed by
+  `scripts/guarded_core_dynamic_layout_smoke.py`. The guard covers
+  `same-window-continuous`, `batch-release`, `move-agent`, `move-shared-source`,
+  `window-class-continuous`, `arrange-window`, `mixed-move-add`,
+  `batch-move-window-class`, and `resolve-preflight`, while keeping real
+  Codex/Claude runs as guarded manual/release evidence. Guard script, workflow
+  text coverage, and dynamic layout script tests passed with
   `pytest -q test/test_dynamic_layout_smoke_script.py
-  test/test_guarded_dynamic_layout_provider_smoke_script.py` (`43 passed`), and
-  the source-wrapper CI-equivalent fake smoke
-  `/home/bfly/yunwei/test_ccb2/ci-core-dynamic-layout-local-latest.json` passed
+  test/test_guarded_dynamic_layout_provider_smoke_script.py
+  test/test_guarded_core_dynamic_layout_smoke_script.py` (`49 passed`), and the
+  source-wrapper guard fake smoke
+  `/home/bfly/yunwei/test_ccb2/guarded-core-dynamic-layout-local-latest.json` passed
   all nine flows with `dynamic_layout_smoke_status: ok`.
 - Verified dynamic lifecycle policy smoke for park/resume and auto release:
   `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with

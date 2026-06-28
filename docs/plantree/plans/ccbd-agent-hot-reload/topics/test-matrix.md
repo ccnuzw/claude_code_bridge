@@ -319,20 +319,23 @@ Date: 2026-05-29
     `claude` with `fake` static filler panes.
 - 2026-06-28 core fake-provider CI gate evidence:
   - `.github/workflows/test.yml` now runs `Guard core dynamic layout smoke` on
-    Ubuntu/Python 3.11 with fake provider, covering `same-window-continuous`,
-    `batch-release`, `move-agent`, `move-shared-source`,
-    `window-class-continuous`, `arrange-window`, `mixed-move-add`,
-    `batch-move-window-class`, and `resolve-preflight`.
-  - The workflow gate asserts top-level flow checks plus critical per-flow
+    Ubuntu/Python 3.11 with fake provider through
+    `scripts/guarded_core_dynamic_layout_smoke.py`, covering
+    `same-window-continuous`, `batch-release`, `move-agent`,
+    `move-shared-source`, `window-class-continuous`, `arrange-window`,
+    `mixed-move-add`, `batch-move-window-class`, and `resolve-preflight`.
+  - The guard script asserts top-level flow checks plus critical per-flow
     invariants for pane preservation, fixed-column geometry, empty-window
-    cleanup, moved/new agent ask reachability, mixed move-plus-add planning,
-    batch window-class move, and resolve/preflight loop-capacity cleanup.
+    cleanup, moved/new agent ask reachability, shared-source window retention,
+    mixed move-plus-add planning, batch window-class move, and
+    resolve/preflight loop-capacity cleanup.
   - `pytest -q test/test_dynamic_layout_smoke_script.py
-    test/test_guarded_dynamic_layout_provider_smoke_script.py` passed with
-    `43 passed`.
-  - `/home/bfly/yunwei/test_ccb2/ci-core-dynamic-layout-local-latest.json`
-    passed the same nine-flow fake-provider bundle from the external
-    `test_ccb2` source-wrapper environment with
+    test/test_guarded_dynamic_layout_provider_smoke_script.py
+    test/test_guarded_core_dynamic_layout_smoke_script.py` passed with
+    `49 passed`.
+  - `/home/bfly/yunwei/test_ccb2/guarded-core-dynamic-layout-local-latest.json`
+    passed the same nine-flow fake-provider guard from the external `test_ccb2`
+    source-wrapper environment with
     `dynamic_layout_smoke_status: ok`.
 - 2026-06-28 dynamic lifecycle smoke evidence:
   - `pytest -q test/test_dynamic_agent_lifecycle_smoke_script.py` passed with

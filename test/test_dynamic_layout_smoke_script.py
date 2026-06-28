@@ -2235,72 +2235,16 @@ def test_tests_workflow_runs_core_dynamic_layout_fake_smoke() -> None:
     text = Path(".github/workflows/test.yml").read_text(encoding="utf-8")
 
     assert "Guard core dynamic layout smoke" in text
-    assert "scripts/dynamic_layout_smoke.py" in text
+    assert "scripts/guarded_core_dynamic_layout_smoke.py" in text
     assert "ci-core-dynamic-layout" in text
     assert "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'" in text
     assert "--provider fake" in text
-    assert "--flow same-window-continuous" in text
-    assert "--flow batch-release" in text
-    assert "--flow move-agent" in text
-    assert "--flow move-shared-source" in text
-    assert "--flow window-class-continuous" in text
-    assert "--flow arrange-window" in text
-    assert "--flow mixed-move-add" in text
-    assert "--flow batch-move-window-class" in text
-    assert "--flow resolve-preflight" in text
     assert 'payload["dynamic_layout_smoke_status"] == "ok"' in text
     assert '"mixed-move-add",' in text
     assert '"batch-move-window-class",' in text
     assert '"resolve-preflight",' in text
-    assert 'payload["checks"]["same_window_continuous_1_to_6_to_1"] is True' in text
-    assert 'payload["checks"]["batch_release_multi_window"] is True' in text
-    assert 'payload["checks"]["move_agent_to_new_window"] is True' in text
-    assert 'payload["checks"]["move_agent_shared_source"] is True' in text
-    assert 'payload["checks"]["window_class_continuous_1_to_8_to_1"] is True' in text
-    assert 'payload["checks"]["arrange_window_disturb_restore"] is True' in text
-    assert 'payload["checks"]["mixed_move_add_explicit_windows"] is True' in text
-    assert 'payload["checks"]["batch_move_window_class"] is True' in text
-    assert 'payload["checks"]["resolve_preflight_chain"] is True' in text
-    assert 'checks["grew_to_six_order"] is True' in text
-    assert 'checks["observed_grew_to_six_panes"] is True' in text
-    assert 'checks["observed_grow_geometry"] is True' in text
-    assert 'checks["observed_grow_indexes_contiguous"] is True' in text
-    assert 'checks["observed_grow_min_width"] is True' in text
-    assert 'checks["observed_grow_fixed_columns"] is True' in text
-    assert 'checks["shrunk_to_one_order"] is True' in text
-    assert 'checks["observed_shrunk_to_one_pane"] is True' in text
-    assert 'checks["observed_shrink_geometry"] is True' in text
-    assert 'move["move_preserved_helper_pane"] is True' in text
-    assert 'move["return_preserved_helper_pane"] is True' in text
-    assert 'move["return_removed_review_window"] is True' in text
-    assert 'move["release_kept_main_window"] is True' in text
-    assert 'batch["batch_remove_agent_plan"] is True' in text
-    assert 'batch["batch_removed_agent_panes_match"] is True' in text
-    assert 'batch["batch_removed_windows"] is True' in text
-    assert 'batch["survivor_panes_preserved"] is True' in text
-    assert 'batch["after_windows"] is True' in text
-    assert 'batch["survivor_ask_accepted"] is True' in text
-    assert 'batch["main_ask_accepted"] is True' in text
-    assert 'window_class["page1_order"] is True' in text
-    assert 'window_class["page2_order"] is True' in text
-    assert 'window_class["page2_removed_when_empty"] is True' in text
-    assert 'window_class["after_page2_removed"] is True' in text
-    assert 'arrange["disturb_made_non_fixed"] is True' in text
-    assert 'arrange["arrange_status_ok"] is True' in text
-    assert 'arrange["arrange_fixed_columns"] is True' in text
-    assert 'arrange["pane_ids_preserved"] is True' in text
-    assert 'mixed["reload_published"] is True' in text
-    assert 'mixed["moved_panes_preserved"] is True' in text
-    assert 'mixed["new_beta_pane_created"] is True' in text
-    assert 'mixed["review_window_removed"] is True' in text
-    assert 'batch_move["move_plan_class"] is True' in text
-    assert 'batch_move["moved_agent_panes_match"] is True' in text
-    assert 'batch_move["removed_review_window"] is True' in text
-    assert 'resolve["class_resolve_overflow"] is True' in text
-    assert 'resolve["class_add_matches_resolve"] is True' in text
-    assert 'resolve["node_resolve_execution_window"] is True' in text
-    assert 'resolve["capacity_release_clean"] is True' in text
     step = text.split("Guard core dynamic layout smoke", 1)[1].split("Guard dynamic agent lifecycle smoke", 1)[0]
     assert "--run" not in step
     assert "codex" not in step
     assert "claude" not in step
+    assert 'payload["checks"]["mixed_move_add_explicit_windows"] is True' not in step

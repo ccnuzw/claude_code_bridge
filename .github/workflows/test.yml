@@ -78,22 +78,14 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-core-dynamic-layout-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          python scripts/dynamic_layout_smoke.py \
+          python scripts/guarded_core_dynamic_layout_smoke.py \
             --test-root "$smoke_root" \
             --project-prefix ci-core-dynamic-layout \
             --ccb-test "$GITHUB_WORKSPACE/ccb_test" \
             --provider fake \
-            --flow same-window-continuous \
-            --flow batch-release \
-            --flow move-agent \
-            --flow move-shared-source \
-            --flow window-class-continuous \
-            --flow arrange-window \
-            --flow mixed-move-add \
-            --flow batch-move-window-class \
-            --flow resolve-preflight \
             --command-timeout 240 \
-            --reset > "$RUNNER_TEMP/core-dynamic-layout-smoke.json"
+            --reset \
+            --json | tee "$RUNNER_TEMP/core-dynamic-layout-smoke.json"
           python - "$RUNNER_TEMP/core-dynamic-layout-smoke.json" <<'PY'
           import json
           import sys
@@ -112,119 +104,6 @@ jobs:
               "batch-move-window-class",
               "resolve-preflight",
           ]
-          assert payload["checks"]["same_window_continuous_1_to_6_to_1"] is True
-          assert payload["checks"]["batch_release_multi_window"] is True
-          assert payload["checks"]["move_agent_to_new_window"] is True
-          assert payload["checks"]["move_agent_shared_source"] is True
-          assert payload["checks"]["window_class_continuous_1_to_8_to_1"] is True
-          assert payload["checks"]["arrange_window_disturb_restore"] is True
-          assert payload["checks"]["mixed_move_add_explicit_windows"] is True
-          assert payload["checks"]["batch_move_window_class"] is True
-          assert payload["checks"]["resolve_preflight_chain"] is True
-          results = {item["flow"]: item for item in payload["results"]}
-          result = results["same_window_continuous_1_to_6_to_1"]
-          checks = result["checks"]
-          assert result["flow"] == "same_window_continuous_1_to_6_to_1"
-          assert checks["grew_to_six_order"] is True
-          assert checks["observed_grew_to_six_panes"] is True
-          assert checks["observed_grow_geometry"] is True
-          assert checks["observed_grow_indexes_contiguous"] is True
-          assert checks["observed_grow_min_width"] is True
-          assert checks["observed_grow_fixed_columns"] is True
-          assert checks["release_remove_agent_plans"] is True
-          assert checks["release_reflowed_main"] is True
-          assert checks["main_pane_preserved"] is True
-          assert checks["shrunk_to_one_order"] is True
-          assert checks["observed_shrunk_to_one_pane"] is True
-          assert checks["observed_shrink_geometry"] is True
-          assert checks["dynamic_agents_cleaned"] is True
-          assert checks["ask_main_accepted"] is True
-          move = results["move_agent_to_new_window"]["checks"]
-          assert move["add_agent_plan"] is True
-          assert move["pre_move_ask_accepted"] is True
-          assert move["pre_move_ask_terminal"] is True
-          assert move["move_plan_class"] is True
-          assert move["move_preserved_helper_pane"] is True
-          assert move["move_window_evidence"] is True
-          assert move["post_move_ask_accepted"] is True
-          assert move["post_move_ask_terminal"] is True
-          assert move["return_preserved_helper_pane"] is True
-          assert move["return_removed_review_window"] is True
-          assert move["return_ask_accepted"] is True
-          assert move["return_ask_terminal"] is True
-          assert move["release_kept_main_window"] is True
-          assert move["dynamic_agents_cleaned"] is True
-          batch = results["batch_release_multi_window"]["checks"]
-          assert batch["batch_remove_agent_plan"] is True
-          assert batch["batch_removed_agents"] is True
-          assert batch["batch_removed_agent_panes_match"] is True
-          assert batch["batch_removed_windows"] is True
-          assert batch["survivor_panes_preserved"] is True
-          assert batch["after_windows"] is True
-          assert batch["survivor_ask_accepted"] is True
-          assert batch["main_ask_accepted"] is True
-          window_class = results["window_class_continuous_1_to_8_to_1"]["checks"]
-          assert window_class["add_plan_sequence"] is True
-          assert window_class["page1_order"] is True
-          assert window_class["page2_order"] is True
-          assert window_class["page1_observed_fixed_columns"] is True
-          assert window_class["page2_observed_fixed_columns"] is True
-          assert window_class["helper7_ask_accepted"] is True
-          assert window_class["helper7_ask_terminal"] is True
-          assert window_class["release_remove_agent_plans"] is True
-          assert window_class["page2_removed_when_empty"] is True
-          assert window_class["after_page2_removed"] is True
-          assert window_class["dynamic_agents_cleaned"] is True
-          arrange = results["arrange_window_disturb_restore"]["checks"]
-          assert arrange["disturb_made_non_fixed"] is True
-          assert arrange["arrange_status_ok"] is True
-          assert arrange["arrange_reflowed_plan"] is True
-          assert arrange["arrange_fixed_columns"] is True
-          assert arrange["pane_ids_preserved"] is True
-          assert arrange["helper_ask_accepted"] is True
-          assert arrange["helper_ask_terminal"] is True
-          assert arrange["dynamic_agents_cleaned"] is True
-          mixed = results["mixed_move_add_explicit_windows"]["checks"]
-          assert mixed["reload_published"] is True
-          assert mixed["reload_move_plan"] is True
-          assert mixed["reload_namespace_planned_mixed_steps"] is True
-          assert mixed["moved_panes_preserved"] is True
-          assert mixed["new_beta_pane_created"] is True
-          assert mixed["review_window_removed"] is True
-          assert mixed["asks_terminal"] is True
-          batch_move = results["batch_move_window_class"]["checks"]
-          assert batch_move["move_plan_class"] is True
-          assert batch_move["move_target_windows"] is True
-          assert batch_move["moved_agent_panes_match"] is True
-          assert batch_move["removed_review_window"] is True
-          assert batch_move["zeta_ask_accepted"] is True
-          assert batch_move["alpha_ask_accepted"] is True
-          resolve = results["resolve_preflight_chain"]["checks"]
-          assert resolve["class_resolve_overflow"] is True
-          assert resolve["class_add_matches_resolve"] is True
-          assert resolve["class_add_window_plan"] is True
-          assert resolve["class_release_removed_window"] is True
-          assert resolve["class_after_clean"] is True
-          assert resolve["node_resolve_execution_window"] is True
-          assert resolve["capacity_add_window_plan"] is True
-          assert resolve["node_window_visible"] is True
-          assert resolve["capacity_release_clean"] is True
-          print(
-              json.dumps(
-                  {
-                      "dynamic_layout_smoke_status": payload["dynamic_layout_smoke_status"],
-                      "flows": payload["flows"],
-                      "same_window_checks": checks,
-                      "move_checks": move,
-                      "window_class_checks": window_class,
-                      "arrange_checks": arrange,
-                      "mixed_checks": mixed,
-                      "batch_move_checks": batch_move,
-                      "resolve_checks": resolve,
-                  },
-                  sort_keys=True,
-              )
-          )
           PY
 
       - name: Guard dynamic agent lifecycle smoke
