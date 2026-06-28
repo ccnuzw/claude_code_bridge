@@ -155,6 +155,20 @@ pub struct AgentView {
     pub reason: Option<String>,
     #[serde(default)]
     pub queue_depth: u64,
+    #[serde(default)]
+    pub reload_drain: Option<ReloadDrainView>,
+    #[serde(default)]
+    pub dispatch_blocked_by_reload_drain: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+pub struct ReloadDrainView {
+    #[serde(default)]
+    pub intent_kind: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, PartialEq)]
@@ -305,7 +319,14 @@ mod tests {
               }
             },
             "windows": [{"name": "main", "active": true, "agents": ["agent1"]}],
-            "agents": [{"name": "agent1", "provider": "codex", "window": "main", "activity_state": "idle"}],
+            "agents": [{
+              "name": "agent1",
+              "provider": "codex",
+              "window": "main",
+              "activity_state": "idle",
+              "reload_drain": {"intent_kind": "unload", "phase": "draining", "status": "waiting"},
+              "dispatch_blocked_by_reload_drain": true
+            }],
             "comms": [{
               "id": "job1",
               "sender": "user",
@@ -346,6 +367,15 @@ mod tests {
         assert_eq!(response.view.comms[0].status_label, "work");
         assert_eq!(response.view.comms[0].body_preview, "work");
         assert!(response.view.comms[0].recoverable);
+        assert!(response.view.agents[0].dispatch_blocked_by_reload_drain);
+        assert_eq!(
+            response.view.agents[0].reload_drain.as_ref().map(|record| (
+                record.intent_kind.as_str(),
+                record.phase.as_str(),
+                record.status.as_str(),
+            )),
+            Some(("unload", "draining", "waiting"))
+        );
         assert_eq!(
             response.view.comms[0].block_reason.as_deref(),
             Some("pane_dead")

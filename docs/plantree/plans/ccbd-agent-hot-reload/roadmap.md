@@ -331,6 +331,17 @@ Date: 2026-06-28
   `scripts/reload_busy_drain_smoke.py --provider fake --auto-retry
   --project-name reload-busy-drain-auto-retry-smoke --reset` from
   `/home/bfly/yunwei/test_ccb2`.
+- Closed the first sidebar drain visibility gap: the Rust sidebar helper now
+  parses `reload_drain` and `dispatch_blocked_by_reload_drain` from
+  `project_view` agent rows and renders draining agents with a warning-colored
+  `drain:<status>` marker. Verification passed with `cargo fmt
+  --manifest-path tools/ccb-agent-sidebar/Cargo.toml --check`,
+  `cargo test --manifest-path tools/ccb-agent-sidebar/Cargo.toml` (`73
+  passed`), and external source-wrapper fake smoke
+  `scripts/reload_busy_drain_smoke.py --provider fake --project-name
+  reload-busy-drain-sidebar-visibility --reset` from
+  `/home/bfly/yunwei/test_ccb2`, which proved active drain recording, ask
+  rejection while draining, retry publish, and final drain cleanup.
 
 ## In Progress
 
@@ -346,8 +357,9 @@ Date: 2026-06-28
   lifecycle park/resume, multi-window batch-release, window-class-continuous,
   mixed move-plus-add, batch window-class move, arrange-window, and
   shared-source move, plus resolve/preflight loop-capacity smokes have passed;
-  the core fake-provider dynamic layout bundle is now a CI gate. Daemon-pushed
-  sidebar refresh, replacement, arbitrary layout reshapes, and background config
+  the core fake-provider dynamic layout bundle is now a CI gate. Sidebar helper
+  now renders active drain status from `project_view`. Daemon-pushed sidebar
+  refresh, replacement, arbitrary layout reshapes, and background config
   watching remain deferred.
 
 ## Next
@@ -363,11 +375,10 @@ Date: 2026-06-28
    cleanup. The fake busy-remove drain path now has a dedicated CI smoke; the
    next matrix expansion should decide whether a guarded real-provider variant
    is useful or too slow for routine gates.
-3. Validate whether sidebar's existing project-view polling/refresh path is
-   enough for drain status visibility; add a lightweight daemon-pushed sidebar
-   refresh signal only if manual validation proves it is needed.
-4. Expose replacement only after unload semantics are safe; busy replacement
+3. Expose replacement only after unload semantics are safe; busy replacement
    remains pending with explicit bounds.
+4. Keep daemon-pushed sidebar refresh deferred unless a real tmux visual check
+   shows project-view polling is too slow for drain/reload state changes.
 
 ## Deferred
 

@@ -1289,30 +1289,62 @@ fn window_row(window: &WindowView) -> ListItem<'static> {
 }
 
 fn agent_row(agent: &AgentView, theme: SidebarTheme) -> ListItem<'static> {
-    let state = if agent.activity_state.is_empty() {
+    let drain_label = reload_drain_label(agent);
+    let draining = drain_label.is_some();
+    let state = if draining {
+        "pending"
+    } else if agent.activity_state.is_empty() {
         "offline"
     } else {
         agent.activity_state.as_str()
     };
-    let symbol = agent
-        .activity_symbol
-        .as_deref()
-        .unwrap_or_else(|| activity_symbol(state));
+    let symbol = if draining {
+        "◐"
+    } else {
+        agent
+            .activity_symbol
+            .as_deref()
+            .unwrap_or_else(|| activity_symbol(state))
+    };
+    let explicit_color = if draining {
+        Some("yellow")
+    } else {
+        agent.activity_color.as_deref()
+    };
     let active = if agent.active { "*" } else { " " };
-    ListItem::new(Line::from(vec![
+    let mut spans = vec![
         Span::raw("  "),
         Span::styled(
             symbol.to_string(),
-            Style::default().fg(activity_color_with_theme(
-                state,
-                agent.activity_color.as_deref(),
-                theme,
-            )),
+            Style::default().fg(activity_color_with_theme(state, explicit_color, theme)),
         ),
         Span::raw(format!("{active} ")),
         Span::raw(agent.name.clone()),
         Span::raw(format!(" [{}]", agent.provider)),
-    ]))
+    ];
+    if let Some(label) = drain_label {
+        spans.push(Span::styled(
+            format!(" {label}"),
+            Style::default().fg(theme.warning),
+        ));
+    }
+    ListItem::new(Line::from(spans))
+}
+
+fn reload_drain_label(agent: &AgentView) -> Option<String> {
+    if !agent.dispatch_blocked_by_reload_drain && agent.reload_drain.is_none() {
+        return None;
+    }
+    let status = agent
+        .reload_drain
+        .as_ref()
+        .map(|record| record.status.trim())
+        .unwrap_or_default();
+    if status.is_empty() {
+        Some("drain".to_string())
+    } else {
+        Some(format!("drain:{status}"))
+    }
 }
 
 fn draw_comms(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
@@ -1994,6 +2026,34 @@ mod tests {
             .find(|cell| cell.symbol() == "⌫")
             .expect("clear action should render");
         assert_eq!(clear_cell.fg, Color::Cyan);
+    }
+
+    #[test]
+    fn renders_reload_drain_agent_status() {
+        let mut response = sample_response_with_two_agents();
+        let agent = response
+            .view
+            .agents
+            .iter_mut()
+            .find(|agent| agent.name == "agent2")
+            .expect("sample response should include agent2");
+        agent.dispatch_blocked_by_reload_drain = true;
+        agent.reload_drain = Some(crate::model::ReloadDrainView {
+            intent_kind: "unload".into(),
+            phase: "draining".into(),
+            status: "waiting".into(),
+        });
+
+        let mut app = SidebarApp::new("main".into());
+        app.apply_response(response);
+
+        let backend = TestBackend::new(80, 14);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains("◐  agent2 [claude] drain:waiting"));
+        assert!(!rendered.contains("●  agent2 [claude]"));
     }
 
     #[test]

@@ -155,6 +155,9 @@ Date: 2026-05-29
     agent rows with `reload_drain` and
     `dispatch_blocked_by_reload_drain=true`; project-view cache reuse is
     invalidated when `reload-drain.json` appears or changes.
+  - the Rust sidebar helper parses those row-level drain fields and renders a
+    compact `drain:<status>` marker so a user can see why a draining agent is
+    temporarily dispatch-blocked.
 - Handler graph routing:
   - after graph replacement, `submit`, `project_view`, `ping`, and focus
     handlers resolve the new graph;
@@ -222,6 +225,9 @@ Date: 2026-05-29
   - active reload drains appear in `project_view.reload_drains` and on the
     affected agent row, including long-TTL cache invalidation when the drain
     file changes;
+  - sidebar helper rendering includes row-level active drain status from
+    `project_view`, currently covered by the sidebar crate unit test plus the
+    external fake busy-drain smoke evidence;
   - sidebar refresh control and `r` shortcut submit non-dry-run reload and then
     refresh project view;
   - daemon-pushed sidebar refresh remains deferred unless later manual
