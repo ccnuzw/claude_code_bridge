@@ -11,7 +11,7 @@ void main() {
   testWidgets('readable terminal history scrolls through retained blocks', (
     tester,
   ) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 
@@ -48,7 +48,7 @@ void main() {
   testWidgets('tmux history input and output appear as compact chat bubbles', (
     tester,
   ) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 

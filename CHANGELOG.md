@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v8.0.1 (2026-06-28)
+
+### Simplified CCB Mobile Onboarding
+
+- **One-Command Mobile Setup**: `ccb update mobile` now checks Tailscale,
+  optionally guides install/login, starts the server-wide loopback mobile
+  gateway, starts Tailscale Serve, and prints a terminal pairing QR directly.
+- **Phone First Launch Simplified**: CCB Mobile now opens to setup guidance,
+  Tailscale download instructions, and a QR scan action when no pairing profile
+  is stored, instead of defaulting ordinary users into the demo project.
+- **Stored Pairing Auto-Activation**: when a saved gateway profile exists, the
+  app activates it on launch and opens the server-wide mounted project list.
+- **Release Surface Synchronized**: VERSION, package metadata, mobile app
+  version metadata, README links, workflow defaults, and APK download URLs are
+  aligned for 8.0.1.
+
 ## v8.0.0 (2026-06-27)
 
 ### CCB Mobile Monorepo Release

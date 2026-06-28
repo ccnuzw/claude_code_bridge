@@ -343,7 +343,7 @@ void main() {
   testWidgets('agent tap selects and explicit action opens fake terminal', (
     tester,
   ) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 
@@ -367,7 +367,7 @@ void main() {
   testWidgets('chat composer preserves drafts per selected agent', (
     tester,
   ) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 

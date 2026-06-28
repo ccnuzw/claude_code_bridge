@@ -7,7 +7,7 @@ import 'support/project_home_test_driver.dart';
 
 void main() {
   testWidgets('renders CCB project and agent fixture', (tester) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
 
     expect(find.text('CCB Mobile'), findsNothing);
@@ -65,7 +65,7 @@ void main() {
 
   testWidgets('wide layout shows project and agent sidebars', (tester) async {
     await setTestSurfaceSize(tester, const Size(1200, 800));
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
 
     expect(
@@ -105,7 +105,7 @@ void main() {
   testWidgets('mobile layout collapses agents and composer independently', (
     tester,
   ) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 
@@ -173,7 +173,7 @@ void main() {
   ) async {
     await setTestSurfaceSize(tester, const Size(844, 390));
     setTestViewInsets(tester, const EdgeInsets.only(bottom: 120));
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 
@@ -201,7 +201,7 @@ void main() {
     tester,
   ) async {
     await setTestSurfaceSize(tester, const Size(1200, 800));
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('wide-project-column')), findsOneWidget);

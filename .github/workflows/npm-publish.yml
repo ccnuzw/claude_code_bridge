@@ -6,7 +6,7 @@ on:
       tag:
         description: "Release tag to publish"
         required: true
-        default: "v8.0.0"
+        default: "v8.0.1"
   push:
     tags:
       - "v*.*.*"
@@ -58,7 +58,17 @@ jobs:
           TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          required='["SHA256SUMS","ccb-linux-x86_64.tar.gz","ccb-macos-universal.tar.gz"]'
+          required="$(node - <<'NODE'
+          const tag = process.env.TAG_NAME;
+          console.log(JSON.stringify([
+            "SHA256SUMS",
+            "ccb-linux-x86_64.tar.gz",
+            "ccb-macos-universal.tar.gz",
+            `ccb-mobile-${tag}.apk`,
+            `ccb-mobile-${tag}.json`,
+          ]));
+          NODE
+          )"
           for attempt in $(seq 1 80); do
             if assets="$(gh release view "$TAG_NAME" --json assets --jq '[.assets[].name] | sort' 2>/dev/null)"; then
               if ASSETS="$assets" REQUIRED="$required" node - <<'NODE'

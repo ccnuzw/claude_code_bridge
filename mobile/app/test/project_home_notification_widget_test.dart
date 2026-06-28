@@ -10,7 +10,7 @@ void main() {
   testWidgets('notification center deep-links to agent content and Comms', (
     tester,
   ) async {
-    await tester.pumpWidget(const CcbMobileApp());
+    await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('notification-center-action')));
