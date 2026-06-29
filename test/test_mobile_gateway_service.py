@@ -33,18 +33,22 @@ class _FakeCcbdClient:
         project_id: str = 'proj-demo',
         project_root: str = '/srv/demo',
         display_name: str = 'demo',
+        health: str = 'healthy',
+        mount_state: str = 'mounted',
     ) -> None:
         self.project_id = project_id
         self.project_root = project_root
         self.display_name = display_name
+        self.health = health
+        self.mount_state = mount_state
         self.calls: list[tuple[object, ...]] = []
 
     def ping(self, target: str = 'ccbd') -> dict[str, object]:
         self.calls.append(('ping', target))
         return {
             'project_id': self.project_id,
-            'mount_state': 'mounted',
-            'health': 'healthy',
+            'mount_state': self.mount_state,
+            'health': self.health,
             'namespace_epoch': 4,
             'namespace_tmux_socket_path': '/tmp/ccb-demo/tmux.sock',
             'namespace_tmux_session_name': 'ccb-demo',
@@ -318,7 +322,7 @@ def test_projects_payload_lists_registry_projects_without_exposing_tmux_socket()
     assert second.calls == [('ping', 'ccbd')]
 
 
-def test_projects_payload_keeps_healthy_projects_when_registry_has_unreachable_project() -> None:
+def test_projects_payload_omits_unreachable_registry_projects() -> None:
     healthy = _FakeCcbdClient(
         project_id='proj-one',
         project_root='/srv/one',
@@ -348,18 +352,61 @@ def test_projects_payload_keeps_healthy_projects_when_registry_has_unreachable_p
 
     assert [item['id'] for item in projects['projects']] == [
         'proj-one',
-        'proj-stale',
     ]
     assert projects['projects'][0]['health'] == 'healthy'
     assert projects['projects'][0]['mount_state'] == 'mounted'
-    assert projects['projects'][1]['display_name'] == 'stale'
-    assert projects['projects'][1]['root'] == '/srv/stale'
-    assert projects['projects'][1]['health'] == 'unreachable'
-    assert projects['projects'][1]['mount_state'] == 'unavailable'
-    assert projects['projects'][1]['error'] == 'project unavailable'
     assert '/tmp/private.sock' not in json.dumps(projects)
     assert healthy.calls == [('ping', 'ccbd')]
     assert stale.calls == [('ping', 'ccbd')]
+
+
+def test_projects_payload_omits_registered_projects_that_are_not_mounted_and_healthy() -> None:
+    healthy = _FakeCcbdClient(
+        project_id='proj-one',
+        project_root='/srv/one',
+        display_name='one',
+    )
+    unmounted = _FakeCcbdClient(
+        project_id='proj-unmounted',
+        project_root='/srv/unmounted',
+        display_name='unmounted',
+        mount_state='unmounted',
+    )
+    degraded = _FakeCcbdClient(
+        project_id='proj-degraded',
+        project_root='/srv/degraded',
+        display_name='degraded',
+        health='degraded',
+    )
+    service = _service(
+        healthy,
+        project_registry=MobileGatewayProjectRegistry(
+            [
+                MobileGatewayProject(
+                    project_id='proj-one',
+                    project_root=Path('/srv/one'),
+                    ccbd_client_factory=lambda: healthy,
+                ),
+                MobileGatewayProject(
+                    project_id='proj-unmounted',
+                    project_root=Path('/srv/unmounted'),
+                    ccbd_client_factory=lambda: unmounted,
+                ),
+                MobileGatewayProject(
+                    project_id='proj-degraded',
+                    project_root=Path('/srv/degraded'),
+                    ccbd_client_factory=lambda: degraded,
+                ),
+            ]
+        ),
+    )
+
+    projects = service.projects_payload()
+
+    assert [item['id'] for item in projects['projects']] == ['proj-one']
+    assert healthy.calls == [('ping', 'ccbd')]
+    assert unmounted.calls == [('ping', 'ccbd')]
+    assert degraded.calls == [('ping', 'ccbd')]
 
 
 def test_project_view_redacts_server_tmux_evidence() -> None:

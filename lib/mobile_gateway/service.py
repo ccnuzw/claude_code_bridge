@@ -145,6 +145,8 @@ class MobileGatewayService:
         projects: list[dict[str, object]] = []
         for project in self._project_registry.projects():
             ccbd = self._project_list_health(project)
+            if not _project_available_for_mobile_list(ccbd):
+                continue
             item = {
                 'id': project.project_id,
                 'display_name': project.public_display_name,
@@ -1177,6 +1179,13 @@ def _ccbd_health_summary(payload: dict[str, object]) -> dict[str, object]:
         'namespace_epoch': payload.get('namespace_epoch'),
         'namespace_ui_attachable': payload.get('namespace_ui_attachable'),
     }
+
+
+def _project_available_for_mobile_list(payload: dict[str, object]) -> bool:
+    return (
+        str(payload.get('health') or '').strip().lower() == 'healthy'
+        and str(payload.get('mount_state') or '').strip().lower() == 'mounted'
+    )
 
 
 def _is_loopback_host(host: str) -> bool:
