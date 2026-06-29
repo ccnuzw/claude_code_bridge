@@ -166,31 +166,21 @@ def test_host_project_registry_can_merge_running_projects(tmp_path: Path, monkey
     ]
 
 
-def test_prepare_server_mobile_gateway_includes_running_projects(tmp_path: Path, monkeypatch) -> None:
+def test_prepare_server_mobile_gateway_uses_running_projects(tmp_path: Path, monkeypatch) -> None:
     fake = _FakeCcbdClient(
         project_id='proj-running',
         project_root='/srv/running',
         display_name='running',
     )
-    registry = MobileGatewayProjectRegistry(
-        [
-            MobileGatewayProject(
-                project_id='proj-running',
-                project_root=Path('/srv/running'),
-                ccbd_client_factory=lambda: fake,
-                display_name='running',
-            )
-        ]
+    running = MobileGatewayProject(
+        project_id='proj-running',
+        project_root=Path('/srv/running'),
+        ccbd_client_factory=lambda: fake,
+        display_name='running',
     )
-    seen: dict[str, object] = {}
-
-    def fake_load_mobile_gateway_project_registry(**kwargs):
-        seen.update(kwargs)
-        return registry
-
     monkeypatch.setattr(
-        'cli.services.mobile.load_mobile_gateway_project_registry',
-        fake_load_mobile_gateway_project_registry,
+        'cli.services.mobile.discover_running_mobile_gateway_projects',
+        lambda: (running,),
     )
     monkeypatch.setattr('cli.services.mobile.mobile_host_state_dir', lambda: tmp_path / 'mobile-state')
 
@@ -199,11 +189,21 @@ def test_prepare_server_mobile_gateway_includes_running_projects(tmp_path: Path,
         host_id='host-test',
     )
     try:
-        assert seen['include_running'] is True
         assert handle.summary['project_count'] == 1
         assert handle.summary['projects'][0]['display_name'] == 'running'
     finally:
         handle.close()
+
+
+def test_prepare_server_mobile_gateway_fails_without_running_projects(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr('cli.services.mobile.discover_running_mobile_gateway_projects', lambda: ())
+    monkeypatch.setattr('cli.services.mobile.mobile_host_state_dir', lambda: tmp_path / 'mobile-state')
+
+    with pytest.raises(ValueError, match='no running CCB projects'):
+        prepare_server_mobile_gateway(
+            SimpleNamespace(listen='127.0.0.1:0', public_url=None, route_provider='lan'),
+            host_id='host-test',
+        )
 
 
 def test_prepare_server_mobile_gateway_uses_host_registry_without_socket_leak(tmp_path: Path, monkeypatch) -> None:
