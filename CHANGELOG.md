@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+## v8.0.4 (2026-06-28)
+
+### CCB Mobile Project List Stability
+
+- **Server-Wide Project Listing Accelerated**: `/v1/projects` now checks
+  mounted project health concurrently while preserving registry order, avoiding
+  phone-side aborts when many CCB projects are registered.
+- **Client Disconnect Noise Reduced**: mobile gateway responses now quietly
+  ignore ordinary BrokenPipe/connection-reset writes after a phone disconnects
+  or times out.
+- **Release Surface Synchronized**: VERSION, package metadata, mobile app
+  version metadata, README links, workflow defaults, and APK download URLs are
+  aligned for 8.0.4.
+
+## v8.0.3 (2026-06-28)
+
+### npm Release Metadata Fix
+
+- **npm Provenance Metadata Fixed**: package metadata now points to the
+  canonical GitHub repository used by GitHub Actions, allowing npm provenance
+  validation to match the release workflow source.
+- **Release Surface Synchronized**: VERSION, package metadata, mobile app
+  version metadata, README links, workflow defaults, and APK download URLs are
+  aligned for 8.0.3.
+
+## v8.0.2 (2026-06-28)
+
+### CCB Mobile Tailnet Onboarding Fixes
+
+- **Tailscale Serve Approval Flow Fixed**: `ccb update mobile` now recognizes
+  the one-time Tailscale Serve enable URL and prints actionable next steps
+  instead of surfacing a raw timeout.
+- **Existing Serve Config Reused**: if the correct tailnet HTTPS proxy already
+  points to the loopback mobile gateway, `ccb update mobile` reuses it and
+  proceeds directly to the pairing QR instead of requiring operator privileges
+  on every run.
+- **Worktree Install Guard Fixed**: source worktree installs no longer copy the
+  `.git` worktree marker into the release install prefix, preventing installed
+  `ccb` from being mistaken for a source checkout.
+- **Release Surface Synchronized**: VERSION, package metadata, mobile app
+  version metadata, README links, workflow defaults, and APK download URLs are
+  aligned for 8.0.2.
+
+## v8.0.1 (2026-06-28)
+
+### Simplified CCB Mobile Onboarding
+
+- **One-Command Mobile Setup**: `ccb update mobile` now checks Tailscale,
+  optionally guides install/login, starts the server-wide loopback mobile
+  gateway, starts Tailscale Serve, and prints a terminal pairing QR directly.
+- **Phone First Launch Simplified**: CCB Mobile now opens to setup guidance,
+  Tailscale download instructions, and a QR scan action when no pairing profile
+  is stored, instead of defaulting ordinary users into the demo project.
+- **Stored Pairing Auto-Activation**: when a saved gateway profile exists, the
+  app activates it on launch and opens the server-wide mounted project list.
+- **Release Surface Synchronized**: VERSION, package metadata, mobile app
+  version metadata, README links, workflow defaults, and APK download URLs are
+  aligned for 8.0.1.
+
 ## v8.0.0 (2026-06-27)
 
 ### CCB Mobile Monorepo Release

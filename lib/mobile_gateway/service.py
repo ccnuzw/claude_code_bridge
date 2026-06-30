@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -47,6 +48,7 @@ _PAIRING_CAPABILITIES = (
 )
 _REDACTED_NAMESPACE_KEYS = ('socket_path', 'session_name')
 _DEFAULT_ROUTE_PROVIDER = 'lan'
+_PROJECT_LIST_HEALTH_WORKERS = 8
 _DEFAULT_PAIRING_SCOPES = (
     'view',
     'content',
@@ -143,8 +145,11 @@ class MobileGatewayService:
 
     def projects_payload(self) -> dict[str, object]:
         projects: list[dict[str, object]] = []
-        for project in self._project_registry.projects():
-            ccbd = self._project_list_health(project)
+        registry_projects = self._project_registry.projects()
+        health_by_project = self._project_list_health_by_project(registry_projects)
+        capabilities = self._capabilities()
+        for project in registry_projects:
+            ccbd = health_by_project[project.project_id]
             if not _project_available_for_mobile_list(ccbd):
                 continue
             item = {
@@ -153,7 +158,7 @@ class MobileGatewayService:
                 'root': str(project.project_root),
                 'health': str(ccbd.get('health') or 'unknown'),
                 'mount_state': str(ccbd.get('mount_state') or ''),
-                'capabilities': self._capabilities(),
+                'capabilities': capabilities,
             }
             if ccbd.get('error'):
                 item['error'] = str(ccbd.get('error') or '')
@@ -945,6 +950,23 @@ class MobileGatewayService:
             raise MobileGatewayError(_error_text(exc), status_code=503) from exc
         return dict(payload or {}) if isinstance(payload, dict) else {}
 
+    def _project_list_health_by_project(
+        self,
+        projects: tuple[MobileGatewayProject, ...],
+    ) -> dict[str, dict[str, object]]:
+        if len(projects) <= 1:
+            return {
+                project.project_id: self._project_list_health(project)
+                for project in projects
+            }
+        max_workers = min(_PROJECT_LIST_HEALTH_WORKERS, len(projects))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            health_items = executor.map(self._project_list_health, projects)
+            return {
+                project.project_id: health
+                for project, health in zip(projects, health_items)
+            }
+
     def _project_list_health(self, project: MobileGatewayProject) -> dict[str, object]:
         try:
             return self._ping_or_unavailable(project)
@@ -1121,7 +1143,10 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
             self.send_header('content-type', 'application/json; charset=utf-8')
             self.send_header('content-length', str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
         def _send_bytes(self, status: int, body: bytes, headers: dict[str, str]) -> None:
             self.send_response(status)
@@ -1129,7 +1154,10 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
                 self.send_header(key, value)
             self.send_header('content-length', str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
         def _read_json_body(self) -> dict[str, object]:
             length_text = self.headers.get('content-length') or '0'

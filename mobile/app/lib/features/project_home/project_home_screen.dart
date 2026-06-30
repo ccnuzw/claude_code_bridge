@@ -19,6 +19,7 @@ import 'project_home_connection_details_panel_host.dart';
 import 'project_home_focus_coordinator.dart';
 import 'project_home_lifecycle_coordinator.dart';
 import 'project_home_notification_target.dart';
+import 'project_home_onboarding.dart';
 import 'project_home_pairing_flow.dart';
 import 'project_home_pairing_form_controller.dart';
 import 'project_home_profile_bootstrapper.dart';
@@ -42,6 +43,8 @@ class ProjectHomeScreen extends StatelessWidget {
     this.gatewayTerminalTransportFactory =
         defaultGatewayTerminalTransportFactory,
     this.gatewayRouteDiagnostics = defaultGatewayRouteDiagnostics,
+    this.showOnboardingWhenUnpaired = false,
+    this.autoActivateStoredProfile = false,
     super.key,
   });
 
@@ -52,6 +55,8 @@ class ProjectHomeScreen extends StatelessWidget {
   final GatewayRepositoryFactory gatewayRepositoryFactory;
   final GatewayTerminalTransportFactory gatewayTerminalTransportFactory;
   final GatewayRouteDiagnosticsFactory gatewayRouteDiagnostics;
+  final bool showOnboardingWhenUnpaired;
+  final bool autoActivateStoredProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +68,8 @@ class ProjectHomeScreen extends StatelessWidget {
       gatewayRepositoryFactory: gatewayRepositoryFactory,
       gatewayTerminalTransportFactory: gatewayTerminalTransportFactory,
       gatewayRouteDiagnostics: gatewayRouteDiagnostics,
+      showOnboardingWhenUnpaired: showOnboardingWhenUnpaired,
+      autoActivateStoredProfile: autoActivateStoredProfile,
     );
   }
 }
@@ -76,6 +83,8 @@ class _ProjectHomeView extends StatefulWidget {
     required this.gatewayRepositoryFactory,
     required this.gatewayTerminalTransportFactory,
     required this.gatewayRouteDiagnostics,
+    required this.showOnboardingWhenUnpaired,
+    required this.autoActivateStoredProfile,
   });
 
   final MobileCcbRepository repository;
@@ -85,6 +94,8 @@ class _ProjectHomeView extends StatefulWidget {
   final GatewayRepositoryFactory gatewayRepositoryFactory;
   final GatewayTerminalTransportFactory gatewayTerminalTransportFactory;
   final GatewayRouteDiagnosticsFactory gatewayRouteDiagnostics;
+  final bool showOnboardingWhenUnpaired;
+  final bool autoActivateStoredProfile;
 
   @override
   State<_ProjectHomeView> createState() => _ProjectHomeViewState();
@@ -112,6 +123,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
   bool _loadingProfiles = false;
   bool _claimingPairing = false;
   bool _checkingRoute = false;
+  bool _profilesInitialized = false;
   CcbLifecycleAction? _runningLifecycleAction;
   final _runningLifecycleActionNotifier = ValueNotifier<CcbLifecycleAction?>(
     null,
@@ -152,6 +164,12 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
 
   @override
   Widget build(BuildContext context) {
+    if (_shouldShowUnpairedLoading) {
+      return const ProjectHomeOnboardingLoadingScaffold();
+    }
+    if (_shouldShowUnpairedOnboarding) {
+      return _buildOnboardingScaffold();
+    }
     final serverProjectsFuture = _serverProjectsFuture;
     if (_mode == AppRuntimeMode.pairedGateway &&
         _activeProjectId.isEmpty &&
@@ -231,6 +249,35 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
       }
     });
     return completer.future;
+  }
+
+  bool get _shouldShowUnpairedLoading =>
+      widget.showOnboardingWhenUnpaired &&
+      _mode == AppRuntimeMode.fake &&
+      !_profilesInitialized;
+
+  bool get _shouldShowUnpairedOnboarding =>
+      widget.showOnboardingWhenUnpaired &&
+      _mode == AppRuntimeMode.fake &&
+      _profilesInitialized &&
+      _profiles.isEmpty;
+
+  Widget _buildOnboardingScaffold() {
+    return ProjectHomeOnboardingScaffold(
+      gatewayUrlController: _pairingForm.gatewayUrlController,
+      pairingCodeController: _pairingForm.pairingCodeController,
+      deviceNameController: _pairingForm.deviceNameController,
+      routeKindListenable: _pairingForm.routeKindListenable,
+      claiming: _claimingPairing,
+      loadingProfiles: _loadingProfiles,
+      onRouteKindChanged: (value) {
+        setState(() {
+          _setPairingRouteKind(value);
+        });
+      },
+      onScan: _scanGatewayProfile,
+      onClaim: _claimGatewayProfile,
+    );
   }
 
   Widget _buildProjectLoadError(Object error) {
@@ -556,8 +603,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
           _profiles = result.profiles;
           _selectedProfile = result.selectedProfile;
           _loadingProfiles = false;
+          _profilesInitialized = true;
         });
-        final activateProfile = result.activateProfile;
+        final activateProfile =
+            result.activateProfile ??
+            (widget.autoActivateStoredProfile ? result.selectedProfile : null);
         if (activateProfile != null) {
           _activateGatewayProfile(activateProfile);
         }
@@ -586,10 +636,18 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
           _profiles = result.profiles;
           _selectedProfile = result.selectedProfile;
           _loadingProfiles = false;
+          _profilesInitialized = true;
         });
+        final activateProfile = widget.autoActivateStoredProfile
+            ? result.selectedProfile
+            : null;
+        if (activateProfile != null) {
+          _activateGatewayProfile(activateProfile);
+        }
       case ProjectHomeProfileLoadKind.failure:
         setState(() {
           _loadingProfiles = false;
+          _profilesInitialized = true;
         });
     }
   }

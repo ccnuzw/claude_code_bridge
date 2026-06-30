@@ -409,6 +409,53 @@ def test_projects_payload_omits_registered_projects_that_are_not_mounted_and_hea
     assert degraded.calls == [('ping', 'ccbd')]
 
 
+def test_projects_payload_checks_many_project_health_states_concurrently() -> None:
+    lock = threading.Lock()
+    activity = {'active': 0, 'max_active': 0}
+
+    class _SlowCcbdClient(_FakeCcbdClient):
+        def ping(self, target: str = 'ccbd') -> dict[str, object]:
+            with lock:
+                activity['active'] += 1
+                activity['max_active'] = max(activity['max_active'], activity['active'])
+            try:
+                time.sleep(0.04)
+                return super().ping(target)
+            finally:
+                with lock:
+                    activity['active'] -= 1
+
+    clients = [
+        _SlowCcbdClient(
+            project_id=f'proj-{index:02d}',
+            project_root=f'/srv/project-{index:02d}',
+            display_name=f'project-{index:02d}',
+        )
+        for index in range(12)
+    ]
+    service = _service(
+        clients[0],
+        project_registry=MobileGatewayProjectRegistry(
+            [
+                MobileGatewayProject(
+                    project_id=client.project_id,
+                    project_root=Path(client.project_root),
+                    ccbd_client_factory=lambda client=client: client,
+                )
+                for client in clients
+            ]
+        ),
+    )
+
+    projects = service.projects_payload()
+
+    assert [item['id'] for item in projects['projects']] == [
+        f'proj-{index:02d}' for index in range(12)
+    ]
+    assert activity['max_active'] > 1
+    assert all(client.calls == [('ping', 'ccbd')] for client in clients)
+
+
 def test_project_view_redacts_server_tmux_evidence() -> None:
     fake = _FakeCcbdClient()
     payload = _service(fake).project_view_payload('proj-demo')

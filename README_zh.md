@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.0-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.4-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -113,7 +113,7 @@ ccb update mobile
 <details>
 <summary><b>GitHub release 包和源码安装兜底</b></summary>
 
-如果当前环境不方便使用 npm，可以到 [Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) 下载与你的平台匹配的包，解压后安装：
+如果当前环境不方便使用 npm，可以到 [Releases](https://github.com/bfly123/claude_code_bridge/releases) 下载与你的平台匹配的包，解压后安装：
 
 ```bash
 tar -xzf ccb-*.tar.gz
@@ -124,8 +124,8 @@ cd ccb-*
 源码安装只建议开发或临时兜底使用：
 
 ```bash
-git clone https://github.com/SeemSeam/claude_codex_bridge.git
-cd claude_codex_bridge
+git clone https://github.com/bfly123/claude_code_bridge.git
+cd claude_code_bridge
 ./install.sh install
 ```
 
@@ -210,10 +210,10 @@ ccb
 
 ### Mobile App（Android Alpha）
 
-CCB 8.0.0 已把 Flutter 版 CCB Mobile 源码放入 [`mobile/`](mobile/)，
+CCB 8.0.4 已把 Flutter 版 CCB Mobile 源码放入 [`mobile/`](mobile/)，
 并在 GitHub Release 中发布 Android APK：
 
-- [下载 CCB Mobile v8.0.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.0/ccb-mobile-v8.0.0.apk)
+- [下载 CCB Mobile v8.0.4 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.4/ccb-mobile-v8.0.4.apk)
 - App 源码：[`mobile/app`](mobile/app)
 - 服务端 gateway 源码：[`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -231,9 +231,9 @@ ccb update mobile
 然后按终端提示：
 
 1. 在桌面/服务器和手机上安装并登录同一个 Tailscale tailnet。
-2. 启动 CCB 打印的 loopback-only Mobile gateway 和 Tailscale Serve 命令。
-3. 在 Android 手机上安装 APK。
-4. 打开 CCB Mobile，扫描配对二维码。
+2. 在 Android 手机上安装 APK。
+3. 在桌面/服务器运行 `ccb update mobile`。
+4. 打开 CCB Mobile，扫描终端打印的配对二维码。
 
 安全边界：
 
@@ -677,7 +677,7 @@ npm install -g @seemseam/ccb
 ccb update
 ```
 
-[GitHub Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) 仍作为不方便使用 npm 时的备选路径。源码 checkout 安装只适合开发、验证修复或临时兜底。
+[GitHub Releases](https://github.com/bfly123/claude_code_bridge/releases) 仍作为不方便使用 npm 时的备选路径。源码 checkout 安装只适合开发、验证修复或临时兜底。
 
 #### 卸载
 
@@ -742,6 +742,50 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v8.0.4</b> - CCB Mobile 项目列表稳定性</summary>
+
+- server-wide mobile gateway 的 `/v1/projects` 现在会并发检查已挂载项目健康状态，
+  同时保持 registry 顺序，避免项目较多时手机端加载超时或连接中断。
+- 手机断开或超时时，mobile gateway 不再为普通 BrokenPipe/connection reset
+  写出刷 traceback。
+
+</details>
+
+<details>
+<summary><b>v8.0.3</b> - npm Release Metadata 修复</summary>
+
+- 修复 npm provenance metadata，使 `@seemseam/ccb` 的发布仓库与 GitHub
+  Actions 使用的 canonical 仓库一致。
+- 同步 VERSION、package metadata、mobile app version metadata、README 链接、
+  workflow 默认值和 APK 下载链接到 8.0.3。
+
+</details>
+
+<details>
+<summary><b>v8.0.2</b> - Mobile Tailnet Onboarding 修复</summary>
+
+- 正确识别 Tailscale Serve 一次性授权链接，不再把原始 timeout 暴露给用户。
+- 如果 `:8787` 的 Tailscale Serve 代理已经正确指向 loopback mobile gateway，
+  `ccb update mobile` 会直接复用并进入配对二维码流程。
+- 修复 source worktree 安装时误复制 `.git` worktree 标记的问题，避免安装版
+  `ccb` 被误判为源码 checkout。
+
+</details>
+
+<details>
+<summary><b>v8.0.1</b> - CCB Mobile 极简配对</summary>
+
+- 将 `ccb update mobile` 收敛为唯一面向普通用户的设置入口：检测
+  Tailscale、引导登录/安装、启动 server-wide loopback gateway 和 Tailscale
+  Serve，并直接在终端打印配对二维码。
+- 手机端首次启动不再进入 fake/demo 项目，而是显示配对说明、Tailscale 下载提示
+  和扫码按钮。
+- 检测到已保存 pairing profile 后，手机端会自动进入 server-wide 已挂载项目列表，
+  降低普通手机使用的配置压力。
+
+</details>
+
+<details>
 <summary><b>v8.0.0</b> - CCB Mobile Monorepo 发布</summary>
 
 - Flutter 版 CCB Mobile 源码正式进入本仓库，并在 GitHub Release 中发布
