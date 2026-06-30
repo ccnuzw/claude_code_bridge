@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v8.0.5 (2026-06-30)
+## v8.0.6 (2026-06-30)
 
 ### CCB Mobile Real Project Chat Stabilization
 
@@ -12,9 +12,13 @@
 - **Server-Wide Mobile Gateway Integrated**: includes the latest server-wide
   project listing, native provider transcript, provider runtime status, and
   mobile terminal pane input fixes from the CCB source line.
+- **Mobile Pairing Polished**: `ccb update mobile` now prints a compact
+  terminal QR instead of a full-screen QR, the Android APK restores the CCB
+  bridge launcher icon, and the QR scanner shows actionable retry/manual setup
+  fallback instead of raw native camera errors.
 - **Release Surface Synchronized**: VERSION, package metadata, mobile app
   version metadata, README links, workflow defaults, and APK download URLs are
-  aligned for 8.0.5.
+  aligned for 8.0.6.
 
 ## v8.0.4 (2026-06-28)
 

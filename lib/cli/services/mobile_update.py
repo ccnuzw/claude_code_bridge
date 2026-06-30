@@ -22,7 +22,7 @@ DEFAULT_MOBILE_GATEWAY_LISTEN = "127.0.0.1:8787"
 CCB_MOBILE_APP_DOWNLOAD_URL_ENV = "CCB_MOBILE_APP_DOWNLOAD_URL"
 DEFAULT_CCB_MOBILE_APP_DOWNLOAD_URL = (
     "https://github.com/bfly123/claude_code_bridge/releases/download/"
-    "v8.0.5/ccb-mobile-v8.0.5.apk"
+    "v8.0.6/ccb-mobile-v8.0.6.apk"
 )
 TAILSCALE_LINUX_INSTALL_COMMAND = (
     "sh",
@@ -176,7 +176,9 @@ def run_mobile_update_onboarding(
     use_ansi = (
         (print_fn is print and sys.stdout.isatty()) if qr_ansi is None else qr_ansi
     )
-    for line in render_terminal_qr(qr_payload, ansi=use_ansi):
+    for line in render_terminal_qr(
+        qr_payload, ansi=use_ansi, quiet_zone=2, compact=True
+    ):
         print_fn(line)
     print_fn("")
     _print_pairing_fallback(handle.summary, print_fn=print_fn)

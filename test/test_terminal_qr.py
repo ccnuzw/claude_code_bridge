@@ -28,6 +28,28 @@ def test_terminal_qr_renders_scannable_shape_for_pairing_payload() -> None:
     assert any("  " in line and "██" in line for line in lines)
 
 
+def test_terminal_qr_can_render_compact_pairing_payload() -> None:
+    payload = json.dumps(
+        {
+            "pairing_code": "pair-code",
+            "claim_endpoint": "https://desktop.tailnet.ts.net:8787/v1/pairing/claim",
+            "route_provider": "tailnet",
+            "gateway_url": "https://desktop.tailnet.ts.net:8787",
+            "scopes": ["project:view", "agent:message"],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    qr = make_terminal_qr(payload)
+    lines = render_terminal_qr(payload, ansi=False, quiet_zone=2, compact=True)
+
+    assert len(lines) == (qr.size + 4 + 1) // 2
+    assert all(len(line) == qr.size + 4 for line in lines)
+    assert max(len(line) for line in lines) <= 80
+    assert any("▀" in line or "▄" in line for line in lines)
+
+
 def test_terminal_qr_keeps_alignment_patterns_on_timing_axes() -> None:
     payload = json.dumps(
         {

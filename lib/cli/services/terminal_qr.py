@@ -75,10 +75,12 @@ def make_terminal_qr(text: str) -> TerminalQrCode:
 
 
 def render_terminal_qr(
-    text: str, *, ansi: bool = False, quiet_zone: int = 4
+    text: str, *, ansi: bool = False, quiet_zone: int = 4, compact: bool = False
 ) -> tuple[str, ...]:
     qr = make_terminal_qr(text)
     border = max(0, int(quiet_zone))
+    if compact:
+        return _render_compact_terminal_qr(qr, ansi=ansi, border=border)
     light = "\x1b[47m  \x1b[0m" if ansi else "██"
     dark = "\x1b[40m  \x1b[0m" if ansi else "  "
     rows: list[str] = []
@@ -92,6 +94,46 @@ def render_terminal_qr(
         rows.append("".join(rendered))
     rows.extend([light_row] * border)
     return tuple(rows)
+
+
+def _render_compact_terminal_qr(
+    qr: TerminalQrCode, *, ansi: bool, border: int
+) -> tuple[str, ...]:
+    width = qr.size + border * 2
+    light_row = [False] * width
+    rows: list[list[bool]] = [light_row[:] for _ in range(border)]
+    rows.extend(([False] * border) + list(row) + ([False] * border) for row in qr.modules)
+    rows.extend([light_row[:] for _ in range(border)])
+
+    rendered: list[str] = []
+    for index in range(0, len(rows), 2):
+        top = rows[index]
+        bottom = rows[index + 1] if index + 1 < len(rows) else light_row
+        rendered.append(
+            "".join(
+                _render_compact_cell(top_dark, bottom_dark, ansi=ansi)
+                for top_dark, bottom_dark in zip(top, bottom)
+            )
+        )
+    return tuple(rendered)
+
+
+def _render_compact_cell(top_dark: bool, bottom_dark: bool, *, ansi: bool) -> str:
+    if ansi:
+        if top_dark and bottom_dark:
+            return "\x1b[40m \x1b[0m"
+        if not top_dark and not bottom_dark:
+            return "\x1b[47m \x1b[0m"
+        if top_dark and not bottom_dark:
+            return "\x1b[30;47m▀\x1b[0m"
+        return "\x1b[37;40m▀\x1b[0m"
+    if top_dark and bottom_dark:
+        return " "
+    if not top_dark and not bottom_dark:
+        return "█"
+    if top_dark and not bottom_dark:
+        return "▄"
+    return "▀"
 
 
 def _select_version(data: bytes) -> tuple[int, tuple[int, ...], int]:

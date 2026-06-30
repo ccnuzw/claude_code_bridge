@@ -358,7 +358,12 @@ def test_onboarding_logged_in_starts_gateway_serve_and_prints_qr() -> None:
     assert "test_ccb2 (healthy)" not in text
     assert "ccb_mobile (healthy)" not in text
     assert "Scan this QR in CCB Mobile" in text
-    assert "██" in text
+    qr_start = output.index("Scan this QR in CCB Mobile:") + 1
+    qr_end = output.index("", qr_start)
+    qr_lines = output[qr_start:qr_end]
+    assert len(qr_lines) <= 32
+    assert max(len(line) for line in qr_lines) <= 80
+    assert any("▀" in line or "▄" in line for line in qr_lines)
     assert "Gateway URL: https://desktop.tailnet.ts.net:8787" in text
     assert "Pairing Code: pair-code" in text
     assert "no Funnel, tokens, ACLs, or grants" in text
