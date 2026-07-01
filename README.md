@@ -1,6 +1,6 @@
 <div align="center">
 
-# CCB
+# CCB - Mobile Has Arrived!
 
 **Designed around agent parity**
 **Visible, controllable multi-agent cooperative TUI workspace**
@@ -29,12 +29,12 @@
   <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
 </p>
 
-**English** | [中文](README_zh.md)
+[中文](README_zh.md) | **English**
 
-[Quick Start](#quick-start) · [v7 UI](#v7-ui-tour) · [Rich Mode](#rich-mode-new) · [Mobile App](#mobile-app) · [Configure Agents](#configure-your-agent-team) · [User Guide](docs/manuals/user-guide/) · [Developer Guide](docs/manuals/developer-guide/)
+[Quick Start](#quick-start) · [Mobile App](#mobile-app) · [Rich Mode](#rich-mode-new) · [Configure Agents](#create-project-config) · [User Guide](docs/manuals/user-guide/) · [Developer Guide](docs/manuals/developer-guide/)
 
 <p align="center">
-  <img src="assets/readme_v7/ccb-hero-en.png" alt="CCB v7 visible multi-agent CLI workspace" width="960">
+  <img src="assets/readme_v7/ccb-hero-en-light.png" alt="CCB v7 visible multi-agent CLI workspace" width="960">
 </p>
 
 </div>
@@ -105,14 +105,6 @@ After CCB is installed, use CCB's updater:
 ccb update
 ```
 
-Install or refresh the optional rich media workbench; it bundles verified binaries where possible and installs only the required terminal/media/font dependencies through the platform package manager:
-
-```bash
-ccb update rich
-```
-
-After rich is enabled, plain `ccb` opens the rich WezTerm launcher unless it is already running inside a CCB-managed rich WezTerm; use `ccb uninstall rich` to return to the normal terminal startup.
-
 Install or refresh the optional mobile controller setup:
 
 ```bash
@@ -122,6 +114,14 @@ ccb update mobile
 This command checks the local mobile gateway prerequisites, guides Tailscale
 login/Serve setup when needed, keeps the gateway loopback-only, and prints the
 current Android APK download link plus pairing steps.
+
+Install or refresh the optional rich media workbench; it bundles verified binaries where possible and installs only the required terminal/media/font dependencies through the platform package manager:
+
+```bash
+ccb update rich
+```
+
+After rich is enabled, plain `ccb` opens the rich WezTerm launcher unless it is already running inside a CCB-managed rich WezTerm; use `ccb uninstall rich` to return to the normal terminal startup.
 
 <details>
 <summary><b>GitHub release package and source install fallbacks</b></summary>
@@ -151,6 +151,8 @@ Out of the box, run `ccb` from your project directory. If startup reports that `
 ```bash
 mkdir -p .ccb
 ```
+
+<a id="create-project-config"></a>
 
 ### 2. Create project config
 
@@ -199,28 +201,31 @@ Type directly in an agent pane, or route work between agents:
 
 Agents can also call `/ask` from workflow orchestration to delegate and hand off work automatically.
 
-### v7 UI Tour
-
-| Region | Purpose |
-| :--- | :--- |
-| Sidebar | Shows refresh/close CCB controls, windows and agents, internal communication state, and tips that can be edited in config and hot-reloaded. |
-| Mouse control | Click to switch windows, agents, and panes; refresh, kill, or delete communication entries from the communication area. |
-| Workspace | Every pane is a real CLI. Switch by mouse or tmux shortcuts. |
-| Useful shortcuts | `Ctrl-b h/j/k/l` switches adjacent panes; `Ctrl-b z` zooms or restores the current CLI pane. |
-
-<a id="rich-mode-new"></a>
-
-### Rich Mode (NEW!)
-
-Run `ccb update rich` to install the optional rich workbench; it bundles Yazi where possible, uses WezTerm for the rich terminal surface, and gives Markdown rendering plus image/PDF/video previews. After installation, plain `ccb` automatically opens this rich launcher unless it is already running inside a CCB-managed rich WezTerm; `ccb rich` remains available as an explicit launcher.
-
-<p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi preview in WezTerm" width="860">
-</p>
-
 <a id="mobile-app"></a>
 
-### Mobile App (Android Alpha)
+### CCB Mobile Has Arrived! (Android Alpha)
+
+Use your phone as a remote CCB controller: switch projects and agents, speak input, open terminal views, and transfer files.
+
+```bash
+ccb update mobile
+```
+
+The command walks through local setup and pairing.
+
+<p align="center">
+  <img src="assets/readme_v7/mobile-control-chat.jpg" alt="CCB Mobile agent conversation" width="180">
+  <img src="assets/readme_v7/mobile-control-terminal.jpg" alt="CCB Mobile terminal control" width="180">
+  <img src="assets/readme_v7/mobile-control-files.jpg" alt="CCB Mobile file transfer" width="180">
+  <img src="assets/readme_v7/mobile-control-pairing.jpg" alt="CCB Mobile pairing and connection" width="180">
+</p>
+
+<p align="center">
+  <sub>Mobile can switch projects and agents, inspect conversations, open terminals, transfer files, and connect through scoped pairing.</sub>
+</p>
+
+<details>
+<summary><b>Mobile App details, security boundaries, and source</b></summary>
 
 CCB 8.0.0 includes the Flutter CCB Mobile source under [`mobile/`](mobile/)
 and publishes an Android APK as a GitHub Release asset:
@@ -257,6 +262,31 @@ Security boundaries:
   alter tailnet ACLs/grants.
 - The phone only receives the scopes granted by the pairing profile, such as
   view, content, terminal, file upload, and file download.
+
+</details>
+
+<a id="rich-mode-new"></a>
+
+### Rich Mode (NEW!)
+
+Browse files, open documents, edit text, and preview media from a richer terminal workspace.
+
+<p align="center">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi preview in WezTerm" width="860">
+</p>
+
+```bash
+ccb update rich
+```
+
+After rich is enabled, plain `ccb` opens the rich WezTerm launcher unless it is already running inside a CCB-managed rich WezTerm; use `ccb uninstall rich` to return to the normal terminal startup.
+
+<details>
+<summary><b>Rich Mode details</b></summary>
+
+Run `ccb update rich` to install the optional rich workbench; it bundles Yazi where possible, uses WezTerm for the rich terminal surface, and gives Markdown rendering plus image/PDF/video previews. After installation, plain `ccb` automatically opens this rich launcher unless it is already running inside a CCB-managed rich WezTerm; `ccb rich` remains available as an explicit launcher.
+
+</details>
 
 ### Agent Roles Spec And Role Catalog
 
