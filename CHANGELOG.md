@@ -9,6 +9,10 @@
 - **Running Output Highlighted**: CCB Mobile now highlights the active terminal-derived output bubble when an agent is working, while avoiding stale historical reply markers.
 - **Conversation Timestamps Preserved**: submitted messages, native transcripts, comms fallback, and job-history fallback records now keep stable `sent_at` / `completed_at` / duration metadata through refreshes.
 - **Codex Runtime Status Stabilized**: source-side Codex session and pane status handling now reports interrupted turns explicitly and collapses stale no-progress display state without hiding raw diagnostics.
+- **Task Completion Notifications Completed**: retained historical completion
+  events are consumed without stale alerts, live completions raise low-sensitivity
+  system notifications, project/agent unread markers clear when the target is
+  opened, and visible target agents consume completions silently.
 - **Mobile Source Synchronized**: the Flutter app source under `mobile/app` is updated from the active mobile worktree, including scanner, theme, notification, file, transcript, and chat interaction fixes.
 - **Release Surface Synchronized**: VERSION, package.json, README mobile links, mobile app version metadata, and release notes are aligned for 8.0.8.
 
