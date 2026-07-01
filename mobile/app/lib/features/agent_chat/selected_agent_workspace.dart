@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 import '../../l10n/ccb_mobile_localizations.dart';
 import '../../models/ccb_agent.dart';
+import '../../models/ccb_agent_conversation.dart';
 import '../../models/ccb_conversation_item.dart';
 import '../../models/ccb_project_view.dart';
 import '../../repository/mobile_ccb_repository.dart';
@@ -30,7 +31,6 @@ import 'selected_agent_workspace_view.dart';
 
 const agentMessageMaxAttachments = 5;
 const agentMessageMaxAttachmentBytes = 25 * 1024 * 1024;
-const selectedAgentStaleIdleRefreshThreshold = 5;
 const selectedAgentTabKeyBytes = [9];
 const selectedAgentEscapeKeyBytes = [27];
 const selectedAgentExpandScrollDuration = Duration(milliseconds: 220);
@@ -108,7 +108,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   final Map<String, String> _downloadedAttachmentPaths = {};
   final Map<String, double> _preExpansionTimelineOffsets = {};
   final Set<String> _awaitingPaneResponseAgentNames = {};
-  final Map<String, int> _staleIdleRefreshCounts = {};
+  final Map<String, _AwaitingReplyBaseline> _awaitingReplyBaselines = {};
   final Set<String> _sourceWorkingAgentNames = {};
   final Set<String> _localExceptionStatusAgentNames = {};
   final Map<String, String> _recentPaneOutputText = {};
@@ -386,7 +386,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
         _recentPaneOutputText.remove(agent.name);
         if (widget.usePaneInputForMessages) {
           acceptedPaneMessage = true;
-          _awaitingPaneResponseAgentNames.add(agent.name);
+          _markAwaitingPaneResponse(agent.name);
         }
       },
     );
@@ -452,7 +452,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     }
     setState(() {
       controller.clear();
-      _awaitingPaneResponseAgentNames.add(agent.name);
+      _markAwaitingPaneResponse(agent.name);
     });
     _refreshLatest(agent.name);
     _scheduleConversationRefresh(agent.name);
@@ -728,6 +728,15 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     );
   }
 
+  void _deleteFailedMessage(CcbConversationItem item) {
+    if (item.state != CcbConversationDeliveryState.failed) {
+      return;
+    }
+    _mutateChatState(() {
+      _chatController.removeLocalMessage(item.agentName, item.id);
+    });
+  }
+
   void _handlePaneChatEvent(PaneChatEvent event) {
     if (event.kind == PaneChatEventKind.output) {
       if (!mounted) {
@@ -866,15 +875,20 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     );
     if (status.state == 'working') {
       _sourceWorkingAgentNames.add(agentName);
-      _staleIdleRefreshCounts.remove(agentName);
       _localExceptionStatusAgentNames.remove(agentName);
       return _ExecutionSyncResult.pending;
     }
     if (status.state == 'idle') {
       final wasAwaiting = _awaitingPaneResponseAgentNames.contains(agentName);
       final observedWorking = _sourceWorkingAgentNames.remove(agentName);
-      if (wasAwaiting && !observedWorking && !_recordStaleIdle(agentName)) {
-        return _ExecutionSyncResult.pending;
+      final replyProgress = _awaitingReplyProgress(agentName);
+      if (wasAwaiting) {
+        if (!observedWorking && !replyProgress.hasReplyProgress) {
+          return _ExecutionSyncResult.pending;
+        }
+        if (replyProgress.hasRunningReply) {
+          return _ExecutionSyncResult.pending;
+        }
       }
       _clearAwaitingPaneResponse(agentName);
       _localExceptionStatusAgentNames.remove(agentName);
@@ -891,19 +905,39 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
 
   void _markAwaitingPaneResponse(String agentName) {
     _awaitingPaneResponseAgentNames.add(agentName);
-    _staleIdleRefreshCounts.putIfAbsent(agentName, () => 0);
+    _awaitingReplyBaselines.putIfAbsent(
+      agentName,
+      () => _awaitingReplyBaselineFor(
+        _chatController.remoteConversationFor(agentName),
+      ),
+    );
   }
 
   void _clearAwaitingPaneResponse(String agentName) {
     _awaitingPaneResponseAgentNames.remove(agentName);
-    _staleIdleRefreshCounts.remove(agentName);
+    _awaitingReplyBaselines.remove(agentName);
     _lastAwaitingConversationRefreshAt.remove(agentName);
   }
 
-  bool _recordStaleIdle(String agentName) {
-    final count = (_staleIdleRefreshCounts[agentName] ?? 0) + 1;
-    _staleIdleRefreshCounts[agentName] = count;
-    return count >= selectedAgentStaleIdleRefreshThreshold;
+  _AwaitingReplyProgress _awaitingReplyProgress(String agentName) {
+    final baseline = _awaitingReplyBaselines[agentName];
+    if (baseline == null) {
+      return const _AwaitingReplyProgress(
+        hasReplyProgress: false,
+        hasRunningReply: false,
+      );
+    }
+    final current = _awaitingReplySnapshotFor(
+      _chatController.remoteConversationFor(agentName),
+    );
+    final hasReplyProgress =
+        current.replyCount > baseline.replyCount ||
+        (current.latestReplySignature != null &&
+            current.latestReplySignature != baseline.latestReplySignature);
+    return _AwaitingReplyProgress(
+      hasReplyProgress: hasReplyProgress,
+      hasRunningReply: hasReplyProgress && current.latestReplyRunning,
+    );
   }
 
   bool _isTimelineNearEnd(String agentName) {
@@ -1030,6 +1064,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
         _confirmAndOpenAttachment(selectedAgent, attachment, projectId);
       },
       onRetry: _retryMessage,
+      onDeleteFailedMessage: _deleteFailedMessage,
       onToggleExpanded: (itemId) {
         _toggleExpandedItem(selectedAgent.name, itemId);
       },
@@ -1196,6 +1231,78 @@ class _ExecutionSyncResult {
 
   final bool settled;
   final bool isCompleted;
+}
+
+class _AwaitingReplyBaseline {
+  const _AwaitingReplyBaseline({
+    required this.replyCount,
+    required this.latestReplySignature,
+  });
+
+  final int replyCount;
+  final String? latestReplySignature;
+}
+
+class _AwaitingReplySnapshot {
+  const _AwaitingReplySnapshot({
+    required this.replyCount,
+    required this.latestReplySignature,
+    required this.latestReplyRunning,
+  });
+
+  final int replyCount;
+  final String? latestReplySignature;
+  final bool latestReplyRunning;
+}
+
+class _AwaitingReplyProgress {
+  const _AwaitingReplyProgress({
+    required this.hasReplyProgress,
+    required this.hasRunningReply,
+  });
+
+  final bool hasReplyProgress;
+  final bool hasRunningReply;
+}
+
+_AwaitingReplyBaseline _awaitingReplyBaselineFor(
+  CcbAgentConversation? conversation,
+) {
+  final snapshot = _awaitingReplySnapshotFor(conversation);
+  return _AwaitingReplyBaseline(
+    replyCount: snapshot.replyCount,
+    latestReplySignature: snapshot.latestReplySignature,
+  );
+}
+
+_AwaitingReplySnapshot _awaitingReplySnapshotFor(
+  CcbAgentConversation? conversation,
+) {
+  var replyCount = 0;
+  CcbConversationItem? latestReply;
+  for (final item in conversation?.items ?? const <CcbConversationItem>[]) {
+    if (item.kind != CcbConversationItemKind.agentReply) {
+      continue;
+    }
+    replyCount += 1;
+    latestReply = item;
+  }
+  return _AwaitingReplySnapshot(
+    replyCount: replyCount,
+    latestReplySignature:
+        latestReply == null ? null : _awaitingReplySignature(latestReply),
+    latestReplyRunning: latestReply != null && latestReply.completedAt == null,
+  );
+}
+
+String _awaitingReplySignature(CcbConversationItem item) {
+  return [
+    item.id,
+    item.startedAt?.microsecondsSinceEpoch.toString() ?? '',
+    item.completedAt?.microsecondsSinceEpoch.toString() ?? '',
+    item.body,
+    item.attachments.length.toString(),
+  ].join('|');
 }
 
 String _safeFileName(String fileName) {

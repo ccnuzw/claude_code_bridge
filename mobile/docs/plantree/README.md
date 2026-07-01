@@ -4,7 +4,8 @@ Date: 2026-06-27
 
 ## Purpose
 
-This is the planning entrypoint for the standalone CCB mobile project.
+This is the planning entrypoint for the authoritative CCB Mobile subtree inside
+the CCB monorepo.
 
 ## Authority Order
 
@@ -23,7 +24,7 @@ This is the planning entrypoint for the standalone CCB mobile project.
 
 | Plan | Status | Current Phase | Last Landed | Next Target |
 | :--- | :--- | :--- | :--- | :--- |
-| [mobile-tmux-control](plans/mobile-tmux-control/README.md) | In Progress | Phase 4E Physical Tailnet Hardening | 2026-06-27 `17b5540` hardened physical Tailnet evidence recording/audit so accepted T0-T6 case evidence must be safe, present, and non-empty. | Run the physical Android phone + Tailnet runbook once hardware/network are available, then register passing `history/physical-tailnet-final-audit.json` for the acceptance audit. |
+| [mobile-tmux-control](plans/mobile-tmux-control/README.md) | In Progress | Phase 4F Pane Live-Output Smoothness | 2026-07-02 monorepo consolidation moved the authoritative app/docs/tools surface under `ccb_source/mobile` and retired duplicate implementation files in the legacy `ccb_mobile` checkout. | Continue [low-latency conversation goal](plans/mobile-tmux-control/goal-low-latency-conversation.md): extend strict real Android Emulator evidence to long-duration/high-volume output, live-turn reconciliation, and broader device health metrics. |
 
 ## How To Read
 

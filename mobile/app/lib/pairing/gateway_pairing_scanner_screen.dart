@@ -50,6 +50,9 @@ class _GatewayPairingScannerScreenState
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (_usesNativeScanner) {
+      unawaited(_resetNativeScannerSession());
+    }
     _controller.dispose();
     super.dispose();
   }
@@ -135,11 +138,18 @@ class _GatewayPairingScannerScreenState
   }
 
   Future<void> _scanWithNativeCamera() async {
+    if (_scanningWithNativeCamera) {
+      return;
+    }
     setState(() {
       _error = null;
       _scanningWithNativeCamera = true;
     });
     try {
+      await _resetNativeScannerSession();
+      if (!mounted || _handled) {
+        return;
+      }
       final raw = await _qrScanner.scanCamera();
       if (!mounted || _handled) {
         return;
@@ -177,20 +187,34 @@ class _GatewayPairingScannerScreenState
 
   Future<void> _scanFromImage() async {
     try {
+      if (_usesNativeScanner) {
+        await _resetNativeScannerSession();
+        if (!mounted || _handled) {
+          return;
+        }
+        setState(() {
+          _scanningWithNativeCamera = false;
+        });
+      }
       final result = await FilePicker.pickFiles(
         allowMultiple: false,
         type: FileType.image,
+        withData: true,
       );
       final file =
           result == null || result.files.isEmpty ? null : result.files.single;
+      final bytes = file?.bytes;
       final path = file?.path;
-      if (path == null || path.isEmpty) {
+      if ((bytes == null || bytes.isEmpty) && (path == null || path.isEmpty)) {
         return;
       }
       setState(() {
         _error = null;
       });
-      final raw = await _qrScanner.scanImage(path);
+      final raw =
+          bytes != null && bytes.isNotEmpty
+              ? await _qrScanner.scanImageBytes(bytes)
+              : await _qrScanner.scanImage(path!);
       if (!mounted || _handled) {
         return;
       }
@@ -215,6 +239,16 @@ class _GatewayPairingScannerScreenState
       setState(() {
         _error = gatewayPairingNativeScannerErrorMessage(error);
       });
+    }
+  }
+
+  Future<void> _resetNativeScannerSession() async {
+    try {
+      await _qrScanner.cancelActiveScan();
+    } on MissingPluginException {
+      // Older installed/native bridges did not expose the best-effort cancel
+      // call. Do not block camera or image scanning before the real scanner
+      // gets a chance to start.
     }
   }
 

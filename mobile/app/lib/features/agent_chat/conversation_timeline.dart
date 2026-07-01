@@ -27,6 +27,7 @@ class ConversationTimeline extends StatelessWidget {
     required this.downloadingAttachmentIds,
     required this.downloadedAttachmentIds,
     required this.onRetry,
+    required this.onDeleteFailedMessage,
     required this.onToggleExpanded,
     required this.onNearEnd,
     required this.onUserNearEnd,
@@ -51,6 +52,7 @@ class ConversationTimeline extends StatelessWidget {
   final Set<String> downloadingAttachmentIds;
   final Set<String> downloadedAttachmentIds;
   final ValueChanged<CcbConversationItem> onRetry;
+  final ValueChanged<CcbConversationItem> onDeleteFailedMessage;
   final ValueChanged<String> onToggleExpanded;
   final VoidCallback onNearEnd;
   final VoidCallback onUserNearEnd;
@@ -125,6 +127,7 @@ class ConversationTimeline extends StatelessWidget {
                 downloadingAttachmentIds: downloadingAttachmentIds,
                 downloadedAttachmentIds: downloadedAttachmentIds,
                 onRetry: onRetry,
+                onDeleteFailedMessage: onDeleteFailedMessage,
                 onToggleExpanded: onToggleExpanded,
                 onDownloadAttachment: onDownloadAttachment,
                 onOpenAttachment: onOpenAttachment,
@@ -160,6 +163,7 @@ class _ConversationTimelineItem extends StatelessWidget {
     required this.downloadingAttachmentIds,
     required this.downloadedAttachmentIds,
     required this.onRetry,
+    required this.onDeleteFailedMessage,
     required this.onToggleExpanded,
     required this.onDownloadAttachment,
     required this.onOpenAttachment,
@@ -178,6 +182,7 @@ class _ConversationTimelineItem extends StatelessWidget {
   final Set<String> downloadingAttachmentIds;
   final Set<String> downloadedAttachmentIds;
   final ValueChanged<CcbConversationItem> onRetry;
+  final ValueChanged<CcbConversationItem> onDeleteFailedMessage;
   final ValueChanged<String> onToggleExpanded;
   final ValueChanged<CcbMessageAttachment> onDownloadAttachment;
   final ValueChanged<CcbMessageAttachment> onOpenAttachment;
@@ -229,6 +234,12 @@ class _ConversationTimelineItem extends StatelessWidget {
           item.state == CcbConversationDeliveryState.failed
               ? () {
                 onRetry(item);
+              }
+              : null,
+      onDelete:
+          item.state == CcbConversationDeliveryState.failed
+              ? () {
+                onDeleteFailedMessage(item);
               }
               : null,
       onDownloadAttachment: onDownloadAttachment,

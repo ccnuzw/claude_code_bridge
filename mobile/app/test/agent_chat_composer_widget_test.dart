@@ -159,6 +159,7 @@ void main() {
             onRemoveAttachment: (_) {},
             onDownloadAttachment: (_) {},
             onOpenAttachment: (_) {},
+            onDeleteFailedMessage: (_) {},
             onSend: () {},
             onSendTab: () {},
             onSendEscape: () {},
@@ -897,7 +898,7 @@ void main() {
       find.byKey(const ValueKey('agent-message-send-button')),
     );
     expect(sendButton.onPressed, isNull);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsAtLeastNWidgets(1));
     await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
@@ -990,6 +991,56 @@ void main() {
       find.byKey(const ValueKey('conversation-state-local-mobile-1')),
       findsNothing,
     );
+  });
+
+  testWidgets('failed local message can be deleted from the timeline', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(repository: FakeMobileCcbRepository.demo()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openCurrentProject(tester);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'please fail and delete this send',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+    await tester.pump(const Duration(milliseconds: 180));
+
+    await dragUntilVisible(
+      tester,
+      const ValueKey('conversation-item-local-mobile-0'),
+      const Offset(0, -700),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('conversation-state-local-mobile-0')),
+        matching: find.text('Failed'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('retry-message-local-mobile-0')),
+      findsOneWidget,
+    );
+
+    final deleteButton = find.byKey(
+      const ValueKey('delete-message-local-mobile-0'),
+    );
+    await tester.ensureVisible(deleteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('conversation-item-local-mobile-0')),
+      findsNothing,
+    );
+    expect(find.text('please fail and delete this send'), findsNothing);
   });
 
   testWidgets('sent fake repository message remains visible after completion', (
@@ -1712,7 +1763,7 @@ void main() {
     },
   );
 
-  testWidgets('scheduled refresh ignores early stale idle after pane send', (
+  testWidgets('scheduled refresh keeps awaiting through idle snapshots', (
     tester,
   ) async {
     final terminalTransport = RecordingTerminalTransport();
@@ -1784,8 +1835,8 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
 
-    expect(find.text('Idle'), findsOneWidget);
-    expect(find.text('Working'), findsNothing);
+    expect(find.text('Working'), findsOneWidget);
+    expect(find.text('Idle'), findsNothing);
     expect(find.text('mobile completed'), findsNothing);
   });
 
@@ -1936,6 +1987,82 @@ void main() {
     expect(find.text('mobile completed'), findsNothing);
     expect(find.text('Working'), findsOneWidget);
   });
+
+  testWidgets(
+    'scheduled refresh shows reply under idle project view without re-enter',
+    (tester) async {
+      final terminalTransport = RecordingTerminalTransport();
+      final repository = LateIdleReplyConversationRepository();
+      var view = _workspaceView(
+        _statusAgent(
+          activityState: 'idle',
+          activitySource: 'provider_pane',
+          activityReason: 'provider_prompt_idle',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                final agent = view.agentByName('mobile')!;
+                return SelectedAgentWorkspace(
+                  repository: repository,
+                  terminalTransport: terminalTransport,
+                  usePaneInputForMessages: true,
+                  view: view,
+                  agent: agent,
+                  enableComposerCollapse: true,
+                  onRefreshView: () async {
+                    final refreshed = _workspaceView(
+                      _statusAgent(
+                        activityState: 'idle',
+                        activitySource: 'provider_pane',
+                        activityReason: 'provider_prompt_idle',
+                      ),
+                    );
+                    setState(() {
+                      view = refreshed;
+                    });
+                    return refreshed;
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('agent-message-composer')),
+        'late reply under idle view',
+      );
+      await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+      await tester.pump();
+
+      expect(find.text('Working'), findsOneWidget);
+      expect(find.text('late reply under idle view'), findsOneWidget);
+
+      terminalTransport.sessions.single.addOutput(
+        'late reply under idle view\n',
+      );
+      await tester.pump();
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Working'), findsOneWidget);
+      expect(find.text('late running reply'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('conversation-working-reply-late')),
+        findsOneWidget,
+      );
+      expect(find.text('Working'), findsOneWidget);
+      expect(find.text('mobile completed'), findsNothing);
+    },
+  );
 
   testWidgets(
     'selected agent activity update refreshes session and marks running reply',
@@ -2457,6 +2584,43 @@ class WorkingPaneConversationRepository extends RecordingGatewayRepository {
                 ),
               ],
       generatedAt: now,
+    );
+  }
+}
+
+class LateIdleReplyConversationRepository extends RecordingGatewayRepository {
+  var _loads = 0;
+
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add((projectId, agent, namespaceEpoch));
+    _loads += 1;
+    final now = DateTime.utc(2100, 7, 1, 12);
+    return CcbAgentConversation(
+      projectId: projectId,
+      agentName: agent,
+      namespaceEpoch: namespaceEpoch,
+      items:
+          _loads < 3
+              ? const []
+              : [
+                CcbConversationItem(
+                  id: 'reply-late',
+                  agentName: agent,
+                  kind: CcbConversationItemKind.agentReply,
+                  title: 'Agent reply',
+                  body: 'late running reply',
+                  source: 'provider_native/codex',
+                  startedAt: now,
+                ),
+              ],
+      generatedAt: now.add(Duration(seconds: _loads)),
     );
   }
 }

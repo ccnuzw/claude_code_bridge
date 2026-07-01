@@ -27,7 +27,7 @@ Primary goal prompt:
 
 ```text
 读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
 作为当前长期 goal。
 
 目标：仅基于本机虚拟机/Android Emulator 端到端落地 CCB Mobile 后续全部
@@ -106,7 +106,7 @@ Short call:
 
 ```text
 请读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
 作为当前长期 goal。只用本机 Android Emulator/AVD、loopback gateway、
 adb reverse、isolated CCB runtime、fake/local route-provider tests、
 Flutter/source tests、debug APK build 和 emulator smoke 落地后续全部 CCB
@@ -119,7 +119,7 @@ Mobile 功能。不要依赖真机、公网、Cloudflare、域名、生产 relay
 English call block:
 
 ```text
-Read `/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
+Read `/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
 and execute it as the active project goal.
 
 Deliver the remaining CCB Mobile project using only local virtualized
@@ -140,7 +140,7 @@ Current execution prompt:
 
 ```text
 Read and execute
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-emulator-only.md`
 as the active long-running goal.
 
 Resume the plan tree first. Use only the local Android Emulator/AVD,
@@ -167,7 +167,7 @@ never commit runtime state, secrets, logs, build artifacts, `.ccb/agents`, or
 
 ### In Scope
 
-- Flutter app work under `/home/bfly/yunwei/ccb_mobile/app`.
+- Flutter app work under `/home/bfly/yunwei/ccb_source/mobile/app`.
 - Plan-tree updates under `docs/plantree`.
 - Local Android Emulator validation through AVD `ccb_mobile_api35`.
 - Local gateway validation through `127.0.0.1:8787` and

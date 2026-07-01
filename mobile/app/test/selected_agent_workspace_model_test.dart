@@ -531,6 +531,60 @@ void main() {
     expect(model.executionStatus?.state, 'working');
     expect(model.workingReplyItemId, isNull);
   });
+
+  test('marks running reply when reply starts after local user send time', () {
+    final chatController = AgentChatController();
+    final view = _view();
+    final agent = _agent(
+      activityState: 'active',
+      activitySource: 'codex_runtime',
+      activityReason: 'codex_working_status_line',
+    );
+    final userSentAt = DateTime.utc(2026, 7, 1, 10, 0, 0);
+    final replyStartedAt = userSentAt.add(const Duration(seconds: 1));
+
+    chatController.addLocalMessage(
+      agent.name,
+      CcbConversationItem.userMessage(
+        id: 'local-user',
+        agentName: agent.name,
+        body: 'new request',
+        sentAt: userSentAt,
+        state: CcbConversationDeliveryState.sent,
+      ),
+    );
+    chatController.applyRemoteConversation(
+      agentName: agent.name,
+      shouldScroll: true,
+      conversation: CcbAgentConversation(
+        projectId: view.project.id,
+        agentName: agent.name,
+        namespaceEpoch: view.namespaceEpoch!,
+        items: [
+          CcbConversationItem(
+            id: 'reply-running',
+            agentName: agent.name,
+            kind: CcbConversationItemKind.agentReply,
+            title: 'Agent reply',
+            body: 'still running',
+            source: 'provider_native/codex',
+            startedAt: replyStartedAt,
+          ),
+        ],
+        generatedAt: replyStartedAt,
+      ),
+    );
+
+    final model = selectedAgentWorkspaceModel(
+      view: _view(agent: agent),
+      agent: agent,
+      chatController: chatController,
+      isAwaitingAgentResponse: true,
+    );
+
+    expect(model.executionStatus?.state, 'working');
+    expect(model.workingReplyItemId, 'reply-running');
+  });
 }
 
 CcbProjectView _view({CcbAgent? agent}) {

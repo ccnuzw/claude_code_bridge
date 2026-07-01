@@ -45,7 +45,7 @@ or stress actions.
 Before any tap, type, upload, or send, collect and record:
 
 ```text
-app_commit=<git sha in /home/bfly/yunwei/ccb_mobile>
+app_commit=<git sha in /home/bfly/yunwei/ccb_source/mobile>
 source_commit=<git sha in the source worktree under test>
 app_dirty=<git status --short>
 source_dirty=<git status --short>

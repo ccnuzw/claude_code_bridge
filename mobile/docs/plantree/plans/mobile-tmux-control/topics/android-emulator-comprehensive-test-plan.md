@@ -252,7 +252,7 @@ Every accepted manual run should record:
 Baseline commands:
 
 ```bash
-cd /home/bfly/yunwei/ccb_mobile
+cd /home/bfly/yunwei/ccb_source/mobile
 . tools/mobile_toolchain_env.sh
 adb devices -l
 cd app
@@ -264,7 +264,7 @@ adb shell am start -n io.ccb.mobile.ccb_mobile/.MainActivity
 Loopback gateway command:
 
 ```bash
-cd /home/bfly/yunwei/ccb_mobile
+cd /home/bfly/yunwei/ccb_source/mobile
 . tools/mobile_toolchain_env.sh
 python tools/mobile_emulator_ui_smoke.py \
   --device-id emulator-5554 \
@@ -275,7 +275,7 @@ python tools/mobile_emulator_ui_smoke.py \
 Regression command batch:
 
 ```bash
-cd /home/bfly/yunwei/ccb_mobile/app
+cd /home/bfly/yunwei/ccb_source/mobile/app
 . ../tools/mobile_toolchain_env.sh
 flutter test test/agent_chat_composer_widget_test.dart
 flutter test test/agent_chat_state_helpers_test.dart

@@ -20,7 +20,7 @@ agent run, give the agent the objective and call block below.
 Direct copy/paste invocation:
 
 ```text
-读取并执行 `/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
+读取并执行 `/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
 作为当前长期 goal。
 
 你要端到端落地 CCB Mobile 手机/iPad 开发项目。默认产品体验必须是
@@ -71,7 +71,7 @@ Recommended direct call:
 
 ```text
 请读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
 作为当前长期 goal。
 
 目标是端到端落地整个 CCB Mobile 手机/iPad 开发项目。默认 UI 目标是
@@ -113,7 +113,7 @@ Objective:
 Call block:
 
 ```text
-Read `/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
+Read `/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
 and execute it as the active project goal.
 
 Deliver the whole CCB Mobile phone/iPad project incrementally as an
@@ -138,7 +138,7 @@ secrets, build artifacts, `.ccb/agents`, or `.ccb/ccbd`.
 Recommended first instruction to the agent:
 
 ```text
-Read `/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
+Read `/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
 and execute it as the active project goal. Start by resuming the plan tree,
 checking current blockers, and producing or updating the architecture/reuse
 design before implementation.
@@ -147,7 +147,7 @@ design before implementation.
 Current direct call:
 
 ```text
-Read `/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
+Read `/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal.md`
 and execute it as the active project goal. Resume from
 `implementation-status.md`, keep `docs/plantree` current, commit coherent
 packages regularly, and continue with the current Next Target unless a newer
@@ -173,7 +173,7 @@ plan tree、进度记录和阶段性 commit。
 
 项目目标：
 
-在 `/home/bfly/yunwei/ccb_mobile` 中落地一个原生 Flutter
+在 `/home/bfly/yunwei/ccb_source/mobile` 中落地一个原生 Flutter
 Android/iOS/iPadOS App，作为 server-side CCB 项目的移动远程控制器。
 App 默认进入 CCB-aware 单 Agent 工作页：顶部显示 agent 切换列表，主体
 只显示一个 selected agent 的状态、Comms、Markdown/content、可上下滚动的
@@ -221,7 +221,7 @@ agent/window focus、Markdown/math
 
 工程边界：
 
-- 移动端代码放在 `/home/bfly/yunwei/ccb_mobile`，首选路径 `app/`。
+- 移动端代码放在 `/home/bfly/yunwei/ccb_source/mobile`，首选路径 `app/`。
 - 不把本仓库当作 CCB 源码库。
 - CCB 源码只在需要且经过 ready-check 后，才在
   `/home/bfly/yunwei/ccb_source` 中修改。

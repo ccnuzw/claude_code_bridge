@@ -105,33 +105,31 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
 }
 
 String? selectedAgentWorkingReplyItemId(List<CcbConversationItem> items) {
-  var latestUserIndex = -1;
   CcbConversationItem? latestUser;
-  var latestReplyIndex = -1;
   CcbConversationItem? latestReply;
-  for (var index = 0; index < items.length; index += 1) {
-    final item = items[index];
+  for (final item in items) {
     if (item.kind == CcbConversationItemKind.userMessage) {
-      latestUserIndex = index;
       latestUser = item;
     } else if (item.kind == CcbConversationItemKind.agentReply) {
-      latestReplyIndex = index;
       latestReply = item;
     }
   }
-  if (latestReply == null || latestUserIndex > latestReplyIndex) {
+  if (latestReply == null) {
     return null;
   }
   if (latestReply.completedAt != null) {
     return null;
   }
   final replyStartedAt = latestReply.startedAt ?? latestReply.sentAt;
+  final userSentAt = latestUser?.sentAt;
   if (replyStartedAt == null) {
+    if (userSentAt != null) {
+      return null;
+    }
     return _isTerminalDerivedConversationItem(latestReply)
         ? latestReply.id
         : null;
   }
-  final userSentAt = latestUser?.sentAt;
   if (userSentAt != null && replyStartedAt.isBefore(userSentAt)) {
     return null;
   }

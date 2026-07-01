@@ -1395,17 +1395,19 @@ def _agent_conversation_items(
     mobile_files_dir: Path | None = None,
 ) -> list[dict[str, object]]:
     view = _map(view_payload.get('view'))
+    agents = [_map(item) for item in _iterable(view.get('agents'))]
+    agent_record = next((item for item in agents if str(item.get('name') or '') == agent), {})
+    provider_key = (_optional_text(agent_record.get('provider')) or '').strip().lower()
     native_items = _agent_native_conversation_items(
         project_root,
         project_id=project_id,
         agent=agent,
+        provider=provider_key,
         mobile_files_dir=mobile_files_dir,
     )
     if native_items:
         return native_items
 
-    agents = [_map(item) for item in _iterable(view.get('agents'))]
-    agent_record = next((item for item in agents if str(item.get('name') or '') == agent), {})
     items: list[dict[str, object]] = [
         {
             'id': f'status-{agent}',
@@ -1457,12 +1459,13 @@ def _agent_conversation_items(
         )
     seen_item_ids = {str(item.get('id') or '') for item in items}
 
-    terminal_items = _terminal_history_conversation_items(
-        terminal_history,
-        agent=agent,
-    )
-    if terminal_items:
-        return terminal_items
+    if provider_key != 'claude':
+        terminal_items = _terminal_history_conversation_items(
+            terminal_history,
+            agent=agent,
+        )
+        if terminal_items:
+            return terminal_items
 
     for item in _agent_history_conversation_items(
         project_root,
@@ -1658,13 +1661,202 @@ def _agent_native_conversation_items(
     *,
     project_id: str,
     agent: str,
+    provider: str | None = None,
     mobile_files_dir: Path | None = None,
 ) -> list[dict[str, object]]:
-    return _codex_native_conversation_items(
-        project_root,
-        project_id=project_id,
-        agent=agent,
-        mobile_files_dir=mobile_files_dir,
+    provider_key = str(provider or '').strip().lower()
+    if provider_key in {'', 'codex'}:
+        codex_items = _codex_native_conversation_items(
+            project_root,
+            project_id=project_id,
+            agent=agent,
+            mobile_files_dir=mobile_files_dir,
+        )
+        if codex_items:
+            return codex_items
+    if provider_key in {'', 'claude'}:
+        return _claude_native_conversation_items(
+            project_root,
+            project_id=project_id,
+            agent=agent,
+            mobile_files_dir=mobile_files_dir,
+        )
+    return []
+
+
+def _claude_native_conversation_items(
+    project_root: Path,
+    *,
+    project_id: str,
+    agent: str,
+    mobile_files_dir: Path | None = None,
+) -> list[dict[str, object]]:
+    session_path = _claude_native_session_path(project_root, agent=agent)
+    if session_path is None:
+        return []
+    try:
+        from provider_backends.claude.comm_runtime.parsing_runtime.entries import (
+            extract_message,
+        )
+    except Exception:
+        return []
+    file_roots = [
+        path
+        for path in (
+            mobile_files_dir,
+            project_root / '.ccb' / 'ccbd' / 'mobile' / 'files',
+        )
+        if path is not None
+    ]
+    try:
+        lines = session_path.open(encoding='utf-8')
+        fallback_timestamp = f'{int(session_path.stat().st_mtime):020d}'
+    except Exception:
+        return []
+    items: list[dict[str, object]] = []
+    session_id = _native_id_part(session_path.stem, fallback='session')
+    with lines:
+        for line_number, line in enumerate(lines, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = _map(json.loads(line))
+            except Exception:
+                continue
+            for role in ('user', 'assistant'):
+                body = extract_message(record, role)
+                if not body:
+                    continue
+                body = _inject_workspace_artifacts(
+                    body,
+                    project_root=project_root,
+                    project_id=project_id,
+                    agent=agent,
+                    mobile_files_dir=mobile_files_dir,
+                )
+                body = _clean_native_message_text(body)
+                if not body:
+                    continue
+                item_id = (
+                    f'claude-{session_id}-{line_number}-'
+                    f'{_native_id_part(_claude_record_id(record), fallback=role)}-{role}'
+                )
+                if role == 'user':
+                    item = {
+                        'id': item_id,
+                        'agent': agent,
+                        'kind': 'user_message',
+                        'title': 'You',
+                        'body': body,
+                        'format': 'markdown',
+                        'source': 'provider_native/claude',
+                        'state': 'sent',
+                        'attachments': [],
+                    }
+                else:
+                    item = {
+                        'id': item_id,
+                        'agent': agent,
+                        'kind': 'agent_reply',
+                        'title': 'Agent reply',
+                        'body': body,
+                        'format': 'markdown',
+                        'source': 'provider_native/claude',
+                        'attachments': _artifact_link_attachments(
+                            body,
+                            file_roots=file_roots,
+                            project_id=project_id,
+                            agent=agent,
+                        ),
+                    }
+                _set_native_sort_fields(
+                    item,
+                    record,
+                    fallback_timestamp=fallback_timestamp,
+                    thread_order=0,
+                    line_number=line_number,
+                )
+                items.append(item)
+    sorted_items = [
+        item
+        for _, item in sorted(
+            enumerate(items),
+            key=lambda indexed: (
+                _optional_text(indexed[1].get('_native_sort_timestamp')) or '',
+                int(indexed[1].get('_native_line_number') or 0),
+                indexed[0],
+            ),
+        )
+    ]
+    return [
+        _without_native_sort_fields(item)
+        for item in _coalesce_claude_native_agent_replies(sorted_items)
+    ]
+
+
+def _claude_native_session_path(project_root: Path, *, agent: str) -> Path | None:
+    try:
+        from provider_backends.claude.session_runtime.pathing import (
+            find_project_session_file,
+            read_json,
+        )
+        session_file = find_project_session_file(project_root, agent)
+    except Exception:
+        return None
+    if session_file is None:
+        return None
+    data = read_json(session_file)
+    path_text = _optional_text(_map(data).get('claude_session_path'))
+    if path_text:
+        try:
+            path = Path(path_text).expanduser()
+        except Exception:
+            path = None
+        if path is not None and path.is_file():
+            return path
+    return _discover_claude_native_session_path(project_root, data=_map(data))
+
+
+def _discover_claude_native_session_path(
+    project_root: Path,
+    *,
+    data: dict[str, object],
+) -> Path | None:
+    projects_root_text = _optional_text(data.get('claude_projects_root'))
+    if not projects_root_text:
+        return None
+    work_dir_text = (
+        _optional_text(data.get('work_dir'))
+        or _optional_text(data.get('workspace_path'))
+        or _optional_text(data.get('project_root'))
+        or str(project_root)
+    )
+    try:
+        projects_root = Path(projects_root_text).expanduser()
+        work_dir = Path(work_dir_text).expanduser()
+    except Exception:
+        return None
+    try:
+        from provider_backends.claude.comm import ClaudeLogReader
+
+        path = ClaudeLogReader(
+            root=projects_root,
+            work_dir=work_dir,
+            use_sessions_index=False,
+        ).current_session_path()
+    except Exception:
+        return None
+    return path if path is not None and path.is_file() else None
+
+
+def _claude_record_id(record: dict[str, object]) -> str:
+    message = _map(record.get('message'))
+    return (
+        _optional_text(record.get('uuid'))
+        or _optional_text(record.get('id'))
+        or _optional_text(message.get('id'))
+        or ''
     )
 
 
@@ -1883,8 +2075,15 @@ def _set_native_sort_fields(
 
 def _native_record_timestamp(record: dict[str, object]) -> str | None:
     payload = _map(record.get('payload'))
-    return _optional_text(record.get('timestamp')) or _optional_text(
-        payload.get('timestamp')
+    message = _map(record.get('message'))
+    return (
+        _optional_text(record.get('timestamp'))
+        or _optional_text(record.get('created_at'))
+        or _optional_text(record.get('updated_at'))
+        or _optional_text(payload.get('timestamp'))
+        or _optional_text(payload.get('created_at'))
+        or _optional_text(message.get('timestamp'))
+        or _optional_text(message.get('created_at'))
     )
 
 
@@ -2002,6 +2201,26 @@ def _without_native_sort_fields(item: dict[str, object]) -> dict[str, object]:
 def _coalesce_codex_native_agent_replies(
     items: list[dict[str, object]],
 ) -> list[dict[str, object]]:
+    return _coalesce_provider_native_agent_replies(
+        items,
+        source='provider_native/codex',
+    )
+
+
+def _coalesce_claude_native_agent_replies(
+    items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return _coalesce_provider_native_agent_replies(
+        items,
+        source='provider_native/claude',
+    )
+
+
+def _coalesce_provider_native_agent_replies(
+    items: list[dict[str, object]],
+    *,
+    source: str,
+) -> list[dict[str, object]]:
     grouped: list[dict[str, object]] = []
     pending: dict[str, object] | None = None
 
@@ -2012,7 +2231,7 @@ def _coalesce_codex_native_agent_replies(
             pending = None
 
     for item in items:
-        if not _is_codex_native_agent_reply(item):
+        if not _is_provider_native_agent_reply(item, source=source):
             flush_pending()
             grouped.append(item)
             continue
@@ -2055,16 +2274,27 @@ def _coalesce_codex_native_agent_replies(
     return grouped
 
 
-def _is_codex_native_agent_reply(item: dict[str, object]) -> bool:
+def _is_provider_native_agent_reply(
+    item: dict[str, object],
+    *,
+    source: str,
+) -> bool:
     return (
         item.get('kind') == 'agent_reply'
-        and item.get('source') == 'provider_native/codex'
+        and item.get('source') == source
     )
 
 
 def _join_native_agent_reply_bodies(left: str, right: str) -> str:
     parts = [part.strip() for part in (left, right) if part.strip()]
     return '\n\n'.join(parts)
+
+
+def _native_id_part(value: object, *, fallback: str) -> str:
+    text = str(value or '').strip() or fallback
+    safe = ''.join(ch if ch.isalnum() or ch in {'-', '_', '.'} else '_' for ch in text)
+    safe = safe.strip('._')
+    return safe or fallback
 
 
 def _merge_attachment_records(*values: object) -> list[dict[str, object]]:

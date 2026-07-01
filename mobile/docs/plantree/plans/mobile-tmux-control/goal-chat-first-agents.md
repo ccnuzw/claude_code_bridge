@@ -22,7 +22,7 @@ Primary goal prompt:
 
 ```text
 读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-chat-first-agents.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-chat-first-agents.md`
 作为当前长期 goal。
 
 目标：把 CCB Mobile 的每个 configured agent 都落地成类似 ChatGPT/DeepSeek
@@ -107,7 +107,7 @@ Short call:
 
 ```text
 请读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-chat-first-agents.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-chat-first-agents.md`
 作为当前长期 goal。目标是让每个 CCB agent 都成为一个统一聊天会话：
 顶部 agent/window switcher，主体 selected-agent timeline，底部 composer。
 普通输入必须直接写入 selected tmux pane，不走 ask/message 包装。先 resume

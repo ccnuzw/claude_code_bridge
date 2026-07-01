@@ -14,7 +14,7 @@ Use this prompt when assigning the next cohesive source/app implementation run:
 
 ```text
 读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-agent-native-conversation.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-agent-native-conversation.md`
 作为当前长期 goal。
 
 目标：纠正 CCB Mobile 当前聊天路径。手机普通输入必须等同于在当前 selected

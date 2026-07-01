@@ -6,6 +6,10 @@ abstract interface class GatewayPairingQrScanner {
   Future<String?> scanCamera();
 
   Future<String?> scanImage(String path);
+
+  Future<String?> scanImageBytes(Uint8List bytes);
+
+  Future<void> cancelActiveScan();
 }
 
 class MethodChannelGatewayPairingQrScanner implements GatewayPairingQrScanner {
@@ -28,5 +32,17 @@ class MethodChannelGatewayPairingQrScanner implements GatewayPairingQrScanner {
   @override
   Future<String?> scanImage(String path) {
     return _channel.invokeMethod<String>('scanPairingQrImage', {'path': path});
+  }
+
+  @override
+  Future<String?> scanImageBytes(Uint8List bytes) {
+    return _channel.invokeMethod<String>('scanPairingQrImageBytes', {
+      'bytes': bytes,
+    });
+  }
+
+  @override
+  Future<void> cancelActiveScan() {
+    return _channel.invokeMethod<void>('cancelPairingQrScan');
   }
 }

@@ -84,6 +84,7 @@ void main() {
               onRemoveAttachment: (_) {},
               onDownloadAttachment: (_) {},
               onOpenAttachment: (_) {},
+              onDeleteFailedMessage: (_) {},
               onSend: () {},
               onSendTab: () {},
               onSendEscape: () {},

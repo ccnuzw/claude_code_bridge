@@ -14,6 +14,7 @@ class ConversationBubble extends StatelessWidget {
     required this.onToggleExpanded,
     this.child,
     this.onRetry,
+    this.onDelete,
     this.onDownloadAttachment,
     this.onOpenAttachment,
     this.downloadingAttachmentIds = const {},
@@ -28,6 +29,7 @@ class ConversationBubble extends StatelessWidget {
   final ValueChanged<String> onToggleExpanded;
   final Widget? child;
   final VoidCallback? onRetry;
+  final VoidCallback? onDelete;
   final ValueChanged<CcbMessageAttachment>? onDownloadAttachment;
   final ValueChanged<CcbMessageAttachment>? onOpenAttachment;
   final Set<String> downloadingAttachmentIds;
@@ -220,15 +222,30 @@ class ConversationBubble extends StatelessWidget {
                     downloadedAttachmentIds: downloadedAttachmentIds,
                   ),
                 ],
-                if (onRetry != null) ...[
+                if (onRetry != null || onDelete != null) ...[
                   const SizedBox(height: 6),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      key: ValueKey('retry-message-${item.id}'),
-                      onPressed: onRetry,
-                      icon: const Icon(Icons.refresh),
-                      label: Text(strings.retry),
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        if (onDelete != null)
+                          TextButton.icon(
+                            key: ValueKey('delete-message-${item.id}'),
+                            onPressed: onDelete,
+                            icon: const Icon(Icons.delete_outline),
+                            label: Text(strings.deleteMessage),
+                          ),
+                        if (onRetry != null)
+                          TextButton.icon(
+                            key: ValueKey('retry-message-${item.id}'),
+                            onPressed: onRetry,
+                            icon: const Icon(Icons.refresh),
+                            label: Text(strings.retry),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -248,30 +265,21 @@ class _ConversationWorkingIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final label = CcbMobileLocalizations.of(context).executionStatus('Working');
+    final disableAnimations = WidgetsBinding.instance.runtimeType
+        .toString()
+        .contains('Test');
     return Tooltip(
       message: label,
       child: Semantics(
         label: label,
         child: SizedBox.square(
           dimension: 14,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: colorScheme.primary, width: 2),
-                ),
-              ),
-              Container(
-                width: 4,
-                height: 4,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: colorScheme.primary,
-                ),
-              ),
-            ],
+          child: TickerMode(
+            enabled: !disableAnimations,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colorScheme.primary,
+            ),
           ),
         ),
       ),

@@ -47,7 +47,7 @@ some screenshots look correct.
    Those projects must also pass the real pane-backed fixture gate: the
    selected agents need valid pane evidence before any send, file, or reply
    result can count.
-4. Do not send exploratory mobile test messages to `/home/bfly/yunwei/ccb_mobile`
+4. Do not send exploratory mobile test messages to `/home/bfly/yunwei/ccb_source/mobile`
    or `/home/bfly/yunwei/ccb_source` unless the test case explicitly targets
    those repositories.
 5. Ordinary mobile chat must not create a CCB ask job, must not inject

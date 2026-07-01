@@ -25,7 +25,7 @@ Primary copy/paste prompt:
 
 ```text
 读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-server-wide-mobile-install.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-server-wide-mobile-install.md`
 作为当前长期 goal。
 
 目标：先制定并校准方案，然后分包落地，最终打通 `ccb install mobile`
@@ -115,7 +115,7 @@ Short call:
 
 ```text
 请读取并执行
-`/home/bfly/yunwei/ccb_mobile/docs/plantree/plans/mobile-tmux-control/goal-server-wide-mobile-install.md`
+`/home/bfly/yunwei/ccb_source/mobile/docs/plantree/plans/mobile-tmux-control/goal-server-wide-mobile-install.md`
 作为当前长期 goal。先校准方案，再按 source registry、`ccb install mobile`、
 App 多项目首页、真实 AVD 多项目 smoke 四个 coherent packages 落地。不要再
 围绕单项目 demo 验收；完成条件是一个 server gateway、一个手机 profile、

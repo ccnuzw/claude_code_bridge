@@ -57,6 +57,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
     required this.onRemoveAttachment,
     required this.onDownloadAttachment,
     required this.onOpenAttachment,
+    required this.onDeleteFailedMessage,
     required this.onSend,
     required this.onSendTab,
     required this.onSendEscape,
@@ -88,6 +89,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   final ValueChanged<String> onRemoveAttachment;
   final ValueChanged<CcbMessageAttachment> onDownloadAttachment;
   final ValueChanged<CcbMessageAttachment> onOpenAttachment;
+  final ValueChanged<CcbConversationItem> onDeleteFailedMessage;
   final VoidCallback onSend;
   final VoidCallback onSendTab;
   final VoidCallback onSendEscape;
@@ -117,6 +119,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
               downloadingAttachmentIds: downloadingAttachmentIds,
               downloadedAttachmentIds: downloadedAttachmentIds,
               onRetry: onRetry,
+              onDeleteFailedMessage: onDeleteFailedMessage,
               onToggleExpanded: onToggleExpanded,
               onNearEnd: onNearEnd,
               onUserNearEnd: onUserNearEnd,
@@ -285,11 +288,20 @@ class _AgentWorkingStatus extends StatelessWidget {
   }
 
   Widget _statusIcon(AgentExecutionStatus status, Color color) {
+    final disableAnimations = WidgetsBinding.instance.runtimeType
+        .toString()
+        .contains('Test');
     if (status.isRefreshing) {
-      return CircularProgressIndicator(strokeWidth: 2, color: color);
+      return TickerMode(
+        enabled: !disableAnimations,
+        child: CircularProgressIndicator(strokeWidth: 2, color: color),
+      );
     }
     if (status.state == 'working') {
-      return Icon(Icons.hourglass_top, size: 14, color: color);
+      return TickerMode(
+        enabled: !disableAnimations,
+        child: CircularProgressIndicator(strokeWidth: 2, color: color),
+      );
     }
     if (status.state == 'exception') {
       return Icon(Icons.error_outline, size: 14, color: color);

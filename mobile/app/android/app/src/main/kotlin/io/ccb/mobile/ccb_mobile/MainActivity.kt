@@ -12,15 +12,13 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
-import com.google.android.gms.common.api.CommonStatusCodes
-import com.google.mlkit.vision.barcode.common.Barcode as MlKitBarcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
+import com.google.zxing.LuminanceSource
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.BarcodeFormat as ZxingBarcodeFormat
+import com.google.zxing.common.GlobalHistogramBinarizer
 import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.integration.android.IntentIntegrator
 import io.flutter.embedding.android.FlutterActivity
@@ -53,6 +51,22 @@ class MainActivity : FlutterActivity() {
                         return@setMethodCallHandler
                     }
                     scanPairingQrImage(path, result)
+                }
+                "scanPairingQrImageBytes" -> {
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (bytes == null || bytes.isEmpty()) {
+                        result.error(
+                            "image_decode_failed",
+                            "Image bytes are required.",
+                            null
+                        )
+                        return@setMethodCallHandler
+                    }
+                    scanPairingQrImageBytes(bytes, result)
+                }
+                "cancelPairingQrScan" -> {
+                    cancelPairingQrScan()
+                    result.success(true)
                 }
                 else -> result.notImplemented()
             }
@@ -179,41 +193,7 @@ class MainActivity : FlutterActivity() {
             return
         }
         pendingPairingScanResult = result
-        val options = GmsBarcodeScannerOptions.Builder()
-            .setBarcodeFormats(MlKitBarcode.FORMAT_QR_CODE)
-            .enableAutoZoom()
-            .build()
-        val scanner = GmsBarcodeScanning.getClient(this, options)
-        scanner.startScan()
-            .addOnSuccessListener { barcode ->
-                completePairingScan(barcode.rawValue)
-            }
-            .addOnCanceledListener {
-                completePairingScan(null)
-            }
-            .addOnFailureListener { error ->
-                if (gmsFailureShouldFallback(error)) {
-                    startZxingPairingScan()
-                } else {
-                    completePairingScanError(
-                        "scanner_unavailable",
-                        error.message ?: "Google scanner could not be opened."
-                    )
-                }
-            }
-    }
-
-    private fun gmsFailureShouldFallback(error: Exception): Boolean {
-        val statusCode = if (error is com.google.android.gms.common.api.ApiException) {
-            error.statusCode
-        } else {
-            null
-        }
-        return statusCode == null ||
-            statusCode == CommonStatusCodes.ERROR ||
-            statusCode == CommonStatusCodes.API_NOT_CONNECTED ||
-            statusCode == CommonStatusCodes.DEVELOPER_ERROR ||
-            statusCode == CommonStatusCodes.INTERNAL_ERROR
+        startZxingPairingScan()
     }
 
     private fun startZxingPairingScan() {
@@ -261,31 +241,69 @@ class MainActivity : FlutterActivity() {
                 result.error("image_decode_failed", "Image could not be decoded.", null)
                 return
             }
-            val width = bitmap.width
-            val height = bitmap.height
-            val pixels = IntArray(width * height)
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-            val source = RGBLuminanceSource(width, height, pixels)
-            val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
-            val reader = MultiFormatReader().apply {
-                setHints(
-                    mapOf(
-                        DecodeHintType.POSSIBLE_FORMATS to listOf(
-                            ZxingBarcodeFormat.QR_CODE
-                        ),
-                        DecodeHintType.TRY_HARDER to true
-                    )
-                )
-            }
-            result.success(reader.decodeWithState(binaryBitmap).text)
-        } catch (_: com.google.zxing.NotFoundException) {
-            result.success(null)
+            result.success(decodePairingQrBitmap(bitmap))
         } catch (error: RuntimeException) {
             result.error(
                 "image_decode_failed",
                 error.message ?: "Image could not be decoded.",
                 null
             )
+        }
+    }
+
+    private fun scanPairingQrImageBytes(bytes: ByteArray, result: MethodChannel.Result) {
+        try {
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bitmap == null) {
+                result.error("image_decode_failed", "Image could not be decoded.", null)
+                return
+            }
+            result.success(decodePairingQrBitmap(bitmap))
+        } catch (error: RuntimeException) {
+            result.error(
+                "image_decode_failed",
+                error.message ?: "Image could not be decoded.",
+                null
+            )
+        }
+    }
+
+    private fun decodePairingQrBitmap(bitmap: android.graphics.Bitmap): String? {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val source = RGBLuminanceSource(width, height, pixels)
+        return decodePairingQrSource(source)
+    }
+
+    private fun decodePairingQrSource(source: LuminanceSource): String? {
+        val sources = listOf(source, source.invert())
+        for (candidate in sources) {
+            decodePairingQrCandidate(candidate, useHybrid = true)?.let { return it }
+            decodePairingQrCandidate(candidate, useHybrid = false)?.let { return it }
+        }
+        return null
+    }
+
+    private fun decodePairingQrCandidate(
+        source: LuminanceSource,
+        useHybrid: Boolean
+    ): String? {
+        val hints = mapOf(
+            DecodeHintType.POSSIBLE_FORMATS to listOf(ZxingBarcodeFormat.QR_CODE),
+            DecodeHintType.TRY_HARDER to true,
+            DecodeHintType.CHARACTER_SET to "UTF-8"
+        )
+        val binaryBitmap = if (useHybrid) {
+            BinaryBitmap(HybridBinarizer(source))
+        } else {
+            BinaryBitmap(GlobalHistogramBinarizer(source))
+        }
+        return try {
+            MultiFormatReader().decode(binaryBitmap, hints).text
+        } catch (_: com.google.zxing.ReaderException) {
+            null
         }
     }
 
@@ -299,6 +317,12 @@ class MainActivity : FlutterActivity() {
         val result = pendingPairingScanResult ?: return
         pendingPairingScanResult = null
         result.error(code, message, null)
+    }
+
+    private fun cancelPairingQrScan() {
+        val result = pendingPairingScanResult ?: return
+        pendingPairingScanResult = null
+        result.success(null)
     }
 
     private fun requestPostNotificationsPermission(result: MethodChannel.Result) {

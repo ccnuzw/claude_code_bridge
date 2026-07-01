@@ -67,7 +67,7 @@ All P0/P1 runs use a real server-wide gateway and real local CCB projects:
 - list all mounted/reachable server projects on the phone first page;
 - open a test project under `/home/bfly/yunwei/test_ccb2`;
 - do not validate against the fake `demo` project;
-- do not send exploratory test messages into `/home/bfly/yunwei/ccb_mobile`
+- do not send exploratory test messages into `/home/bfly/yunwei/ccb_source/mobile`
   unless the test explicitly targets the mobile repo itself.
 - before any send/file test, verify the selected test agent has a real CCB
   pane target (`pane_id`, tmux session/window, namespace epoch, and non-fake
@@ -193,7 +193,7 @@ Minimum report must state which mode was used.
 - One app install with paired gateway restored after app restart.
 - At least one clean test project reserved for mobile pressure under
   `/home/bfly/yunwei/test_ccb2`; manual exploration should not target
-  `/home/bfly/yunwei/ccb_mobile` unless the test explicitly validates the
+  `/home/bfly/yunwei/ccb_source/mobile` unless the test explicitly validates the
   mobile repo itself.
 
 ### Optional Release Matrix
@@ -914,7 +914,7 @@ Before accepting a stress run, inspect:
 ### Safe Compass Run
 
 ```bash
-cd /home/bfly/yunwei/ccb_mobile
+cd /home/bfly/yunwei/ccb_source/mobile
 source tools/mobile_toolchain_env.sh
 python tools/mobile_app_compass_test.py \
   --gateway-url http://127.0.0.1:19011 \

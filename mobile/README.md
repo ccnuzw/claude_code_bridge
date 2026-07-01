@@ -2,10 +2,13 @@
 
 Native Android/iOS/iPadOS remote controller for server-side CCB tmux projects.
 
-This is the mobile app source inside the CCB monorepo. CCB and provider CLIs
-run on the server; the mobile app is a controller for project discovery, agent
-switching, terminal access, Markdown reading, notifications, local/Tailnet
-gateway access, and file transfer.
+This directory is the authoritative CCB Mobile source inside the CCB monorepo.
+The legacy standalone `ccb_mobile` repository is retired as an implementation
+surface and now exists only for migration/runtime compatibility notes.
+
+CCB and provider CLIs run on the server; the mobile app is a controller for
+project discovery, agent switching, terminal access, Markdown reading,
+notifications, local/Tailnet gateway access, and file transfer.
 
 ## Android Alpha Release
 

@@ -204,7 +204,7 @@ Fresh 2026-06-23 evidence now also proves:
   per-agent backend-generated text + PNG artifact link downloads.
 - live current-project lane: Android Emulator `emulator-5554`, source
   worktree `/home/bfly/yunwei/ccb_source_mobile_local_backend_matrix`, real
-  project `/home/bfly/yunwei/ccb_mobile`, loopback gateway
+  project `/home/bfly/yunwei/ccb_source/mobile`, loopback gateway
   `127.0.0.1:18931`, and `adb reverse tcp:18931 tcp:18931` pass with `lead`
   receiving two real backend message turns and the app displaying both
   `Agent reply / completion_snapshot` markers. The same gateway accepted text

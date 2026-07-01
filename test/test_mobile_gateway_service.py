@@ -233,6 +233,13 @@ class _FakeCcbdClientWithConversationComms(_FakeCcbdClient):
         return payload
 
 
+class _FakeClaudeCcbdClient(_FakeCcbdClient):
+    def project_view(self, *, schema_version: int = 1) -> dict[str, object]:
+        payload = super().project_view(schema_version=schema_version)
+        payload['view']['agents'][0]['provider'] = 'claude'
+        return payload
+
+
 def _service(
     fake: _FakeCcbdClient,
     *,
@@ -869,6 +876,258 @@ def test_agent_conversation_prefers_codex_native_transcript(tmp_path: Path) -> N
     assert 'stale ask snapshot' not in public_json
     assert 'stale pane prompt' not in public_json
     assert 'stale pane answer' not in public_json
+
+
+def test_agent_conversation_prefers_claude_native_transcript(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo'
+    snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / 'job_mobile_probe.json').write_text(
+        json.dumps({'latest_decision': {'reply': 'stale ask snapshot'}}),
+        encoding='utf-8',
+    )
+    _write_claude_transcript(
+        project_root,
+        agent='mobile',
+        session_id='claude-session-native',
+        records=[
+            {
+                'type': 'system',
+                'timestamp': '2026-06-25T11:59:59.000Z',
+                'content': 'hidden system prompt',
+            },
+            {
+                'uuid': 'user-1',
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'user',
+                'message': {
+                    'role': 'user',
+                    'content': [{'type': 'text', 'text': 'claude native question'}],
+                },
+            },
+            {
+                'uuid': 'assistant-1',
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'assistant',
+                'message': {
+                    'id': 'msg_1',
+                    'role': 'assistant',
+                    'content': [
+                        {'type': 'thinking', 'text': 'hidden thinking'},
+                        {'type': 'text', 'text': 'claude native answer'},
+                    ],
+                },
+            },
+            {
+                'uuid': 'user-2',
+                'timestamp': '2026-06-25T12:00:02.000Z',
+                'type': 'user',
+                'message': {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': (
+                                'CCB_REQ_ID: job_mobile_probe\n\n'
+                                'clean claude prompt\n\n'
+                                'CCB reply guidance:\n'
+                                '- Answer directly and concisely.\n'
+                            ),
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+
+    def history_factory(target):
+        return {
+            'history_scope': 'tmux_scrollback',
+            'source_pane_id': target.pane_id,
+            'blocks': [
+                {
+                    'id': 'old-input',
+                    'type': 'command',
+                    'title': 'Command',
+                    'text': 'stale claude pane prompt',
+                },
+                {
+                    'id': 'old-output',
+                    'type': 'log',
+                    'title': 'Terminal output',
+                    'text': 'stale claude pane answer',
+                },
+            ],
+        }
+
+    service = _service(
+        _FakeClaudeCcbdClient(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+        terminal_history_factory=history_factory,
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=20',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 200
+    items = payload['conversation']['items']
+    assert [item.get('source') for item in items] == [
+        'provider_native/claude',
+        'provider_native/claude',
+        'provider_native/claude',
+    ]
+    assert [(item['kind'], item['body']) for item in items] == [
+        ('user_message', 'claude native question'),
+        ('agent_reply', 'claude native answer'),
+        ('user_message', 'clean claude prompt'),
+    ]
+    assert items[0]['sent_at'] == '2026-06-25T12:00:00.000Z'
+    assert items[1]['completed_at'] == '2026-06-25T12:00:01.000Z'
+    public_json = json.dumps(payload)
+    assert 'hidden system prompt' not in public_json
+    assert 'hidden thinking' not in public_json
+    assert 'CCB_REQ_ID' not in public_json
+    assert 'CCB reply guidance' not in public_json
+    assert 'stale ask snapshot' not in public_json
+    assert 'stale claude pane prompt' not in public_json
+    assert 'stale claude pane answer' not in public_json
+
+
+def test_agent_conversation_discovers_claude_native_transcript_from_projects_root(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo'
+    _write_claude_transcript(
+        project_root,
+        agent='mobile',
+        session_id='claude-session-discovered',
+        records=[
+            {
+                'uuid': 'user-1',
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'user',
+                'message': {
+                    'role': 'user',
+                    'content': [{'type': 'text', 'text': 'discovered question'}],
+                },
+            },
+            {
+                'uuid': 'assistant-1',
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'assistant',
+                'message': {
+                    'role': 'assistant',
+                    'content': [{'type': 'text', 'text': 'discovered answer'}],
+                },
+            },
+        ],
+        bind_session_path=False,
+        use_project_dir=True,
+    )
+
+    def history_factory(target):
+        return {
+            'history_scope': 'tmux_scrollback',
+            'source_pane_id': target.pane_id,
+            'blocks': [
+                {
+                    'id': 'stale-output',
+                    'type': 'log',
+                    'title': 'Terminal output',
+                    'text': 'stale fallback output',
+                },
+            ],
+        }
+
+    service = _service(
+        _FakeClaudeCcbdClient(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+        terminal_history_factory=history_factory,
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=20',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 200
+    items = payload['conversation']['items']
+    assert [item.get('source') for item in items] == [
+        'provider_native/claude',
+        'provider_native/claude',
+    ]
+    assert [(item['kind'], item['body']) for item in items] == [
+        ('user_message', 'discovered question'),
+        ('agent_reply', 'discovered answer'),
+    ]
+    assert 'stale fallback output' not in json.dumps(payload)
+
+
+def test_agent_conversation_does_not_use_terminal_history_for_claude_without_native_transcript(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo'
+
+    def history_factory(target):
+        return {
+            'history_scope': 'tmux_scrollback',
+            'source_pane_id': target.pane_id,
+            'blocks': [
+                {
+                    'id': 'stale-output',
+                    'type': 'log',
+                    'title': 'Terminal output',
+                    'text': 'stale tmux fallback output',
+                },
+            ],
+        }
+
+    service = _service(
+        _FakeClaudeCcbdClient(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+        terminal_history_factory=history_factory,
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=20',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 200
+    items = payload['conversation']['items']
+    assert all('tmux_scrollback' not in str(item.get('source')) for item in items)
+    assert [item.get('kind') for item in items[:2]] == ['status_event', 'agent_reply']
+    assert items[1]['body'] == 'Ready for the next task.'
+    assert 'stale tmux fallback output' not in json.dumps(payload)
 
 
 def test_agent_conversation_groups_consecutive_codex_native_agent_messages(
@@ -2593,6 +2852,60 @@ def _write_codex_rollout(
         connection.commit()
     finally:
         connection.close()
+
+
+def _write_claude_transcript(
+    project_root: Path,
+    *,
+    agent: str,
+    session_id: str,
+    records: list[dict[str, object]],
+    bind_session_path: bool = True,
+    use_project_dir: bool = False,
+) -> None:
+    if use_project_dir:
+        from provider_backends.claude.registry_support.pathing import (
+            project_key_for_path,
+        )
+
+        session_parent = project_key_for_path(project_root)
+    else:
+        session_parent = ''
+    projects_root = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / agent
+        / 'provider-state'
+        / 'claude'
+        / 'home'
+        / '.claude'
+        / 'projects'
+    )
+    transcript_path = (
+        projects_root
+        / session_parent
+        / f'{session_id}.jsonl'
+    )
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    transcript_path.write_text(
+        ''.join(f'{json.dumps(record)}\n' for record in records),
+        encoding='utf-8',
+    )
+    session_file = project_root / '.ccb' / f'.claude-{agent}-session'
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        'active': True,
+        'work_dir': str(project_root),
+        'claude_session_id': session_id,
+        'claude_projects_root': str(projects_root),
+    }
+    if bind_session_path:
+        payload['claude_session_path'] = str(transcript_path)
+    session_file.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
 
 
 def _websocket_connect(host: str, port: int, path: str) -> socket.socket:
