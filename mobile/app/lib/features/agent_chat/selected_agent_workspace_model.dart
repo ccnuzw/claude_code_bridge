@@ -144,9 +144,6 @@ String? selectedAgentWorkingReplyItemId(List<CcbConversationItem> items) {
   if (latestReply == null) {
     return null;
   }
-  if (latestReply.completedAt != null) {
-    return null;
-  }
   final replyStartedAt = latestReply.startedAt ?? latestReply.sentAt;
   final userSentAt = latestUser?.sentAt;
   if (replyStartedAt == null) {
@@ -160,7 +157,18 @@ String? selectedAgentWorkingReplyItemId(List<CcbConversationItem> items) {
   if (userSentAt != null && replyStartedAt.isBefore(userSentAt)) {
     return null;
   }
+  if (latestReply.completedAt != null) {
+    if (latestUser == null || !_isCurrentTurnReplyCandidate(latestReply)) {
+      return null;
+    }
+  }
   return latestReply.id;
+}
+
+bool _isCurrentTurnReplyCandidate(CcbConversationItem item) {
+  final source = item.source ?? '';
+  return source.startsWith('provider_native/') ||
+      _isTerminalDerivedConversationItem(item);
 }
 
 bool _isTerminalDerivedConversationItem(CcbConversationItem item) {

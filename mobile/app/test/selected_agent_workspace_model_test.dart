@@ -470,6 +470,71 @@ void main() {
     expect(placeholder.completedAt, isNull);
   });
 
+  test(
+    'marks visible current-turn native reply as working even if completion leaked',
+    () {
+      final chatController = AgentChatController();
+      final view = _view();
+      final agent = _agent(
+        activityState: 'active',
+        activitySource: 'codex_runtime',
+        activityReason: 'codex_working_status_line',
+      );
+      chatController.applyRemoteConversation(
+        agentName: agent.name,
+        shouldScroll: true,
+        conversation: CcbAgentConversation(
+          projectId: view.project.id,
+          agentName: agent.name,
+          namespaceEpoch: view.namespaceEpoch!,
+          items: [
+            CcbConversationItem(
+              id: 'user-current',
+              agentName: agent.name,
+              kind: CcbConversationItemKind.userMessage,
+              title: 'You',
+              body: 'new request',
+              sentAt: DateTime.utc(2026, 7, 2, 9),
+            ),
+            CcbConversationItem(
+              id: 'reply-current',
+              agentName: agent.name,
+              kind: CcbConversationItemKind.agentReply,
+              title: 'Agent reply',
+              body: 'visible live reply text',
+              source: 'provider_native/codex',
+              sentAt: DateTime.utc(2026, 7, 2, 9, 0, 2),
+              startedAt: DateTime.utc(2026, 7, 2, 9, 0, 1),
+              completedAt: DateTime.utc(2026, 7, 2, 9, 0, 2),
+              durationMs: 1000,
+            ),
+          ],
+          generatedAt: DateTime.utc(2026, 7, 2),
+        ),
+      );
+
+      final model = selectedAgentWorkspaceModel(
+        view: _view(agent: agent),
+        agent: agent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
+
+      expect(model.executionStatus?.state, 'working');
+      expect(model.workingReplyItemId, 'reply-current');
+      expect(model.timelineItems.map((item) => item.id), [
+        'user-current',
+        'reply-current',
+      ]);
+      expect(
+        model.timelineItems
+            .map((item) => item.id)
+            .contains(syntheticAgentWorkingConversationItemId(agent.name)),
+        isFalse,
+      );
+    },
+  );
+
   test('marks latest terminal output block as working fallback', () {
     final chatController = AgentChatController();
     final view = _view();

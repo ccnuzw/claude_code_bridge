@@ -341,6 +341,50 @@ void main() {
     );
   });
 
+  testWidgets('working reply hides completed duration metadata', (
+    tester,
+  ) async {
+    final item = CcbConversationItem(
+      id: 'reply-working-completed',
+      agentName: 'lead',
+      kind: CcbConversationItemKind.agentReply,
+      title: 'Agent reply',
+      body: 'Visible reply still running',
+      source: 'provider_native/codex',
+      sentAt: DateTime(2026, 7, 2, 9, 0, 2),
+      startedAt: DateTime(2026, 7, 2, 9, 0, 1),
+      completedAt: DateTime(2026, 7, 2, 9, 0, 2),
+      durationMs: 1000,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationBubble(
+            item: item,
+            expanded: true,
+            isWorking: true,
+            onToggleExpanded: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(
+        const ValueKey('conversation-working-reply-working-completed'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('1s'), findsNothing);
+    expect(
+      find.byKey(
+        const ValueKey('conversation-timestamp-reply-working-completed'),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('failed reply keeps error styling over working state', (
     tester,
   ) async {

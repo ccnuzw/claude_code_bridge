@@ -51,10 +51,12 @@ class ConversationBubble extends StatelessWidget {
       hasCustomChild: child != null,
     );
     final sourceLabel = visibleConversationSourceLabel(item);
+    final showWorking =
+        isWorking && item.state != CcbConversationDeliveryState.failed;
     final timestampLabel = conversationTimestampLabel(
       context,
       item,
-      includeDuration: MediaQuery.sizeOf(context).width >= 360,
+      includeDuration: MediaQuery.sizeOf(context).width >= 360 && !showWorking,
     );
     final body =
         child ??
@@ -80,8 +82,6 @@ class ConversationBubble extends StatelessWidget {
             );
           },
         );
-    final showWorking =
-        isWorking && item.state != CcbConversationDeliveryState.failed;
     final bubbleColor =
         showWorking
             ? colorScheme.primaryContainer.withValues(alpha: 0.58)
