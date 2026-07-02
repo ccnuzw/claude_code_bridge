@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+import mobile_gateway.service as service_module
 from mobile_gateway import (
     MobileGatewayError,
     MobileGatewayPairingError,
@@ -1442,6 +1443,193 @@ def test_agent_conversation_pages_codex_native_by_record_timestamp_across_thread
         'older backfill question',
         'older backfill answer',
     ]
+
+
+def test_agent_conversation_tails_large_codex_rollout_without_parsing_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    sentinel = 'must not parse old rollout head'
+    records: list[dict[str, object]] = [
+        {
+            'timestamp': '2026-06-25T11:00:00.000Z',
+            'type': 'event_msg',
+            'payload': {'type': 'user_message', 'message': sentinel},
+        }
+    ]
+    records.extend(
+        {
+            'timestamp': f'2026-06-25T11:10:{index % 60:02d}.000Z',
+            'type': 'rollout_noise',
+            'payload': {'ignored': 'x' * 96},
+        }
+        for index in range(7000)
+    )
+    records.extend(
+        [
+            {
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': 'latest large rollout question',
+                },
+            },
+            {
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'agent_message',
+                    'message': 'latest large rollout step one',
+                },
+            },
+            {
+                'timestamp': '2026-06-25T12:00:02.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'agent_message',
+                    'message': 'latest large rollout final',
+                },
+            },
+        ]
+    )
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='large-thread',
+        records=records,
+    )
+    original_event_parser = service_module._codex_event_message_conversation_item
+
+    def fail_if_head_is_parsed(payload: dict[str, object], **kwargs):
+        if payload.get('message') == sentinel:
+            raise AssertionError('old rollout head was parsed')
+        return original_event_parser(payload, **kwargs)
+
+    monkeypatch.setattr(
+        service_module,
+        '_codex_event_message_conversation_item',
+        fail_if_head_is_parsed,
+    )
+    service = _service(
+        _FakeCcbdClientWithConversationComms(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 200
+    conversation = payload['conversation']
+    assert conversation['next_cursor'].startswith('codex-before:')
+    assert [(item['kind'], item['body']) for item in conversation['items']] == [
+        ('user_message', 'latest large rollout question'),
+        (
+            'agent_reply',
+            'latest large rollout step one\n\nlatest large rollout final',
+        ),
+    ]
+    assert sentinel not in json.dumps(payload)
+
+
+def test_agent_conversation_pages_older_items_from_codex_tail_cursor(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo'
+    records: list[dict[str, object]] = [
+        {
+            'timestamp': '2026-06-25T10:00:00.000Z',
+            'type': 'event_msg',
+            'payload': {
+                'type': 'user_message',
+                'message': 'older large rollout question',
+            },
+        },
+        {
+            'timestamp': '2026-06-25T10:00:01.000Z',
+            'type': 'event_msg',
+            'payload': {
+                'type': 'agent_message',
+                'message': 'older large rollout answer',
+            },
+        },
+    ]
+    records.extend(
+        {
+            'timestamp': f'2026-06-25T11:20:{index % 60:02d}.000Z',
+            'type': 'rollout_noise',
+            'payload': {'ignored': 'x' * 96},
+        }
+        for index in range(1300)
+    )
+    records.extend(
+        [
+            {
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': 'latest large rollout question',
+                },
+            },
+            {
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'agent_message',
+                    'message': 'latest large rollout answer',
+                },
+            },
+        ]
+    )
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='large-thread',
+        records=records,
+    )
+    service = _service(
+        _FakeCcbdClientWithConversationComms(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+    _, latest = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        headers,
+    )
+
+    _, older = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4'
+        f'&limit=2&cursor={latest["conversation"]["next_cursor"]}',
+        headers,
+    )
+
+    assert [(item['kind'], item['body']) for item in older['conversation']['items']] == [
+        ('user_message', 'older large rollout question'),
+        ('agent_reply', 'older large rollout answer'),
+    ]
+    assert 'next_cursor' not in older['conversation']
 
 
 def test_agent_conversation_pages_completed_job_history_beyond_project_view_limit(tmp_path: Path) -> None:

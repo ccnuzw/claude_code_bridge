@@ -64,6 +64,12 @@ _DEFAULT_PAIRING_SCOPES = (
 )
 _MAX_MOBILE_FILE_BYTES = 25 * 1024 * 1024
 _NOTIFICATION_STREAM_POLL_SECONDS = 1.0
+_CODEX_NATIVE_TAIL_FILE_BYTES = 64 * 1024
+_CODEX_NATIVE_TAIL_LINE_LIMIT = 120
+_CODEX_NATIVE_TAIL_THREAD_LIMIT = 2
+_CODEX_NATIVE_TAIL_CHUNK_LIMIT = 48
+_CODEX_NATIVE_TAIL_READ_BLOCK_BYTES = 256 * 1024
+_CODEX_NATIVE_CURSOR_PREFIX = 'codex-before:'
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,13 @@ class ListenAddress:
     @property
     def text(self) -> str:
         return f'{self.host}:{self.port}'
+
+
+@dataclass(frozen=True)
+class _ConversationItemsResult:
+    items: list[dict[str, object]]
+    already_paged: bool = False
+    next_cursor: str | None = None
 
 
 class MobileGatewayError(RuntimeError):
@@ -336,19 +349,28 @@ class MobileGatewayService:
             agent=str(target['agent']),
             namespace_epoch=int(target['namespace_epoch']),
         )
-        page = _agent_conversation_page(
-            _agent_conversation_items(
-                view_payload,
-                project_id=project.project_id,
-                agent=target['agent'],
-                namespace_epoch=int(target['namespace_epoch']),
-                project_root=project.project_root,
-                terminal_history=terminal_history,
-                mobile_files_dir=self._mobile_files_dir(),
-            ),
+        conversation_items = _agent_conversation_items(
+            view_payload,
+            project_id=project.project_id,
+            agent=target['agent'],
+            namespace_epoch=int(target['namespace_epoch']),
+            project_root=project.project_root,
+            terminal_history=terminal_history,
+            mobile_files_dir=self._mobile_files_dir(),
             limit=limit,
             cursor=_query_text(query, 'cursor'),
         )
+        if conversation_items.already_paged:
+            page = {
+                'items': conversation_items.items,
+                'next_cursor': conversation_items.next_cursor,
+            }
+        else:
+            page = _agent_conversation_page(
+                conversation_items.items,
+                limit=limit,
+                cursor=_query_text(query, 'cursor'),
+            )
         conversation: dict[str, object] = {
             'project_id': project.project_id,
             'agent': target['agent'],
@@ -1544,7 +1566,9 @@ def _agent_conversation_items(
     project_root: Path,
     terminal_history: dict[str, object] | None = None,
     mobile_files_dir: Path | None = None,
-) -> list[dict[str, object]]:
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> _ConversationItemsResult:
     view = _map(view_payload.get('view'))
     agents = [_map(item) for item in _iterable(view.get('agents'))]
     agent_record = next((item for item in agents if str(item.get('name') or '') == agent), {})
@@ -1555,8 +1579,10 @@ def _agent_conversation_items(
         agent=agent,
         provider=provider_key,
         mobile_files_dir=mobile_files_dir,
+        limit=limit,
+        cursor=cursor,
     )
-    if native_items:
+    if native_items.items:
         return native_items
 
     items: list[dict[str, object]] = [
@@ -1616,7 +1642,7 @@ def _agent_conversation_items(
             agent=agent,
         )
         if terminal_items:
-            return terminal_items
+            return _ConversationItemsResult(terminal_items)
 
     for item in _agent_history_conversation_items(
         project_root,
@@ -1742,7 +1768,7 @@ def _agent_conversation_items(
             comm_item
         )
         seen_item_ids.add(item_id)
-    return items
+    return _ConversationItemsResult(items)
 
 
 def _terminal_history_conversation_items(
@@ -1814,7 +1840,9 @@ def _agent_native_conversation_items(
     agent: str,
     provider: str | None = None,
     mobile_files_dir: Path | None = None,
-) -> list[dict[str, object]]:
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> _ConversationItemsResult:
     provider_key = str(provider or '').strip().lower()
     if provider_key in {'', 'codex'}:
         codex_items = _codex_native_conversation_items(
@@ -1822,17 +1850,21 @@ def _agent_native_conversation_items(
             project_id=project_id,
             agent=agent,
             mobile_files_dir=mobile_files_dir,
+            limit=limit,
+            cursor=cursor,
         )
-        if codex_items:
+        if codex_items.items:
             return codex_items
     if provider_key in {'', 'claude'}:
-        return _claude_native_conversation_items(
-            project_root,
-            project_id=project_id,
-            agent=agent,
-            mobile_files_dir=mobile_files_dir,
+        return _ConversationItemsResult(
+            _claude_native_conversation_items(
+                project_root,
+                project_id=project_id,
+                agent=agent,
+                mobile_files_dir=mobile_files_dir,
+            )
         )
-    return []
+    return _ConversationItemsResult([])
 
 
 def _claude_native_conversation_items(
@@ -2017,11 +2049,13 @@ def _codex_native_conversation_items(
     project_id: str,
     agent: str,
     mobile_files_dir: Path | None = None,
-) -> list[dict[str, object]]:
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> _ConversationItemsResult:
     home = project_root / '.ccb' / 'agents' / agent / 'provider-state' / 'codex' / 'home'
     state_path = home / 'state_5.sqlite'
     if not state_path.is_file():
-        return []
+        return _ConversationItemsResult([])
     try:
         connection = sqlite3.connect(f'file:{state_path}?mode=ro', uri=True)
         connection.row_factory = sqlite3.Row
@@ -2033,22 +2067,82 @@ def _codex_native_conversation_items(
             )
         )
     except Exception:
-        return []
+        return _ConversationItemsResult([])
     finally:
         try:
             connection.close()  # type: ignore[possibly-undefined]
         except Exception:
             pass
 
+    if cursor and cursor.startswith(_CODEX_NATIVE_CURSOR_PREFIX):
+        if _codex_native_should_use_tail(rows, home):
+            cursor_key = _decode_codex_native_cursor(cursor)
+            if cursor_key is None:
+                raise MobileGatewayError('cursor is invalid', status_code=400)
+            return _codex_native_conversation_before_page_from_tail(
+                rows,
+                home=home,
+                project_root=project_root,
+                project_id=project_id,
+                agent=agent,
+                mobile_files_dir=mobile_files_dir,
+                limit=limit or 50,
+                cursor_key=cursor_key,
+            )
+        items = _codex_native_conversation_all_items(
+            rows,
+            home=home,
+            project_root=project_root,
+            project_id=project_id,
+            agent=agent,
+            mobile_files_dir=mobile_files_dir,
+        )
+        return _codex_native_conversation_before_page(
+            items,
+            limit=limit or 50,
+            cursor=cursor,
+        )
+
+    if cursor is None and limit is not None and _codex_native_should_use_tail(rows, home):
+        return _codex_native_conversation_latest_page(
+            rows,
+            home=home,
+            project_root=project_root,
+            project_id=project_id,
+            agent=agent,
+            mobile_files_dir=mobile_files_dir,
+            limit=limit,
+        )
+
+    items = _codex_native_conversation_all_items(
+        rows,
+        home=home,
+        project_root=project_root,
+        project_id=project_id,
+        agent=agent,
+        mobile_files_dir=mobile_files_dir,
+    )
+    return _ConversationItemsResult([
+        _without_native_sort_fields(item)
+        for item in _coalesce_codex_native_agent_replies(items)
+    ])
+
+
+def _codex_native_conversation_all_items(
+    rows: list[sqlite3.Row],
+    *,
+    home: Path,
+    project_root: Path,
+    project_id: str,
+    agent: str,
+    mobile_files_dir: Path | None,
+) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for row_index, row in enumerate(rows):
         thread_id = str(row['id'] or '').strip() or f'thread-{len(items)}'
-        rollout_text = str(row['rollout_path'] or '').strip()
-        if not rollout_text:
+        rollout_path = _codex_rollout_path(row, home=home)
+        if rollout_path is None:
             continue
-        rollout_path = Path(rollout_text)
-        if not rollout_path.is_absolute():
-            rollout_path = home / rollout_path
         fallback_timestamp = _codex_thread_fallback_timestamp(row)
         items.extend(
             _codex_rollout_conversation_items(
@@ -2070,7 +2164,13 @@ def _codex_native_conversation_items(
                 ],
             )
         )
-    sorted_items = [
+    return _codex_sort_native_items(items)
+
+
+def _codex_sort_native_items(
+    items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
         item
         for _, item in sorted(
             enumerate(items),
@@ -2082,10 +2182,345 @@ def _codex_native_conversation_items(
             ),
         )
     ]
-    return [
-        _without_native_sort_fields(item)
-        for item in _coalesce_codex_native_agent_replies(sorted_items)
+
+
+def _codex_native_should_use_tail(rows: list[sqlite3.Row], home: Path) -> bool:
+    if len(rows) > _CODEX_NATIVE_TAIL_THREAD_LIMIT:
+        return True
+    for row in rows:
+        rollout_path = _codex_rollout_path(row, home=home)
+        if rollout_path is None:
+            continue
+        try:
+            if rollout_path.stat().st_size >= _CODEX_NATIVE_TAIL_FILE_BYTES:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _codex_native_conversation_latest_page(
+    rows: list[sqlite3.Row],
+    *,
+    home: Path,
+    project_root: Path,
+    project_id: str,
+    agent: str,
+    mobile_files_dir: Path | None,
+    limit: int,
+) -> _ConversationItemsResult:
+    items: list[dict[str, object]] = []
+    parsed_thread_count = 0
+    has_older = False
+    indexed_rows = list(enumerate(rows))
+    latest_rows = sorted(
+        indexed_rows,
+        key=lambda indexed: (
+            _codex_thread_timestamp_value(indexed[1]),
+            str(indexed[1]['id'] or ''),
+        ),
+        reverse=True,
+    )
+    for row_index, row in latest_rows:
+        if parsed_thread_count >= _CODEX_NATIVE_TAIL_THREAD_LIMIT:
+            has_older = True
+            break
+        rollout_path = _codex_rollout_path(row, home=home)
+        if rollout_path is None:
+            continue
+        before_offset: int | None = None
+        parsed_thread_count += 1
+        chunk_count = 0
+        while True:
+            chunk_count += 1
+            tail_lines, complete = _codex_rollout_tail_lines(
+                rollout_path,
+                line_limit=_CODEX_NATIVE_TAIL_LINE_LIMIT,
+                before_offset=before_offset,
+            )
+            if not tail_lines:
+                break
+            items.extend(
+                _codex_rollout_conversation_items(
+                    rollout_path,
+                    project_root=project_root,
+                    project_id=project_id,
+                    agent=agent,
+                    thread_id=str(row['id'] or '').strip() or f'thread-{row_index}',
+                    thread_order=row_index,
+                    fallback_timestamp=_codex_thread_fallback_timestamp(row),
+                    mobile_files_dir=mobile_files_dir,
+                    file_roots=[
+                        path
+                        for path in (
+                            mobile_files_dir,
+                            project_root / '.ccb' / 'ccbd' / 'mobile' / 'files',
+                        )
+                        if path is not None
+                    ],
+                    line_records=tail_lines,
+                )
+            )
+            coalesced_count = len(
+                _coalesce_codex_native_agent_replies(_codex_sort_native_items(items))
+            )
+            if coalesced_count >= limit * 3:
+                has_older = True
+                break
+            if complete:
+                break
+            has_older = True
+            if chunk_count >= _CODEX_NATIVE_TAIL_CHUNK_LIMIT:
+                break
+            before_offset = tail_lines[0][0]
+        if len(_coalesce_codex_native_agent_replies(_codex_sort_native_items(items))) >= limit * 3:
+            break
+    sorted_items = _codex_sort_native_items(items)
+    coalesced = _coalesce_codex_native_agent_replies(sorted_items)
+    start = max(0, len(coalesced) - limit)
+    page_items = coalesced[start:]
+    if start > 0:
+        has_older = True
+    next_cursor = _codex_native_before_cursor(page_items[0]) if has_older and page_items else None
+    return _ConversationItemsResult(
+        [_without_native_sort_fields(item) for item in page_items],
+        already_paged=True,
+        next_cursor=next_cursor,
+    )
+
+
+def _codex_native_conversation_before_page(
+    sorted_items: list[dict[str, object]],
+    *,
+    limit: int,
+    cursor: str,
+) -> _ConversationItemsResult:
+    cursor_key = _decode_codex_native_cursor(cursor)
+    if cursor_key is None:
+        raise MobileGatewayError('cursor is invalid', status_code=400)
+    coalesced = _coalesce_codex_native_agent_replies(sorted_items)
+    end = len(coalesced)
+    for index, item in enumerate(coalesced):
+        if _codex_native_sort_key(item) >= cursor_key:
+            end = index
+            break
+    start = max(0, end - limit)
+    page_items = coalesced[start:end]
+    return _ConversationItemsResult(
+        [_without_native_sort_fields(item) for item in page_items],
+        already_paged=True,
+        next_cursor=_codex_native_before_cursor(page_items[0]) if start > 0 and page_items else None,
+    )
+
+
+def _codex_native_conversation_before_page_from_tail(
+    rows: list[sqlite3.Row],
+    *,
+    home: Path,
+    project_root: Path,
+    project_id: str,
+    agent: str,
+    mobile_files_dir: Path | None,
+    limit: int,
+    cursor_key: tuple[str, int, int, str],
+) -> _ConversationItemsResult:
+    items: list[dict[str, object]] = []
+    indexed_rows = list(enumerate(rows))
+    latest_rows = sorted(
+        indexed_rows,
+        key=lambda indexed: (
+            _codex_thread_timestamp_value(indexed[1]),
+            str(indexed[1]['id'] or ''),
+        ),
+        reverse=True,
+    )
+    started = False
+    for row_index, row in latest_rows:
+        if row_index == cursor_key[1]:
+            before_offset: int | None = cursor_key[2]
+            started = True
+        elif not started:
+            continue
+        else:
+            before_offset = None
+        rollout_path = _codex_rollout_path(row, home=home)
+        if rollout_path is None:
+            continue
+        while True:
+            tail_lines, complete = _codex_rollout_tail_lines(
+                rollout_path,
+                line_limit=_CODEX_NATIVE_TAIL_LINE_LIMIT,
+                before_offset=before_offset,
+            )
+            if not tail_lines:
+                break
+            items.extend(
+                _codex_rollout_conversation_items(
+                    rollout_path,
+                    project_root=project_root,
+                    project_id=project_id,
+                    agent=agent,
+                    thread_id=str(row['id'] or '').strip() or f'thread-{row_index}',
+                    thread_order=row_index,
+                    fallback_timestamp=_codex_thread_fallback_timestamp(row),
+                    mobile_files_dir=mobile_files_dir,
+                    file_roots=[
+                        path
+                        for path in (
+                            mobile_files_dir,
+                            project_root / '.ccb' / 'ccbd' / 'mobile' / 'files',
+                        )
+                        if path is not None
+                    ],
+                    line_records=tail_lines,
+                )
+            )
+            coalesced_before = [
+                item
+                for item in _coalesce_codex_native_agent_replies(
+                    _codex_sort_native_items(items)
+                )
+                if _codex_native_sort_key(item) < cursor_key
+            ]
+            if len(coalesced_before) >= limit * 3:
+                break
+            if complete:
+                break
+            before_offset = tail_lines[0][0]
+        if len([
+            item
+            for item in _coalesce_codex_native_agent_replies(
+                _codex_sort_native_items(items)
+            )
+            if _codex_native_sort_key(item) < cursor_key
+        ]) >= limit * 3:
+            break
+    coalesced = [
+        item
+        for item in _coalesce_codex_native_agent_replies(
+            _codex_sort_native_items(items)
+        )
+        if _codex_native_sort_key(item) < cursor_key
     ]
+    start = max(0, len(coalesced) - limit)
+    page_items = coalesced[start:]
+    return _ConversationItemsResult(
+        [_without_native_sort_fields(item) for item in page_items],
+        already_paged=True,
+        next_cursor=_codex_native_before_cursor(page_items[0]) if start > 0 and page_items else None,
+    )
+
+
+def _codex_rollout_path(row: sqlite3.Row, *, home: Path) -> Path | None:
+    rollout_text = str(row['rollout_path'] or '').strip()
+    if not rollout_text:
+        return None
+    rollout_path = Path(rollout_text)
+    if not rollout_path.is_absolute():
+        rollout_path = home / rollout_path
+    return rollout_path
+
+
+def _codex_thread_timestamp_value(row: sqlite3.Row) -> int:
+    for key in ('updated_at', 'created_at'):
+        try:
+            return int(row[key] or 0)
+        except Exception:
+            continue
+    return 0
+
+
+def _codex_rollout_tail_lines(
+    rollout_path: Path,
+    *,
+    line_limit: int,
+    before_offset: int | None = None,
+) -> tuple[list[tuple[int, str]], bool]:
+    if line_limit <= 0:
+        return [], False
+    try:
+        with rollout_path.open('rb') as handle:
+            handle.seek(0, 2)
+            file_size = handle.tell()
+            end = min(before_offset if before_offset is not None else file_size, file_size)
+            position = end
+            chunks: list[bytes] = []
+            newline_count = 0
+            while position > 0 and newline_count <= line_limit:
+                read_size = min(_CODEX_NATIVE_TAIL_READ_BLOCK_BYTES, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                chunks.append(chunk)
+                newline_count += chunk.count(b'\n')
+    except Exception:
+        return [], True
+    if not chunks:
+        return [], before_offset is None
+    buffer = b''.join(reversed(chunks))
+    start_offset = position
+    complete = position == 0
+    if position > 0:
+        first_newline = buffer.find(b'\n')
+        if first_newline < 0:
+            return [], False
+        start_offset += first_newline + 1
+        buffer = buffer[first_newline + 1:]
+    records: list[tuple[int, str]] = []
+    offset = start_offset
+    for raw_line in buffer.splitlines(keepends=True):
+        line_offset = offset
+        offset += len(raw_line)
+        line = raw_line.rstrip(b'\r\n')
+        if not line:
+            continue
+        try:
+            records.append((line_offset, line.decode('utf-8')))
+        except UnicodeDecodeError:
+            continue
+    if len(records) > line_limit:
+        records = records[-line_limit:]
+        complete = False
+    return records, complete
+
+
+def _codex_native_sort_key(item: dict[str, object]) -> tuple[str, int, int, str]:
+    return (
+        _optional_text(item.get('_native_sort_timestamp')) or '',
+        int(item.get('_native_thread_order') or 0),
+        int(item.get('_native_line_number') or 0),
+        str(item.get('id') or ''),
+    )
+
+
+def _codex_native_before_cursor(item: dict[str, object]) -> str:
+    payload = {
+        'timestamp': _optional_text(item.get('_native_sort_timestamp')) or '',
+        'thread_order': int(item.get('_native_thread_order') or 0),
+        'line_number': int(item.get('_native_line_number') or 0),
+        'id': str(item.get('id') or ''),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    ).decode('ascii').rstrip('=')
+    return f'{_CODEX_NATIVE_CURSOR_PREFIX}{encoded}'
+
+
+def _decode_codex_native_cursor(cursor: str) -> tuple[str, int, int, str] | None:
+    if not cursor.startswith(_CODEX_NATIVE_CURSOR_PREFIX):
+        return None
+    encoded = cursor[len(_CODEX_NATIVE_CURSOR_PREFIX):]
+    try:
+        padded = encoded + ('=' * (-len(encoded) % 4))
+        payload = _map(json.loads(base64.urlsafe_b64decode(padded).decode('utf-8')))
+        return (
+            _optional_text(payload.get('timestamp')) or '',
+            int(payload.get('thread_order') or 0),
+            int(payload.get('line_number') or 0),
+            str(payload.get('id') or ''),
+        )
+    except Exception:
+        return None
 
 
 def _codex_thread_fallback_timestamp(row: sqlite3.Row) -> str:
@@ -2107,98 +2542,103 @@ def _codex_rollout_conversation_items(
     fallback_timestamp: str,
     mobile_files_dir: Path | None,
     file_roots: list[Path],
+    line_records: list[tuple[int, str]] | None = None,
 ) -> list[dict[str, object]]:
     event_items: list[dict[str, object]] = []
     response_items: list[dict[str, object]] = []
-    try:
-        lines = rollout_path.open(encoding='utf-8')
-    except Exception:
-        return []
-    with lines:
-        for line_number, line in enumerate(lines, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = _map(json.loads(line))
-            except Exception:
-                continue
-            payload = _map(record.get('payload'))
-            if record.get('type') == 'event_msg':
-                event_item = _codex_event_message_conversation_item(
-                    payload,
-                    project_root=project_root,
-                    project_id=project_id,
-                    agent=agent,
-                    item_id=f'codex-{thread_id}-{line_number}',
-                    mobile_files_dir=mobile_files_dir,
-                    file_roots=file_roots,
-                )
-                if event_item is not None:
-                    _set_native_sort_fields(
-                        event_item,
-                        record,
-                        fallback_timestamp=fallback_timestamp,
-                        thread_order=thread_order,
-                        line_number=line_number,
-                    )
-                    event_items.append(event_item)
-                continue
-            if record.get('type') != 'response_item':
-                continue
-            if payload.get('type') != 'message':
-                continue
-            role = str(payload.get('role') or '').strip()
-            if role not in {'user', 'assistant'}:
-                continue
-            body = _codex_message_content_text(payload.get('content'))
-            body = _inject_workspace_artifacts(
-                body,
+    if line_records is None:
+        try:
+            lines = rollout_path.open(encoding='utf-8')
+        except Exception:
+            return []
+        with lines:
+            records = list(enumerate(lines, start=1))
+    else:
+        records = line_records
+    for line_number, line in records:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = _map(json.loads(line))
+        except Exception:
+            continue
+        payload = _map(record.get('payload'))
+        if record.get('type') == 'event_msg':
+            event_item = _codex_event_message_conversation_item(
+                payload,
                 project_root=project_root,
                 project_id=project_id,
                 agent=agent,
+                item_id=f'codex-{thread_id}-{line_number}',
                 mobile_files_dir=mobile_files_dir,
+                file_roots=file_roots,
             )
-            body = _clean_native_message_text(body)
-            if not body:
-                continue
-            item_id = f'codex-{thread_id}-{line_number}-{role}'
-            if role == 'user':
-                item = {
-                    'id': item_id,
-                    'agent': agent,
-                    'kind': 'user_message',
-                    'title': 'You',
-                    'body': body,
-                    'format': 'markdown',
-                    'source': 'provider_native/codex',
-                    'state': 'sent',
-                    'attachments': [],
-                }
-            else:
-                item = {
-                    'id': item_id,
-                    'agent': agent,
-                    'kind': 'agent_reply',
-                    'title': 'Agent reply',
-                    'body': body,
-                    'format': 'markdown',
-                    'source': 'provider_native/codex',
-                    'attachments': _artifact_link_attachments(
-                        body,
-                        file_roots=file_roots,
-                        project_id=project_id,
-                        agent=agent,
-                    ),
-                }
-            _set_native_sort_fields(
-                item,
-                record,
-                fallback_timestamp=fallback_timestamp,
-                thread_order=thread_order,
-                line_number=line_number,
-            )
-            response_items.append(item)
+            if event_item is not None:
+                _set_native_sort_fields(
+                    event_item,
+                    record,
+                    fallback_timestamp=fallback_timestamp,
+                    thread_order=thread_order,
+                    line_number=line_number,
+                )
+                event_items.append(event_item)
+            continue
+        if record.get('type') != 'response_item':
+            continue
+        if payload.get('type') != 'message':
+            continue
+        role = str(payload.get('role') or '').strip()
+        if role not in {'user', 'assistant'}:
+            continue
+        body = _codex_message_content_text(payload.get('content'))
+        body = _inject_workspace_artifacts(
+            body,
+            project_root=project_root,
+            project_id=project_id,
+            agent=agent,
+            mobile_files_dir=mobile_files_dir,
+        )
+        body = _clean_native_message_text(body)
+        if not body:
+            continue
+        item_id = f'codex-{thread_id}-{line_number}-{role}'
+        if role == 'user':
+            item = {
+                'id': item_id,
+                'agent': agent,
+                'kind': 'user_message',
+                'title': 'You',
+                'body': body,
+                'format': 'markdown',
+                'source': 'provider_native/codex',
+                'state': 'sent',
+                'attachments': [],
+            }
+        else:
+            item = {
+                'id': item_id,
+                'agent': agent,
+                'kind': 'agent_reply',
+                'title': 'Agent reply',
+                'body': body,
+                'format': 'markdown',
+                'source': 'provider_native/codex',
+                'attachments': _artifact_link_attachments(
+                    body,
+                    file_roots=file_roots,
+                    project_id=project_id,
+                    agent=agent,
+                ),
+            }
+        _set_native_sort_fields(
+            item,
+            record,
+            fallback_timestamp=fallback_timestamp,
+            thread_order=thread_order,
+            line_number=line_number,
+        )
+        response_items.append(item)
     return event_items or response_items
 
 
