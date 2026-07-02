@@ -230,6 +230,83 @@ void main() {
     expect(timelineBottom - itemBottom, lessThan(140));
   });
 
+  testWidgets('new latest bubble is comfortably revealed while following', (
+    tester,
+  ) async {
+    await setTestSurfaceSize(tester, const Size(390, 844));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: LongConversationRepository(messageCount: 120),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openCurrentProject(tester);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'follow latest send',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('follow latest send'), findsOneWidget);
+    final itemBottom =
+        tester
+            .getBottomRight(
+              find.byKey(const ValueKey('conversation-item-local-mobile-0')),
+            )
+            .dy;
+    final timelineBottom =
+        tester
+            .getBottomRight(find.byKey(const ValueKey('agent-chat-timeline')))
+            .dy;
+
+    expect(timelineBottom - itemBottom, greaterThanOrEqualTo(32));
+    expect(timelineBottom - itemBottom, lessThan(120));
+  });
+
+  testWidgets('remote latest bubble does not yank while reading history', (
+    tester,
+  ) async {
+    await setTestSurfaceSize(tester, const Size(390, 844));
+    final repository = _MutableLongConversationRepository(messageCount: 120);
+    await tester.pumpWidget(
+      MaterialApp(home: ProjectHomeScreen(repository: repository)),
+    );
+    await tester.pumpAndSettle();
+    await openCurrentProject(tester);
+
+    await dragUntilVisible(
+      tester,
+      const ValueKey('conversation-item-long-020'),
+      const Offset(0, 700),
+    );
+    final timeline = tester.widget<ListView>(
+      find.byKey(const ValueKey('agent-chat-timeline')),
+    );
+    final controller = timeline.controller!;
+    final beforeRefreshOffset = controller.position.pixels;
+
+    repository.appendReply('remote-new', 'New remote reply while reading.');
+    await tester.tap(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(controller.position.pixels, closeTo(beforeRefreshOffset, 1));
+    expect(find.byKey(const ValueKey('agent-new-messages-jump')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('conversation-item-remote-new')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('conversation-item-long-020')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('user send scrolls to latest while reading older history', (
     tester,
   ) async {
@@ -264,4 +341,48 @@ void main() {
       findsNothing,
     );
   });
+}
+
+class _MutableLongConversationRepository extends LongConversationRepository {
+  _MutableLongConversationRepository({required super.messageCount});
+
+  final List<CcbConversationItem> _extraReplies = [];
+
+  void appendReply(String id, String body) {
+    _extraReplies.add(
+      CcbConversationItem(
+        id: id,
+        agentName: 'lead',
+        kind: CcbConversationItemKind.agentReply,
+        title: 'Agent reply',
+        body: body,
+        source: 'test',
+      ),
+    );
+  }
+
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    final conversation = await super.getAgentConversation(
+      projectId: projectId,
+      agent: agent,
+      namespaceEpoch: namespaceEpoch,
+      limit: limit,
+      cursor: cursor,
+    );
+    return CcbAgentConversation(
+      projectId: conversation.projectId,
+      agentName: conversation.agentName,
+      namespaceEpoch: conversation.namespaceEpoch,
+      items: [...conversation.items, ..._extraReplies],
+      nextCursor: conversation.nextCursor,
+      generatedAt: DateTime.utc(2026, 6, 22, 12, _extraReplies.length),
+    );
+  }
 }

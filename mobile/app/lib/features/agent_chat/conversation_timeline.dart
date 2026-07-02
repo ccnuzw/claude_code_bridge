@@ -11,7 +11,9 @@ import 'content_reader.dart';
 import 'conversation_bubble.dart';
 import 'readable_terminal_history_panel.dart';
 
-const double conversationTimelineExpandedRevealPadding = 96;
+const double conversationTimelineFollowLatestPadding = 40;
+const double conversationTimelineExpandedRevealPadding = 64;
+const double conversationTimelineNearEndThreshold = 120;
 
 class ConversationTimeline extends StatelessWidget {
   const ConversationTimeline({
@@ -91,17 +93,17 @@ class ConversationTimeline extends StatelessWidget {
       },
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final expandedReadPadding =
-              expandedItemIds.isEmpty
-                  ? 0.0
-                  : conversationTimelineExpandedRevealPadding
-                      .clamp(0.0, constraints.maxHeight)
-                      .toDouble();
+          final bottomReadPadding =
+              (expandedItemIds.isEmpty
+                      ? conversationTimelineFollowLatestPadding
+                      : conversationTimelineExpandedRevealPadding)
+                  .clamp(0.0, constraints.maxHeight)
+                  .toDouble();
           return ListView.separated(
             key: const ValueKey('agent-chat-timeline'),
             controller: controller,
             primary: false,
-            padding: EdgeInsets.only(bottom: expandedReadPadding),
+            padding: EdgeInsets.only(bottom: bottomReadPadding),
             scrollCacheExtent: const ScrollCacheExtent.pixels(420),
             itemCount: items.length + loadingOffset,
             separatorBuilder: (context, index) => const SizedBox(height: 8),
@@ -285,7 +287,8 @@ ScrollDirection userScrollDirectionForNotification(
 }
 
 bool isScrollMetricsNearEnd(ScrollMetrics metrics) {
-  return metrics.maxScrollExtent - metrics.pixels <= 72;
+  return metrics.maxScrollExtent - metrics.pixels <=
+      conversationTimelineNearEndThreshold;
 }
 
 bool isScrollMetricsNearStart(ScrollMetrics metrics) {

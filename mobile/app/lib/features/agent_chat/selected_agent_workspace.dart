@@ -778,12 +778,16 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     if (agent == null || agent.name != agentName) {
       return;
     }
+    final wasNearLatest = _isTimelineNearEnd(agent.name);
     final result = await _refreshExecutionStatusForAgent(agent);
     if (!result.settled || !mounted || widget.agent?.name != agent.name) {
       if (mounted &&
           widget.agent?.name == agent.name &&
           _shouldRefreshConversationWhileAwaiting(agent.name)) {
         await _refreshSelectedAgentConversation(agent);
+      }
+      if (wasNearLatest && mounted && widget.agent?.name == agent.name) {
+        _scrollTimelineToEnd(agent.name);
       }
       return;
     }
@@ -993,11 +997,32 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   }
 
   void _scrollTimelineToEnd(String agentName, {int attempt = 0}) {
+    _clearNewMessageFlag(agentName);
     _uiControllers.scrollTimelineToEnd(
       agentName,
       isActive: (agentName) => mounted && widget.agent?.name == agentName,
+      targetItemId: _latestTimelineItemId(agentName),
       attempt: attempt,
     );
+  }
+
+  String? _latestTimelineItemId(String agentName) {
+    final selectedAgent = widget.agent;
+    if (selectedAgent == null || selectedAgent.name != agentName) {
+      return null;
+    }
+    final model = selectedAgentWorkspaceModel(
+      view: widget.view,
+      agent: selectedAgent,
+      chatController: _chatController,
+      isAwaitingAgentResponse: _awaitingPaneResponseAgentNames.contains(
+        selectedAgent.name,
+      ),
+      hasLocalExecutionException: _localExceptionStatusAgentNames.contains(
+        selectedAgent.name,
+      ),
+    );
+    return model.timelineItems.isEmpty ? null : model.timelineItems.last.id;
   }
 
   @override
