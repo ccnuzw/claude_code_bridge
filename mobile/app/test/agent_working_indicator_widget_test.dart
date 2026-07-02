@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ccb_mobile/features/project_home/agent_window_switchers.dart';
+import 'package:ccb_mobile/features/project_home/project_list.dart';
 import 'package:ccb_mobile/features/project_home/wide_agent_column.dart';
 import 'package:ccb_mobile/models/ccb_agent.dart';
 import 'package:ccb_mobile/models/ccb_project.dart';
@@ -26,6 +27,7 @@ void main() {
               ),
             ],
             selectedAgentName: 'idle',
+            unreadAgentNames: const {'working'},
             onAgentSelected: (_) {},
           ),
         ),
@@ -46,6 +48,36 @@ void main() {
     expect(idle.side, isNull);
     expect(working.side?.color, colorScheme.tertiary);
     expect(working.side?.width, 1.6);
+    expect(
+      find.byKey(const ValueKey('agent-unread-star-working')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('project avatar can show working ring and unread star together', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ProjectAttentionAvatar(
+            projectId: 'proj',
+            favorite: false,
+            hasUnreadTaskCompletion: true,
+            hasWorkingAgents: true,
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('project-working-ring-proj')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('project-unread-star-proj')),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

@@ -309,7 +309,7 @@ void main() {
       find.byKey(const ValueKey('conversation-working-reply-working')),
       findsOneWidget,
     );
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     final material = tester.widget<Material>(
       find.byKey(const ValueKey('conversation-item-reply-working')),

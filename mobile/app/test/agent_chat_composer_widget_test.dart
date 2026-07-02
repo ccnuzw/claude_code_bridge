@@ -1840,85 +1840,97 @@ void main() {
     expect(find.text('mobile completed'), findsNothing);
   });
 
-  testWidgets(
-    'scheduled refresh completes only after observed working returns idle',
-    (tester) async {
-      final terminalTransport = RecordingTerminalTransport();
-      var refreshCalls = 0;
-      var view = _workspaceView(
-        _statusAgent(
-          activityState: 'idle',
-          activitySource: 'provider_pane',
-          activityReason: 'provider_prompt_idle',
-        ),
-      );
+  testWidgets('scheduled refresh waits for reply progress before completing', (
+    tester,
+  ) async {
+    final terminalTransport = RecordingTerminalTransport();
+    final repository = ControlledCompletedReplyConversationRepository();
+    var refreshCalls = 0;
+    var view = _workspaceView(
+      _statusAgent(
+        activityState: 'idle',
+        activitySource: 'provider_pane',
+        activityReason: 'provider_prompt_idle',
+      ),
+    );
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: StatefulBuilder(
-              builder: (context, setState) {
-                final agent = view.agentByName('mobile')!;
-                return SelectedAgentWorkspace(
-                  repository: FakeMobileCcbRepository.demo(),
-                  terminalTransport: terminalTransport,
-                  usePaneInputForMessages: true,
-                  view: view,
-                  agent: agent,
-                  enableComposerCollapse: true,
-                  onRefreshView: () async {
-                    refreshCalls += 1;
-                    final refreshed = _workspaceView(
-                      refreshCalls == 1
-                          ? _statusAgent(
-                            activityState: 'active',
-                            activitySource: 'codex_runtime',
-                            activityReason: 'codex_working_status_line',
-                          )
-                          : _statusAgent(
-                            activityState: 'idle',
-                            activitySource: 'provider_pane',
-                            activityReason: 'provider_prompt_idle',
-                          ),
-                    );
-                    setState(() {
-                      view = refreshed;
-                    });
-                    return refreshed;
-                  },
-                );
-              },
-            ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              final agent = view.agentByName('mobile')!;
+              return SelectedAgentWorkspace(
+                repository: repository,
+                terminalTransport: terminalTransport,
+                usePaneInputForMessages: true,
+                view: view,
+                agent: agent,
+                enableComposerCollapse: true,
+                onRefreshView: () async {
+                  refreshCalls += 1;
+                  final refreshed = _workspaceView(
+                    refreshCalls == 1
+                        ? _statusAgent(
+                          activityState: 'active',
+                          activitySource: 'codex_runtime',
+                          activityReason: 'codex_working_status_line',
+                        )
+                        : _statusAgent(
+                          activityState: 'idle',
+                          activitySource: 'provider_pane',
+                          activityReason: 'provider_prompt_idle',
+                        ),
+                  );
+                  setState(() {
+                    view = refreshed;
+                  });
+                  return refreshed;
+                },
+              );
+            },
           ),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byKey(const ValueKey('agent-message-composer')),
-        'work then really idle',
-      );
-      await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
-      await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'work then really idle',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+    await tester.pump();
 
-      expect(find.text('Working'), findsOneWidget);
+    expect(find.text('Working'), findsOneWidget);
 
-      await tester.pump(const Duration(milliseconds: 120));
-      await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump();
 
-      expect(refreshCalls, 1);
-      expect(find.text('Working'), findsOneWidget);
-      expect(find.text('mobile completed'), findsNothing);
+    expect(refreshCalls, 1);
+    expect(find.text('Working'), findsOneWidget);
+    expect(find.text('mobile completed'), findsNothing);
 
-      await tester.pump(const Duration(milliseconds: 180));
-      await tester.pump();
+    await tester.pump(const Duration(milliseconds: 180));
+    await tester.pump();
 
-      expect(refreshCalls, greaterThanOrEqualTo(2));
-      expect(find.text('Idle'), findsOneWidget);
-      expect(find.text('Working'), findsNothing);
-      expect(find.text('mobile completed'), findsOneWidget);
-    },
-  );
+    expect(refreshCalls, greaterThanOrEqualTo(2));
+    expect(find.text('mobile completed'), findsNothing);
+
+    repository.releaseReply();
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(find.text('completed reply after idle'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Idle'), findsOneWidget);
+    expect(find.text('Working'), findsNothing);
+    expect(find.text('mobile completed'), findsOneWidget);
+  });
 
   testWidgets('scheduled refresh shows new reply while agent remains working', (
     tester,
@@ -2607,7 +2619,7 @@ class LateIdleReplyConversationRepository extends RecordingGatewayRepository {
       agentName: agent,
       namespaceEpoch: namespaceEpoch,
       items:
-          _loads < 3
+          _loads < 4
               ? const []
               : [
                 CcbConversationItem(
@@ -2621,6 +2633,48 @@ class LateIdleReplyConversationRepository extends RecordingGatewayRepository {
                 ),
               ],
       generatedAt: now.add(Duration(seconds: _loads)),
+    );
+  }
+}
+
+class ControlledCompletedReplyConversationRepository
+    extends RecordingGatewayRepository {
+  var _showReply = false;
+
+  void releaseReply() {
+    _showReply = true;
+  }
+
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add((projectId, agent, namespaceEpoch));
+    final startedAt = DateTime.utc(2100, 7, 1, 12);
+    return CcbAgentConversation(
+      projectId: projectId,
+      agentName: agent,
+      namespaceEpoch: namespaceEpoch,
+      items:
+          !_showReply
+              ? const []
+              : [
+                CcbConversationItem(
+                  id: 'reply-completed-after-idle',
+                  agentName: agent,
+                  kind: CcbConversationItemKind.agentReply,
+                  title: 'Agent reply',
+                  body: 'completed reply after idle',
+                  source: 'provider_native/codex',
+                  startedAt: startedAt,
+                  completedAt: startedAt.add(const Duration(seconds: 3)),
+                ),
+              ],
+      generatedAt: startedAt,
     );
   }
 }

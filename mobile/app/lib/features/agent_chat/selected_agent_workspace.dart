@@ -34,7 +34,6 @@ const agentMessageMaxAttachmentBytes = 25 * 1024 * 1024;
 const selectedAgentTabKeyBytes = [9];
 const selectedAgentEscapeKeyBytes = [27];
 const selectedAgentExpandScrollDuration = Duration(milliseconds: 220);
-const selectedAgentAwaitingConversationRefreshInterval = Duration(seconds: 2);
 
 class SelectedAgentWorkspace extends StatefulWidget {
   const SelectedAgentWorkspace({
@@ -113,7 +112,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   final Set<String> _localExceptionStatusAgentNames = {};
   final Map<String, String> _recentPaneOutputText = {};
   final Set<String> _pendingClearNewMessageAgents = {};
-  final Map<String, DateTime> _lastAwaitingConversationRefreshAt = {};
   var _nextDraftAttachmentIndex = 0;
 
   @override
@@ -790,21 +788,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
       return;
     }
     _conversationRefreshScheduler.cancelAll();
-    _lastAwaitingConversationRefreshAt.remove(agent.name);
     await _refreshLatestForAgent(agent, refreshViewFirst: false);
   }
 
-  bool _shouldRefreshConversationWhileAwaiting(String agentName) {
-    final now = DateTime.now().toUtc();
-    final previous = _lastAwaitingConversationRefreshAt[agentName];
-    if (previous != null &&
-        now.difference(previous) <
-            selectedAgentAwaitingConversationRefreshInterval) {
-      return false;
-    }
-    _lastAwaitingConversationRefreshAt[agentName] = now;
-    return true;
-  }
+  bool _shouldRefreshConversationWhileAwaiting(String _) => true;
 
   void _handleRefreshScheduleChanged() {
     if (!mounted) {
@@ -880,10 +867,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     }
     if (status.state == 'idle') {
       final wasAwaiting = _awaitingPaneResponseAgentNames.contains(agentName);
-      final observedWorking = _sourceWorkingAgentNames.remove(agentName);
+      final observedWorking = _sourceWorkingAgentNames.contains(agentName);
       final replyProgress = _awaitingReplyProgress(agentName);
       if (wasAwaiting) {
-        if (!observedWorking && !replyProgress.hasReplyProgress) {
+        if (!replyProgress.hasReplyProgress) {
           return _ExecutionSyncResult.pending;
         }
         if (replyProgress.hasRunningReply) {
@@ -891,6 +878,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
         }
       }
       _clearAwaitingPaneResponse(agentName);
+      _sourceWorkingAgentNames.remove(agentName);
       _localExceptionStatusAgentNames.remove(agentName);
       if (wasAwaiting && observedWorking) {
         _showSnack(
@@ -916,7 +904,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   void _clearAwaitingPaneResponse(String agentName) {
     _awaitingPaneResponseAgentNames.remove(agentName);
     _awaitingReplyBaselines.remove(agentName);
-    _lastAwaitingConversationRefreshAt.remove(agentName);
   }
 
   _AwaitingReplyProgress _awaitingReplyProgress(String agentName) {
