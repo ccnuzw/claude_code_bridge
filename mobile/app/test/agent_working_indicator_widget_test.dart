@@ -79,6 +79,10 @@ void main() {
         findsOneWidget,
       );
       expect(
+        find.byKey(const ValueKey('project-working-row-pulse-proj')),
+        findsOneWidget,
+      );
+      expect(
         find.byKey(const ValueKey('project-unread-star-proj')),
         findsOneWidget,
       );
@@ -99,6 +103,11 @@ void main() {
           return border is Border && border.left.width == 4;
         }),
         isTrue,
+      );
+      final colorScheme = ThemeData().colorScheme;
+      expect(
+        projectWorkingRowTint(colorScheme, 0),
+        isNot(projectWorkingRowTint(colorScheme, 1)),
       );
     },
   );

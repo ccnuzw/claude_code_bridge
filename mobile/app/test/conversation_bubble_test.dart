@@ -309,6 +309,10 @@ void main() {
       find.byKey(const ValueKey('conversation-working-reply-working')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('conversation-working-glow-reply-working')),
+      findsOneWidget,
+    );
     expect(find.byIcon(Icons.pending_rounded), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
 
@@ -317,12 +321,24 @@ void main() {
     );
     final shape = material.shape as RoundedRectangleBorder;
     final colorScheme = ThemeData().colorScheme;
-    expect(
-      material.color,
-      colorScheme.primaryContainer.withValues(alpha: 0.58),
-    );
+    expect(material.color, conversationWorkingBubbleTint(colorScheme, 0));
     expect(shape.side.color, colorScheme.primary);
     expect(shape.side.width, 2.4);
+
+    expect(
+      conversationWorkingBubbleTint(colorScheme, 1),
+      isNot(conversationWorkingBubbleTint(colorScheme, 0)),
+    );
+    expect(
+      conversationWorkingBubbleBorderSide(colorScheme, 1).width,
+      greaterThan(conversationWorkingBubbleBorderSide(colorScheme, 0).width),
+    );
+    expect(
+      conversationWorkingBubbleGlow(colorScheme, 1).single.blurRadius,
+      greaterThan(
+        conversationWorkingBubbleGlow(colorScheme, 0).single.blurRadius,
+      ),
+    );
   });
 
   testWidgets('failed reply keeps error styling over working state', (
@@ -353,6 +369,10 @@ void main() {
 
     expect(
       find.byKey(const ValueKey('conversation-working-reply-failed')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('conversation-working-glow-reply-failed')),
       findsNothing,
     );
     expect(find.byIcon(Icons.pending_rounded), findsNothing);

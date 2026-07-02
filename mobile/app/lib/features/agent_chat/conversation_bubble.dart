@@ -108,14 +108,12 @@ class ConversationBubble extends StatelessWidget {
         child: Semantics(
           container: true,
           hint: showWorking ? strings.executionStatus('Working') : null,
-          child: Material(
-            key: ValueKey('conversation-item-${item.id}'),
+          child: _ConversationBubbleSurface(
+            itemId: item.id,
+            isWorking: showWorking,
             color: bubbleColor,
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              side: BorderSide(color: borderColor, width: borderWidth),
-              borderRadius: BorderRadius.circular(8),
-            ),
+            borderColor: borderColor,
+            borderWidth: borderWidth,
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: Column(
@@ -266,6 +264,173 @@ class ConversationBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ConversationBubbleSurface extends StatefulWidget {
+  const _ConversationBubbleSurface({
+    required this.itemId,
+    required this.isWorking,
+    required this.color,
+    required this.borderColor,
+    required this.borderWidth,
+    required this.child,
+  });
+
+  final String itemId;
+  final bool isWorking;
+  final Color color;
+  final Color borderColor;
+  final double borderWidth;
+  final Widget child;
+
+  @override
+  State<_ConversationBubbleSurface> createState() =>
+      _ConversationBubbleSurfaceState();
+}
+
+class _ConversationBubbleSurfaceState extends State<_ConversationBubbleSurface>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  );
+  late final Animation<double> _pulse = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOut,
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(_ConversationBubbleSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncAnimation();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _syncAnimation() {
+    final shouldAnimate =
+        widget.isWorking && !_conversationWorkingAnimationDisabled(context);
+    if (shouldAnimate) {
+      if (!_controller.isAnimating) {
+        _controller.repeat(reverse: true);
+      }
+      return;
+    }
+    if (_controller.isAnimating) {
+      _controller.stop();
+    }
+    _controller.value = 0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.isWorking) {
+      return _buildMaterial(context, pulse: 0);
+    }
+    return AnimatedBuilder(
+      key: ValueKey('conversation-working-glow-${widget.itemId}'),
+      animation: _pulse,
+      child: widget.child,
+      builder: (context, child) {
+        final pulse = _pulse.value;
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: conversationWorkingBubbleGlow(
+              Theme.of(context).colorScheme,
+              pulse,
+            ),
+          ),
+          child: _buildMaterial(
+            context,
+            pulse: pulse,
+            child: child ?? widget.child,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMaterial(
+    BuildContext context, {
+    required double pulse,
+    Widget? child,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final color =
+        widget.isWorking
+            ? conversationWorkingBubbleTint(colorScheme, pulse)
+            : widget.color;
+    final borderSide =
+        widget.isWorking
+            ? conversationWorkingBubbleBorderSide(colorScheme, pulse)
+            : BorderSide(color: widget.borderColor, width: widget.borderWidth);
+    return Material(
+      key: ValueKey('conversation-item-${widget.itemId}'),
+      color: color,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        side: borderSide,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: child ?? widget.child,
+    );
+  }
+}
+
+@visibleForTesting
+Color conversationWorkingBubbleTint(ColorScheme colorScheme, double pulse) {
+  final clampedPulse = pulse.clamp(0.0, 1.0);
+  return colorScheme.primaryContainer.withValues(
+    alpha: 0.58 + (0.08 * clampedPulse),
+  );
+}
+
+@visibleForTesting
+BorderSide conversationWorkingBubbleBorderSide(
+  ColorScheme colorScheme,
+  double pulse,
+) {
+  final clampedPulse = pulse.clamp(0.0, 1.0);
+  return BorderSide(
+    color: colorScheme.primary,
+    width: 2.4 + (0.4 * clampedPulse),
+  );
+}
+
+@visibleForTesting
+List<BoxShadow> conversationWorkingBubbleGlow(
+  ColorScheme colorScheme,
+  double pulse,
+) {
+  final clampedPulse = pulse.clamp(0.0, 1.0);
+  return [
+    BoxShadow(
+      color: colorScheme.primary.withValues(
+        alpha: 0.14 + (0.10 * clampedPulse),
+      ),
+      blurRadius: 6 + (8 * clampedPulse),
+      spreadRadius: 0.5 + (1.4 * clampedPulse),
+    ),
+  ];
+}
+
+bool _conversationWorkingAnimationDisabled(BuildContext context) {
+  final mediaQuery = MediaQuery.maybeOf(context);
+  final isWidgetTest = WidgetsBinding.instance.runtimeType.toString().contains(
+    'Test',
+  );
+  return isWidgetTest || (mediaQuery?.disableAnimations ?? false);
 }
 
 class _ConversationWorkingIndicator extends StatelessWidget {

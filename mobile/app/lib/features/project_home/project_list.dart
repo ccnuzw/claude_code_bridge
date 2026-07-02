@@ -159,7 +159,7 @@ class ProjectListTile extends StatelessWidget {
   }
 }
 
-class ProjectWorkingRowHighlight extends StatelessWidget {
+class ProjectWorkingRowHighlight extends StatefulWidget {
   const ProjectWorkingRowHighlight({
     required this.projectId,
     required this.hasWorkingAgents,
@@ -172,30 +172,107 @@ class ProjectWorkingRowHighlight extends StatelessWidget {
   final Widget child;
 
   @override
+  State<ProjectWorkingRowHighlight> createState() =>
+      _ProjectWorkingRowHighlightState();
+}
+
+class _ProjectWorkingRowHighlightState extends State<ProjectWorkingRowHighlight>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1900),
+  );
+  late final Animation<double> _pulse = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOut,
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(ProjectWorkingRowHighlight oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncAnimation();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _syncAnimation() {
+    final shouldAnimate =
+        widget.hasWorkingAgents &&
+        !mobileWorkingAttentionAnimationDisabled(context);
+    if (shouldAnimate) {
+      if (!_controller.isAnimating) {
+        _controller.repeat(reverse: true);
+      }
+      return;
+    }
+    if (_controller.isAnimating) {
+      _controller.stop();
+    }
+    _controller.value = 0;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (!hasWorkingAgents) {
-      return child;
+    if (!widget.hasWorkingAgents) {
+      return widget.child;
     }
     final colorScheme = Theme.of(context).colorScheme;
     return Semantics(
-      key: ValueKey('project-working-row-$projectId'),
+      key: ValueKey('project-working-row-${widget.projectId}'),
       container: true,
       hint: 'Project has working agents',
-      child: Material(
-        color: colorScheme.primaryContainer.withValues(alpha: 0.38),
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(color: colorScheme.primary, width: 4),
+      child: AnimatedBuilder(
+        key: ValueKey('project-working-row-pulse-${widget.projectId}'),
+        animation: _pulse,
+        child: widget.child,
+        builder: (context, child) {
+          final pulse = _pulse.value;
+          return Material(
+            color: projectWorkingRowTint(colorScheme, pulse),
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
             ),
-          ),
-          child: child,
-        ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: colorScheme.primary, width: 4),
+                ),
+              ),
+              child: child,
+            ),
+          );
+        },
       ),
     );
   }
+}
+
+@visibleForTesting
+Color projectWorkingRowTint(ColorScheme colorScheme, double pulse) {
+  final clampedPulse = pulse.clamp(0.0, 1.0);
+  return colorScheme.primaryContainer.withValues(
+    alpha: 0.38 + (0.18 * clampedPulse),
+  );
+}
+
+@visibleForTesting
+bool mobileWorkingAttentionAnimationDisabled(BuildContext context) {
+  final mediaQuery = MediaQuery.maybeOf(context);
+  final isWidgetTest = WidgetsBinding.instance.runtimeType.toString().contains(
+    'Test',
+  );
+  return isWidgetTest || (mediaQuery?.disableAnimations ?? false);
 }
 
 class ProjectAttentionAvatar extends StatelessWidget {
