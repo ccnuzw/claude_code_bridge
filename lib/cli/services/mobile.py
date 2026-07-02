@@ -60,6 +60,7 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
         'endpoints': [
             '/v1/health',
             '/v1/projects',
+            '/v1/mobile/notifications',
             '/v1/projects/{project_id}/view',
             '/v1/pairing/claim',
             '/v1/devices/me',
@@ -128,6 +129,7 @@ def prepare_server_mobile_gateway(
         'endpoints': [
             '/v1/health',
             '/v1/projects',
+            '/v1/mobile/notifications',
             '/v1/projects/{project_id}/view',
             '/v1/pairing/claim',
             '/v1/devices/me',

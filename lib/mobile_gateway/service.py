@@ -12,11 +12,13 @@ import re
 import shutil
 import sqlite3
 import threading
+import time
 from typing import Callable, Mapping
 from uuid import uuid4
 from urllib.parse import parse_qs, unquote, urlparse
 
 from ccbd.socket_client import CcbdClientError
+from .notifications import MobileNotificationSnapshot, MobileNotificationStore, encode_sse_event
 from .pairing import MobileGatewayPairingError, MobileGatewayPairingStore
 from .project_registry import MobileGatewayProject, MobileGatewayProjectRegistry
 from .terminal import (
@@ -44,6 +46,7 @@ _PAIRING_CAPABILITIES = (
     'terminal_history',
     'file_upload',
     'file_download',
+    'notifications',
 )
 _REDACTED_NAMESPACE_KEYS = ('socket_path', 'session_name')
 _DEFAULT_ROUTE_PROVIDER = 'lan'
@@ -55,10 +58,12 @@ _DEFAULT_PAIRING_SCOPES = (
     'message_submit',
     'file_upload',
     'file_download',
+    'notify',
     'terminal_input',
     'lifecycle',
 )
 _MAX_MOBILE_FILE_BYTES = 25 * 1024 * 1024
+_NOTIFICATION_STREAM_POLL_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -110,6 +115,7 @@ class MobileGatewayService:
         self._pairing_store = pairing_store
         if self._pairing_store is None and mobile_dir is not None:
             self._pairing_store = MobileGatewayPairingStore(self._mobile_dir)
+        self._notification_store = MobileNotificationStore(self._mobile_dir) if mobile_dir is not None else None
 
     @property
     def project_id(self) -> str:
@@ -202,6 +208,12 @@ class MobileGatewayService:
             return status, payload
         if route == '/v1/projects':
             return 200, self.projects_payload()
+        if route == '/v1/mobile/notifications':
+            return 200, {
+                'schema_version': _SCHEMA_VERSION,
+                'status': 'ok',
+                'events': self.notification_events_since(path, headers),
+            }
         prefix = '/v1/projects/'
         suffix = '/view'
         if route.startswith(prefix) and route.endswith(suffix):
@@ -233,6 +245,38 @@ class MobileGatewayService:
                 'device': device.public_payload(),
             }
         raise MobileGatewayError('not found', status_code=404)
+
+    def notification_stream_target_from_path(self, path: str) -> bool:
+        parsed = urlparse(path)
+        route = parsed.path.rstrip('/') or '/'
+        return route == '/v1/mobile/notifications'
+
+    def notification_stream_once_from_path(self, path: str) -> bool:
+        parsed = urlparse(path)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        once = str(_query_text(query, 'once') or '').strip().lower()
+        return once in {'1', 'true', 'yes'}
+
+    def notification_events_since(
+        self,
+        path: str = '/v1/mobile/notifications',
+        headers: Mapping[str, object] | None = None,
+        *,
+        last_event_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        if not self.notification_stream_target_from_path(path):
+            raise MobileGatewayError('not found', status_code=404)
+        parsed = urlparse(path)
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        self._authenticate(headers, required_scopes=('notify',))
+        store = self._require_notification_store()
+        store.sync_snapshots(self._notification_snapshots())
+        cursor = (
+            last_event_id
+            if last_event_id is not None
+            else _query_text(query, 'last_event_id') or _header_value(headers, 'last-event-id')
+        )
+        return [event.to_payload() for event in store.events_since(cursor)]
 
     def terminal_history_payload(
         self,
@@ -894,6 +938,21 @@ class MobileGatewayService:
             raise MobileGatewayError('mobile pairing store is not configured', status_code=503)
         return self._pairing_store
 
+    def _require_notification_store(self) -> MobileNotificationStore:
+        if self._notification_store is None:
+            raise MobileGatewayError('mobile notification store is not configured', status_code=503)
+        return self._notification_store
+
+    def _notification_snapshots(self) -> list[MobileNotificationSnapshot]:
+        snapshots: list[MobileNotificationSnapshot] = []
+        for project in self._project_registry.projects():
+            try:
+                payload = self._request_project_view(project)
+            except MobileGatewayError:
+                continue
+            snapshots.extend(_notification_snapshots_for_project(project, payload, observed_at=self._clock()))
+        return snapshots
+
     def _mobile_file_dir(self, project_id: str, agent: str, file_id: str) -> Path:
         return (
             self._mobile_files_dir()
@@ -1050,6 +1109,9 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
         server_version = 'CCBMobileGateway/1'
 
         def do_GET(self) -> None:  # noqa: N802 - stdlib hook
+            if service.notification_stream_target_from_path(self.path):
+                self._send_notification_stream()
+                return
             terminal_id = service.terminal_id_from_path(self.path)
             if terminal_id is not None and is_websocket_upgrade(self.headers):
                 try:
@@ -1123,6 +1185,58 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_notification_stream(self) -> None:
+            once = service.notification_stream_once_from_path(self.path)
+            try:
+                events = service.notification_events_since(self.path, self.headers)
+            except MobileGatewayError as exc:
+                self._send_json(exc.status_code, {
+                    'schema_version': _SCHEMA_VERSION,
+                    'status': 'error',
+                    'error': _error_text(exc),
+                })
+                return
+            self.send_response(200)
+            self.send_header('content-type', 'text/event-stream; charset=utf-8')
+            self.send_header('cache-control', 'no-cache')
+            self.send_header('connection', 'close' if once else 'keep-alive')
+            self.end_headers()
+            last_event_id = self._write_notification_events(events)
+            if once:
+                self.close_connection = True
+                return
+            while True:
+                try:
+                    time.sleep(_NOTIFICATION_STREAM_POLL_SECONDS)
+                    events = service.notification_events_since(
+                        self.path,
+                        self.headers,
+                        last_event_id=last_event_id,
+                    )
+                    next_id = self._write_notification_events(events)
+                    if next_id is not None:
+                        last_event_id = next_id
+                    elif not self._write_sse_bytes(b': keepalive\n\n'):
+                        return
+                except (BrokenPipeError, ConnectionError, OSError):
+                    return
+
+        def _write_notification_events(self, events: list[dict[str, object]]) -> str | None:
+            last_event_id = None
+            for event in events:
+                if not self._write_sse_bytes(encode_sse_event(event)):
+                    return last_event_id
+                last_event_id = str(event.get('id') or '') or last_event_id
+            return last_event_id
+
+        def _write_sse_bytes(self, body: bytes) -> bool:
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionError, OSError):
+                return False
+
         def _send_bytes(self, status: int, body: bytes, headers: dict[str, str]) -> None:
             self.send_response(status)
             for key, value in headers.items():
@@ -1169,6 +1283,43 @@ def _redact_project_view_payload(payload: dict[str, object]) -> dict[str, object
             for key in _REDACTED_NAMESPACE_KEYS:
                 namespace.pop(key, None)
     return redacted
+
+
+def _notification_snapshots_for_project(
+    project: MobileGatewayProject,
+    payload: dict[str, object],
+    *,
+    observed_at: str,
+) -> list[MobileNotificationSnapshot]:
+    view = _map(payload.get('view'))
+    cache = _map(payload.get('cache'))
+    project_record = _map(view.get('project'))
+    namespace = _map(view.get('namespace'))
+    namespace_epoch = _optional_int(namespace.get('epoch'))
+    generated_at = _optional_text(cache.get('generated_at')) or observed_at
+    project_short_name = (
+        _optional_text(project_record.get('display_name'))
+        or _optional_text(project_record.get('name'))
+        or project.public_display_name
+    )
+    snapshots: list[MobileNotificationSnapshot] = []
+    for item in _iterable(view.get('agents')):
+        agent = _map(item)
+        agent_name = _optional_text(agent.get('name'))
+        activity_state = _optional_text(agent.get('activity_state'))
+        if not agent_name or not activity_state:
+            continue
+        snapshots.append(
+            MobileNotificationSnapshot(
+                project_id=project.project_id,
+                project_short_name=project_short_name,
+                namespace_epoch=namespace_epoch,
+                agent=agent_name,
+                activity_state=activity_state.lower(),
+                observed_at=generated_at,
+            )
+        )
+    return snapshots
 
 
 def _ccbd_health_summary(payload: dict[str, object]) -> dict[str, object]:

@@ -2093,6 +2093,7 @@ def test_pairing_claim_creates_hashed_device_records_and_audit(tmp_path: Path) -
         'focus',
         'lifecycle',
         'message_submit',
+        'notify',
         'terminal_input',
         'view',
     ]
