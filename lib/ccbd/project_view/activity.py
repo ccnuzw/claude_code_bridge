@@ -299,15 +299,16 @@ def _provider_is_codex(facts: AgentActivityFacts) -> bool:
 
 
 def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | None:
-    if _clean(facts.provider_runtime_source) != 'codex_runtime':
+    source = _clean(facts.provider_runtime_source)
+    if source not in {'codex_runtime', 'claude_runtime'}:
         return None
     runtime_state = _clean(facts.provider_runtime_state)
-    reason = _clean(facts.provider_runtime_reason) or f'codex_runtime_{runtime_state or "unknown"}'
+    reason = _clean(facts.provider_runtime_reason) or f'{source}_{runtime_state or "unknown"}'
     last_progress_at = facts.current_job_updated_at
     if runtime_state == 'free':
         return AgentActivity(
             ACTIVITY_IDLE,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -317,7 +318,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state == 'start':
         return AgentActivity(
             ACTIVITY_PENDING,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -327,7 +328,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state == 'working':
         return AgentActivity(
             ACTIVITY_ACTIVE,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -337,7 +338,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state == 'tool_running':
         return AgentActivity(
             ACTIVITY_ACTIVE,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -347,7 +348,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state == 'interrupted':
         return AgentActivity(
             ACTIVITY_PENDING,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -357,7 +358,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state == 'reconnecting':
         return AgentActivity(
             ACTIVITY_PENDING,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -367,7 +368,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state in {'waiting_for_user', 'auth_required'}:
         return AgentActivity(
             ACTIVITY_PENDING,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -377,7 +378,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state in {'auth_failed', 'api_error', 'config_error', 'failed', 'pane_dead'}:
         return AgentActivity(
             ACTIVITY_FAILED,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,
@@ -387,7 +388,7 @@ def _provider_runtime_activity(facts: AgentActivityFacts) -> AgentActivity | Non
     if runtime_state == 'unknown':
         return AgentActivity(
             ACTIVITY_PENDING,
-            'codex_runtime',
+            source,
             reason,
             last_progress_at=last_progress_at,
             current_job_id=facts.current_job_id,

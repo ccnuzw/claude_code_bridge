@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -614,7 +615,83 @@ def test_project_view_skips_capture_pane_when_non_codex_provider_activity_is_fre
         )
     ).build_response()
 
-    assert response['view']['agents'][1]['activity_source'] == 'claude_hook'
+    agent = response['view']['agents'][1]
+    assert agent['activity_source'] == 'claude_runtime'
+    assert agent['activity_reason'] == 'claude_activity_active'
+    assert agent['provider_runtime_status']['state'] == 'working'
+    assert agent['provider_runtime_status']['source'] == 'activity'
+    assert [args for args in backend.calls if args[:3] == ['capture-pane', '-p', '-t']] == []
+
+
+def test_project_view_claude_runtime_status_reads_bound_session_without_capture_pane(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-claude-session-runtime'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent2', project_id=project_id)
+    transcript = layout.agent_provider_runtime_dir('agent2', 'claude') / 'session.jsonl'
+    _write(
+        transcript,
+        json.dumps(
+            {
+                'type': 'assistant',
+                'message': {
+                    'role': 'assistant',
+                    'stop_reason': 'end_turn',
+                    'content': [{'type': 'text', 'text': 'done'}],
+                },
+            }
+        )
+        + '\n',
+    )
+    session_file = tmp_path / '.claude-session-agent2'
+    _write(session_file, json.dumps({'claude_session_path': str(transcript)}))
+    runtime.session_file = str(session_file)
+    registry.upsert(runtime)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-claude-session-runtime',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    backend = _SnapshotBackend()
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: backend,
+    )
+
+    response = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            paths=layout,
+            clock=lambda: NOW,
+        )
+    ).build_response()
+
+    agent = response['view']['agents'][1]
+    assert agent['activity_state'] == 'idle'
+    assert agent['activity_source'] == 'claude_runtime'
+    assert agent['activity_reason'] == 'claude_session_assistant_end_turn'
+    assert agent['activity_symbol'] == '◇'
+    assert agent['provider_runtime_status']['state'] == 'free'
+    assert agent['provider_runtime_status']['source'] == 'session'
+    assert agent['provider_runtime_status']['session_state'] == 'free'
     assert [args for args in backend.calls if args[:3] == ['capture-pane', '-p', '-t']] == []
 
 
@@ -1935,9 +2012,9 @@ def test_project_view_marks_callback_parent_waiting_for_child(tmp_path: Path) ->
     assert agent1['callback_waiting_child_job_id'] == child_job_id
     assert agent1['callback_waiting_child_agent'] == 'agent2'
     assert agent1['callback_waiting_state'] == 'pending'
-    assert agent2['activity_state'] == 'active'
-    assert agent2['activity_source'] == 'ccb_job'
-    assert agent2['activity_reason'] == 'job_running'
+    assert agent2['activity_state'] == 'pending'
+    assert agent2['activity_source'] == 'claude_runtime'
+    assert agent2['activity_reason'] == 'prompt_submitted_waiting_for_first_signal'
     assert agent2['current_job_id'] == child_job_id
 
 
@@ -4040,6 +4117,56 @@ def test_activity_resolver_codex_runtime_status_presentation() -> None:
     assert unknown.to_record()['activity_color'] == 'gray'
     assert unknown.to_record()['activity_source'] == 'codex_runtime'
     assert unknown.to_record()['activity_reason'] == 'no_known_status_pattern'
+
+
+def test_activity_resolver_claude_runtime_status_presentation() -> None:
+    tool = resolve_agent_activity(
+        AgentActivityFacts(
+            namespace_mounted=True,
+            runtime_state='idle',
+            pane_id='%2',
+            pane_state='alive',
+            provider_runtime_state='tool_running',
+            provider_runtime_source='claude_runtime',
+            provider_runtime_reason='claude_activity_tool_running',
+        ),
+        now=NOW,
+    )
+    waiting = resolve_agent_activity(
+        AgentActivityFacts(
+            namespace_mounted=True,
+            runtime_state='idle',
+            pane_id='%2',
+            pane_state='alive',
+            provider_runtime_state='waiting_for_user',
+            provider_runtime_source='claude_runtime',
+            provider_runtime_reason='claude_activity_waiting_for_user',
+        ),
+        now=NOW,
+    )
+    unknown = resolve_agent_activity(
+        AgentActivityFacts(
+            namespace_mounted=True,
+            runtime_state='idle',
+            pane_id='%2',
+            pane_state='alive',
+            provider_runtime_state='unknown',
+            provider_runtime_source='claude_runtime',
+            provider_runtime_reason='no_known_session_signal',
+        ),
+        now=NOW,
+    )
+
+    assert tool.to_record()['activity_state'] == 'active'
+    assert tool.to_record()['activity_symbol'] == '◆'
+    assert tool.to_record()['activity_source'] == 'claude_runtime'
+    assert waiting.to_record()['activity_state'] == 'pending'
+    assert waiting.to_record()['activity_symbol'] == '?'
+    assert waiting.to_record()['activity_source'] == 'claude_runtime'
+    assert unknown.to_record()['activity_state'] == 'pending'
+    assert unknown.to_record()['activity_symbol'] == '?'
+    assert unknown.to_record()['activity_color'] == 'gray'
+    assert unknown.to_record()['activity_source'] == 'claude_runtime'
 
 
 def test_activity_resolver_provider_background_terminal_running_after_prompt() -> None:

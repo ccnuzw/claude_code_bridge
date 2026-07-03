@@ -281,6 +281,34 @@ Verification:
   `/home/bfly/yunwei/test_ccb2/codex-pane-status-probe/run-20260629T142024Z-4191985/artifacts/run.json`
   stayed `waiting_for_user` for an untrusted new workdir. These prove
   session-derived `free` is not a fallback over explicit pane states.
+
+Claude runtime-status slice landed after PR1 with:
+
+- `lib/provider_pane_status/claude_session.py`
+- `test/test_provider_pane_status_claude_session.py`
+- ProjectView wiring that emits `provider_runtime_status` for Claude from
+  provider activity hooks and bound Claude JSONL session evidence.
+
+Claude deliberately does not add a tmux pane text parser in this slice. Pane
+facts remain lifecycle evidence only; Claude status semantics come from
+`activity.json`, `claude_session_path`, and explicit running-job start state.
+Unknown session evidence stays `unknown`, while a clean runtime with no active
+job and no Claude session path is displayed as `free`.
+
+Verification:
+
+- `python -m pytest -q test/test_provider_pane_status_claude_session.py
+  test/test_provider_activity_artifacts.py
+  test/test_provider_activity_hook_script.py test/test_ccbd_project_view.py`
+  -> `95 passed`
+- `python -m pytest -q test/test_provider_pane_status_codex.py
+  test/test_provider_pane_status_codex_session.py
+  test/test_codex_pane_status_probe.py
+  test/test_provider_pane_status_claude_session.py` -> `60 passed`
+- `python -m pytest -q test/test_claude_event_reading.py
+  test/test_claude_comm_parsing.py test/test_claude_execution_polling.py
+  test/test_provider_activity_hook_script.py test/test_provider_activity_artifacts.py`
+  -> `25 passed`
 - Stabilization evidence:
   `/home/bfly/yunwei/test_ccb2/codex-pane-status-probe/run-20260629T143303Z-455718/artifacts/run.json`
   kept startup display at `unknown -> working -> free` instead of allowing old

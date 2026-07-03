@@ -12,14 +12,28 @@ from .codex_session import (
     compose_codex_runtime_status,
     read_codex_session_status,
 )
+from .claude_session import (
+    ClaudeActivityStatus,
+    ClaudeRuntimeStatus,
+    ClaudeSessionStatus,
+    claude_activity_status,
+    compose_claude_runtime_status,
+    read_claude_session_status,
+)
 
 __all__ = [
+    "ClaudeActivityStatus",
+    "ClaudeRuntimeStatus",
+    "ClaudeSessionStatus",
     "CodexRuntimeStatus",
     "CodexSessionStatus",
     "PaneCompletionEvidence",
     "ProviderPaneStatusSignal",
     "SOURCE_STATUS_ERROR",
     "SOURCE_STATUS_OK",
+    "claude_activity_status",
+    "compose_claude_runtime_status",
     "compose_codex_runtime_status",
+    "read_claude_session_status",
     "read_codex_session_status",
 ]

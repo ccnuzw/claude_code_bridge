@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
@@ -20,6 +21,12 @@ from message_bureau import CallbackEdgeState
 from provider_backends.codex.launcher_runtime.command_runtime.home import resolve_codex_home_layout
 from provider_pane_status.codex_pane import ACTIVE_STATES, normalize_screen, parse_codex_pane_status
 from provider_pane_status.codex_session import CodexRuntimeStatus, compose_codex_runtime_status, read_codex_session_status
+from provider_pane_status.claude_session import (
+    ClaudeRuntimeStatus,
+    claude_activity_status,
+    compose_claude_runtime_status,
+    read_claude_session_status,
+)
 from storage.paths import PathLayout
 
 from .activity import (
@@ -605,6 +612,7 @@ def _agent_view(
     spec = deps.config.agents[agent_name]
     runtime = deps.registry.get(agent_name)
     provider_is_codex = _is_codex_provider(spec.provider)
+    provider_is_claude = _is_claude_provider(spec.provider)
     provider_activity = None
     if not provider_is_codex:
         provider_activity = context.provider_activity_hint(
@@ -622,11 +630,11 @@ def _agent_view(
     queue_depth = len(queued_jobs) + (1 if _is_top_activity_job(active_job) else 0)
     callback_child_agent = _callback_child_agent(callback_wait)
     pane_text = None
-    codex_runtime_status = None
+    provider_runtime_status = None
     if provider_is_codex:
         pane_text = context.pane_text_hint(getattr(runtime, 'pane_id', None) if runtime is not None else None)
         if pane_text is not None:
-            codex_runtime_status = _codex_runtime_status(
+            provider_runtime_status = _codex_runtime_status(
                 deps=deps,
                 agent_name=agent_name,
                 provider=spec.provider,
@@ -637,8 +645,15 @@ def _agent_view(
                 generated_at=generated_at,
                 progress_tracker=codex_pane_progress,
             )
+    elif provider_is_claude:
+        provider_runtime_status = _claude_runtime_status(
+            runtime=runtime,
+            provider_activity=provider_activity,
+            current_job=job,
+        )
     elif provider_activity is None or _provider_activity_needs_pane_error_probe(provider_activity, generated_at):
         pane_text = context.pane_text_hint(getattr(runtime, 'pane_id', None) if runtime is not None else None)
+    provider_runtime_source = _provider_runtime_source(spec.provider, provider_runtime_status)
     activity = resolve_agent_activity(
         AgentActivityFacts(
             namespace_mounted=namespace_mounted,
@@ -662,9 +677,9 @@ def _agent_view(
             provider_activity_source=getattr(provider_activity, 'source', None),
             provider_activity_reason=getattr(provider_activity, 'reason', None),
             provider_activity_updated_at=getattr(provider_activity, 'updated_at', None),
-            provider_runtime_state=getattr(codex_runtime_status, 'state', None),
-            provider_runtime_source='codex_runtime' if codex_runtime_status is not None else None,
-            provider_runtime_reason=getattr(codex_runtime_status, 'reason', None),
+            provider_runtime_state=getattr(provider_runtime_status, 'state', None),
+            provider_runtime_source=provider_runtime_source,
+            provider_runtime_reason=getattr(provider_runtime_status, 'reason', None),
         ),
         now=generated_at,
     )
@@ -698,13 +713,26 @@ def _agent_view(
     }
     if provider_runtime is not None:
         record['provider_runtime'] = provider_runtime
-    if codex_runtime_status is not None:
-        record['provider_runtime_status'] = codex_runtime_status.to_record()
+    if provider_runtime_status is not None:
+        record['provider_runtime_status'] = provider_runtime_status.to_record()
     return record
 
 
 def _is_codex_provider(provider: object) -> bool:
     return str(provider or '').strip().lower() == 'codex'
+
+
+def _is_claude_provider(provider: object) -> bool:
+    return str(provider or '').strip().lower() == 'claude'
+
+
+def _provider_runtime_source(provider: object, runtime_status: object | None) -> str | None:
+    if runtime_status is None:
+        return None
+    provider_name = str(provider or '').strip().lower()
+    if provider_name in {'codex', 'claude'}:
+        return f'{provider_name}_runtime'
+    return None
 
 
 def _codex_runtime_status(
@@ -764,6 +792,61 @@ def _codex_runtime_status(
             ),
         )
     return raw_status
+
+
+def _claude_runtime_status(
+    *,
+    runtime: object | None,
+    provider_activity: object | None,
+    current_job,
+) -> ClaudeRuntimeStatus:
+    activity_status = claude_activity_status(provider_activity)
+    session_status = read_claude_session_status(
+        _claude_transcript_path(runtime),
+        min_mtime_s=_job_updated_epoch_for_session_floor(current_job),
+    )
+    return compose_claude_runtime_status(
+        activity_status,
+        session_status,
+        job_running=_job_is_running(current_job),
+    )
+
+
+def _claude_transcript_path(runtime: object | None) -> Path | None:
+    if runtime is None:
+        return None
+    for value in (
+        getattr(runtime, 'session_file', None),
+        getattr(runtime, 'session_ref', None),
+    ):
+        path = _claude_transcript_path_from_value(value)
+        if path is not None:
+            return path
+    return None
+
+
+def _claude_transcript_path_from_value(value: object) -> Path | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if path.suffix == '.jsonl':
+        return path
+    payload = _read_claude_session_payload(path)
+    if payload is None:
+        return None
+    transcript = str(payload.get('claude_session_path') or '').strip()
+    if transcript:
+        return Path(transcript).expanduser()
+    return None
+
+
+def _read_claude_session_payload(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _codex_session_root(
@@ -847,10 +930,18 @@ def _record_inferred_provider_failure(
         return
     if getattr(activity, 'state', None) != 'failed':
         return
-    if getattr(activity, 'source', None) not in {'provider_pane', 'codex_runtime'}:
+    if getattr(activity, 'source', None) not in {'provider_pane', 'codex_runtime', 'claude_runtime'}:
         return
     reason = str(getattr(activity, 'reason', '') or '').strip()
-    if reason not in {'provider_terminal_error', 'provider_api_error', 'provider_auth_failed', 'provider_config_error', 'provider_error_text'}:
+    if reason not in {
+        'provider_terminal_error',
+        'provider_api_error',
+        'provider_auth_failed',
+        'provider_config_error',
+        'provider_error_text',
+        'claude_activity_api_error',
+        'claude_session_api_error',
+    }:
         return
     record_provider_activity_failure(
         project_root=deps.project_root,

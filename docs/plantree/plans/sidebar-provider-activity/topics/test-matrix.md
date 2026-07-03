@@ -167,6 +167,13 @@ Required scenarios:
   unchanged pane content with reason `codex_pane_no_active_stale_no_progress`
 - Codex pane without an active status line resets the 60s no-progress timer
   when pane content changes
+- Claude runtime status is derived from provider activity hooks and the bound
+  Claude JSONL session path, not from tmux pane text
+- Claude running job with no hook/session signal renders `start`/pending
+  instead of being inferred as active or idle
+- Claude runtime with no active job and no session path renders `free` by
+  explicit clean-start rule; malformed or unclassified session evidence remains
+  `unknown`
 
 Performance assertions:
 
