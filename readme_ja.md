@@ -1,0 +1,312 @@
+<div align="center">
+
+# CCB - モバイルアプリが登場しました！
+
+**分散型マルチエージェント協調を前提に設計**  
+**見える、制御できるマルチエージェント TUI ワークスペース**
+
+<p>
+  <img src="https://img.shields.io/badge/version-8.0.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
+  <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Codex-111111?style=flat-square&logo=openai&logoColor=white" alt="Codex">
+  <img src="https://img.shields.io/badge/Claude-D97757?style=flat-square&logo=anthropic&logoColor=white" alt="Claude">
+  <img src="https://img.shields.io/badge/Gemini-4285F4?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini">
+  <img src="https://img.shields.io/badge/Kimi-111111?style=flat-square&logo=moonshotai&logoColor=white" alt="Kimi">
+  <img src="https://img.shields.io/badge/MiMo-FF6900?style=flat-square&logo=xiaomi&logoColor=white" alt="MiMo">
+  <img src="https://img.shields.io/badge/Qwen-6A5CFF?style=flat-square" alt="Qwen">
+  <img src="https://img.shields.io/badge/Cursor-111111?style=flat-square" alt="Cursor">
+  <img src="https://img.shields.io/badge/Copilot-111111?style=flat-square&logo=githubcopilot&logoColor=white" alt="GitHub Copilot">
+  <img src="https://img.shields.io/badge/Crush-FF5A5F?style=flat-square" alt="Crush">
+  <img src="https://img.shields.io/badge/Kiro-6D5EF6?style=flat-square" alt="Kiro">
+  <img src="https://img.shields.io/badge/Pi-111111?style=flat-square" alt="Pi">
+  <img src="https://img.shields.io/badge/Z.ai-111111?style=flat-square" alt="Z.ai">
+  <img src="https://img.shields.io/badge/OpenCode-111111?style=flat-square" alt="OpenCode">
+  <img src="https://img.shields.io/badge/Antigravity-6D5EF6?style=flat-square&logo=google&logoColor=white" alt="Antigravity">
+  <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
+</p>
+
+[中文](README.md) | [English](readme_en.md) | **日本語** | [Français](readme_fr.md) | [Deutsch](readme_de.md) | [العربية](readme_ar.md) | [Español](readme_es.md) | [Português](readme_pt.md) | [한국어](readme_ko.md) | [Русский](readme_ru.md)
+
+[クイックスタート](#quick-start) · [Mobile App](#mobile-app) · [Rich モード](#rich-mode) · [エージェント設定](#configure-agents) · [ユーザーガイド](docs/manuals/user-guide/) · [開発者ガイド](docs/manuals/developer-guide/)
+
+<p align="center">
+  <img src="assets/readme_v7/ccb-hero-en-light.png" alt="CCB の可視マルチエージェント CLI ワークスペース" width="960">
+</p>
+
+</div>
+
+<a id="supported-clis"></a>
+
+## 対応 CLI
+
+`.ccb/ccb.config` で agent ごとに異なる CLI を混在できます。実際に使えるかどうかは、ローカルの CLI インストール状態とアカウント権限に依存します。
+
+| CLI family | Provider id |
+| :--- | :--- |
+| Codex | `codex` |
+| Claude | `claude` |
+| Gemini | `gemini` |
+| Kimi | `kimi` |
+| MiMo | `mimo` |
+| Qwen | `qwen` |
+| Cursor | `cursor` |
+| GitHub Copilot CLI | `copilot` |
+| Crush | `crush` |
+| Kiro CLI | `kiro` |
+| Pi | `pi` |
+| Z.ai CLI | `zai` |
+| OpenCode | `opencode` |
+| Antigravity | `agy` |
+| Droid | `droid` |
+
+<a id="why-ccb"></a>
+
+## なぜ CCB か？
+
+- `A -> B -> C`、`A,B -> C`、`A -> B,C` のような複雑な協調関係に対応する、安定した agent 間通信。
+- すべての agent は完全なネイティブ端末で、表示レイアウトを確認しながら直接操作できます。
+- バックグラウンド daemon が動き続けるため、前面 UI を閉じてもプロジェクト状態を保てます。
+- Hub 機能により、1 つのコマンドで複数の CLI provider を並行実行できます。
+- モバイルリモートコントローラーにより、provider をまたいだ音声操作、ファイル転送、リモート端末アクセスができます。
+
+<a id="how-to-install"></a>
+
+## インストール方法
+
+npm でのインストールまたは更新を推奨します。
+
+```bash
+npm install -g @seemseam/ccb
+```
+
+インストール後は CCB の updater を使います。
+
+```bash
+ccb update
+```
+
+<details>
+<summary><b>GitHub release パッケージとソースインストールのフォールバック</b></summary>
+
+npm が使いにくい環境では、[Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) から環境に合うパッケージをダウンロードして展開し、インストールします。
+
+```bash
+tar -xzf ccb-*.tar.gz
+cd ccb-*
+./install.sh install
+```
+
+ソースからのインストールは、開発または一時的な回避策としてのみ推奨します。
+
+```bash
+git clone https://github.com/SeemSeam/claude_codex_bridge.git
+cd claude_codex_bridge
+./install.sh install
+```
+
+ソースインストールでは、グローバルな `ccb` / `ask` が現在の checkout にリンクされます。通常のユーザーには npm パッケージを推奨します。
+
+</details>
+
+<a id="quick-start"></a>
+
+## クイックスタート
+
+### 1. 起動
+
+作業ディレクトリで実行します。
+
+```bash
+ccb
+```
+
+起動時に `.ccb` を自動作成できない、またはプロジェクトアンカーが見つからないと表示された場合は、手動で `.ccb` を作成します。
+
+```bash
+mkdir -p .ccb
+```
+
+<a id="configure-agents"></a>
+
+### 2. プロジェクト設定を作成
+
+プロジェクトルートに `.ccb/ccb.config` を作成します。推奨される v2 `[windows]` トポロジーでは、window 内の agent 配置を `,` と `;` で制御します。たとえば `A,B;C,D` はほぼ 4 分割レイアウトです。
+
+```toml
+version = 2
+
+[windows]
+main = "main:codex"
+work = "worker1:codex(worktree), worker2:claude(worktree)"
+review = "reviewer:claude, qa:gemini"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+agents_height = "50%"
+comms_height = "15%"
+tips_height = "35%"
+comms_limit = 3
+```
+
+設定を検証してワークスペースを起動します。
+
+```bash
+ccb config validate
+ccb
+```
+
+### 3. 協調作業を始める
+
+任意の agent pane に直接入力できます。agent 同士を協調させることもできます。
+
+```text
+/ask reviewer review the latest parser changes and list blocking issues.
+```
+
+workflow の中で agent が `/ask` を呼び出し、委任や引き継ぎを行うこともできます。継続的な調整には agent memory またはプロジェクト共有記憶 `.ccb/ccb_memory.md` を使ってください。
+
+<a id="mobile-app"></a>
+
+## モバイルリモート操作（Android）
+
+スマートフォンから CCB を操作する方法を推奨します。すべての CCB プロジェクトへ接続し、各 agent を操作し、音声入力とファイル転送を利用できます。
+
+```bash
+ccb update mobile
+```
+
+このコマンドがインストールと設定を案内します。
+
+<p align="center">
+  <img src="assets/readme_v7/mobile-control-chat.jpg" alt="CCB Mobile agent チャット" width="180">
+  <img src="assets/readme_v7/mobile-control-terminal.jpg" alt="CCB Mobile 端末操作" width="180">
+  <img src="assets/readme_v7/mobile-control-files.jpg" alt="CCB Mobile ファイル転送" width="180">
+  <img src="assets/readme_v7/mobile-control-pairing.jpg" alt="CCB Mobile ペアリングと接続" width="180">
+</p>
+
+<details>
+<summary><b>Mobile App の詳細、安全境界、ソース</b></summary>
+
+CCB 8.0.12 では Flutter 版 CCB Mobile のソースが [`mobile/`](mobile/) に含まれ、Android APK は GitHub Releases で公開されています。
+
+- [CCB Mobile v8.0.12 APK をダウンロード](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.12/ccb-mobile-v8.0.12.apk)
+- App ソース：[`mobile/app`](mobile/app)
+- サーバー gateway ソース：[`lib/mobile_gateway`](lib/mobile_gateway)
+
+スマートフォンアプリは、サーバー上で動く実際の CCB プロジェクトのリモートコントローラーです。server-wide mobile gateway からマウント済みプロジェクトを見つけ、window/agent を切り替え、agent の会話コンテキストを表示し、pane-native 入力でテキストを送り、terminal view を開き、認証済み gateway 経由で画像や文書をアップロード/ダウンロードできます。
+
+安全境界：
+
+- CCB gateway は `127.0.0.1:8787` など loopback のみに bind します。
+- リモートアクセスには Tailscale Serve を使い、Tailscale Funnel は使いません。
+- CCB は Tailscale パスワード、OAuth token、admin API token を保存せず、tailnet ACL/grants も自動変更しません。
+- スマートフォンが受け取るのは pairing profile で許可された scope だけです。例：view、content、terminal、file upload、file download。
+
+</details>
+
+<a id="rich-mode"></a>
+
+## Rich メディア端末
+
+端末内でファイルツリーを閲覧し、ファイルを開き、文書を編集し、メディアをプレビューできます。
+
+<p align="center">
+  <img src="assets/readme_v7/rich-workbench.png" alt="WezTerm 内で Yazi preview を使う CCB rich メディアワークベンチ" width="860">
+</p>
+
+```bash
+ccb update rich
+```
+
+rich mode を有効にすると、通常の `ccb` は CCB-managed rich WezTerm 内で実行中でない限り、rich WezTerm launcher を自動で開きます。通常の端末起動に戻すには `ccb uninstall rich` を実行します。
+
+<a id="agent-roles"></a>
+
+## Agent Roles Spec とロールカタログ
+
+CCB は [Agent Roles Spec](https://github.com/SeemSeam/agent-roles-spec) をサポートします。これは専門 agent をパッケージ化する host-neutral な仕様で、skills、memory、tool 依存をインストール可能、マウント可能、削除可能な Role Pack にまとめられます。このリポジトリは公開 role catalog でもあります。
+
+| Role | 用途 |
+| :--- | :--- |
+| `agentroles.ccb_self` | CCB の自己保守、設定支援、実行診断、保護付き復旧、workflow orchestration。 |
+| `agentroles.archi` | アーキテクチャレビュー、境界確認、結合分析、保守性リスク、後続 gate 提案。 |
+| `agentroles.frontend_engineer` | フロントエンド設計と実装、デザインシステム、アクセシビリティ、ブラウザ QA、レビュー付き AGY 委任。 |
+| `agentroles.mobile_app_engineer` | iOS、Android、React Native、Expo、Flutter、SwiftUI、Jetpack Compose などのモバイル設計と実装。 |
+| `agentroles.mother` | Role 作成、role source 監査、role research、blueprint 設計、Agent Roles 仕様準拠チェック。 |
+| `agentroles.su_ccb` | 要件分析、計画、派遣、review gate、アーカイブ、復旧を含む SU-CCB workflow 操作。 |
+
+<a id="config-memory"></a>
+
+## 設定と共有記憶
+
+window の分け方、必要な worker 数、worktree を使う agent、独立した model や API route が必要な agent が分からない場合は、現在のワークスペース内の `ccb_self` に聞いてください。これは CCB 組み込みの self-agent で、CCB コマンド、設定の権威、roles、windows、reload 境界、一般的な復旧経路を理解し、専用の `ccb-config` skill で一緒に設定案を作れます。空のプロジェクトには `ccb_self` が含まれます。既存のカスタム設定には `ccb roles add agentroles.ccb_self:codex` で追加できます。
+
+`.ccb/ccb_memory.md` はプロジェクト全体の共有記憶文書です。チーム協調ルール、プロジェクト制約、長期コンテキスト、agent 引き継ぎの約束を書くのに適しています。複数 provider の private memory に同じ説明をコピーするより、安定した cross-agent 情報はここに置く方が確実です。
+
+<a id="contact"></a>
+
+## 連絡先
+
+- Email: `bfly123@126.com`
+- [Telegram group & contact / TG 群与联系](https://t.me/+BKn03v8I_ehmYzRk)
+- WeChat: `seemseam-com`
+
+<p align="center">
+  <img src="assets/weixin.jpg" alt="WeChat group" width="240">
+</p>
+
+<a id="community"></a>
+
+## コミュニティと謝辞
+
+テスト、フィードバック、議論で支援してくれた [Linux.do community](https://linux.do) に感謝します。
+
+sidebar のアイデアと示唆を提供してくれた [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) に感謝します。
+
+<a id="release-notes"></a>
+
+## リリースノート
+
+<details open>
+<summary><b>v8.0.12</b> - Release CI の移植性と README 多言語化</summary>
+
+- mobile host registry tests は一時 Unix socket を短い `/tmp/ccb-sock-*` パスに置くようになり、macOS CI の `AF_UNIX path too long` 失敗を避けます。
+- `ccb update mobile`、README links、package metadata、mobile release manifest は 8.0.12 APK を指すようになりました。
+- 中国語 README が GitHub の main README になり、英語は `readme_en.md` へ移動しました。日本語、フランス語、ドイツ語、アラビア語、スペイン語、ポルトガル語、韓国語、ロシア語版も同じ section 構造で追加しました。
+
+</details>
+
+<details>
+<summary><b>v8.0.0</b> - CCB Mobile Monorepo リリース</summary>
+
+- Flutter 版 CCB Mobile ソースが正式に本リポジトリへ入り、Android APK が GitHub Releases で公開されました。
+- server-wide mobile project discovery、pairing、認証 gateway routes、pane-native message input、conversation context rendering、terminal access、画像/文書 upload/download を追加しました。
+- `ccb update mobile` を Tailscale Tailnet onboarding の統一 entrypoint にしつつ、gateway は loopback-only、Funnel 不使用、token 非保存、ACL/grants 自動変更なしを維持しました。
+
+</details>
+
+<details>
+<summary><b>v7.7.0</b> - Runtime Accelerator リリース強化</summary>
+
+- Release artifacts に任意の Rust `ccb-runtime-accelerator` が含まれ、sidecar が期待される installed Codex agent が Python hot path に黙って fallback しなくなりました。
+- プロジェクトパスにより Unix socket path が長すぎる場合、accelerator socket は短い per-user runtime socket root に自動配置されます。
+- callback repair と Codex binding cache invalidation を強化し、regression、long-idle Codex soak、Claude callback、mixed-provider integration の証拠を記録しました。
+
+</details>
+
+<details>
+<summary><b>v7.6.19</b> - 長時間 ask のデフォルト待機ポリシー</summary>
+
+- 通常の長時間 `ask` は heartbeat 診断だけで `incomplete/heartbeat_timeout` として終了せず、実際の provider/completion 結果を待ち続けます。
+- Codex、Claude、Gemini の pane-backed no-terminal timeout はデフォルトで明示 opt-in になり、明示的な reliability timeout policy は引き続き利用できます。
+- 32 分の source-runtime ask smoke により、タスクが 30 分以上 running のまま継続し、その後 `result_message` で完了し、`heartbeat_timeout` や `incomplete` の証拠が出ないことを確認しました。
+
+</details>
+
+完全な履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。
