@@ -260,44 +260,7 @@ class ConversationBubble extends StatelessWidget {
                     ),
                   ],
                 ],
-                const SizedBox(height: 6),
-                if (collapsible && !expanded)
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: _toggleExpanded,
-                      child: ConversationPreview(item: item),
-                    ),
-                  )
-                else
-                  ConversationBodyViewport(
-                    item: item,
-                    timelineViewportHeight: timelineViewportHeight,
-                    child: body,
-                  ),
-                if (item.attachments.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  ConversationAttachmentList(
-                    item: item,
-                    onDownloadAttachment: onDownloadAttachment,
-                    onOpenAttachment: onOpenAttachment,
-                    downloadingAttachmentIds: downloadingAttachmentIds,
-                    downloadedAttachmentIds: downloadedAttachmentIds,
-                  ),
-                ],
-                if (onRetry != null) ...[
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      key: ValueKey('retry-message-${item.id}'),
-                      onPressed: onRetry,
-                      icon: const Icon(Icons.refresh),
-                      label: Text(strings.retry),
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),

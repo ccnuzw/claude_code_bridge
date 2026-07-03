@@ -27,7 +27,7 @@ void main() {
     expect(store.isTimelineNearEnd('missing_agent'), isTrue);
   });
 
-  testWidgets('scrollTimelineToEnd jumps attached timeline to max extent', (
+  testWidgets('scrollTimelineToEnd animates attached timeline to max extent', (
     tester,
   ) async {
     final store = AgentChatUiControllerStore();
@@ -56,6 +56,7 @@ void main() {
       isActive: (agentName) => agentName == 'mobile_probe',
     );
     await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(controller.position.pixels, controller.position.maxScrollExtent);
   });

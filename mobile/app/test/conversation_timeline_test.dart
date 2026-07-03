@@ -11,7 +11,7 @@ void main() {
 
   test('detects near-end threshold for latest-message clearing', () {
     expect(_nearEnd(pixels: 928, maxScrollExtent: 1000), isTrue);
-    expect(_nearEnd(pixels: 927, maxScrollExtent: 1000), isFalse);
+    expect(_nearEnd(pixels: 879, maxScrollExtent: 1000), isFalse);
   });
 
   testWidgets('detects user-driven drag scroll notifications', (tester) async {

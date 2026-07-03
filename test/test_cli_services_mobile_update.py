@@ -329,16 +329,29 @@ def test_onboarding_logged_in_starts_gateway_serve_and_prints_qr() -> None:
 
     text = "\n".join(output)
     assert code == 0
-    assert "ccb mobile serve --listen 127.0.0.1:8787" in text
-    assert "--route-provider tailnet" in text
-    assert "tailscale serve --bg --https=8787 http://127.0.0.1:8787" in text
-    assert "pairing QR" in text
-    assert "health:" in text
-    assert "diagnostics:" in text
-    assert "terminal WS:" in text
-    assert "revoke gate:" in text
-    assert "Funnel and 0.0.0.0 listeners are not used" in text
-    command_lines = [line for line in output if line.startswith("   ccb ") or line.startswith("   tailscale ")]
+    assert prepared == [
+        SimpleNamespace(
+            listen="127.0.0.1:8787",
+            public_url="https://desktop.tailnet.ts.net:8787",
+            route_provider="tailnet",
+        )
+    ]
+    assert ("tailscale", "serve", "status", "--json") in run_commands
+    assert (
+        "tailscale",
+        "serve",
+        "--bg",
+        "--https=8787",
+        "http://127.0.0.1:8787",
+    ) in run_commands
+    assert "Computer gateway: https://desktop.tailnet.ts.net:8787" in text
+    assert "Open CCB Mobile, tap Scan computer QR" in text
+    assert "Scan this QR in CCB Mobile" in text
+    assert "loopback-only gateway" in text
+    assert "no Funnel" in text
+    command_lines = [
+        line for line in output if line.startswith("   ccb ") or line.startswith("   tailscale ")
+    ]
     assert all("0.0.0.0" not in line for line in command_lines)
 
 

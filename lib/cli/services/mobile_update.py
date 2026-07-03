@@ -22,7 +22,7 @@ DEFAULT_MOBILE_GATEWAY_LISTEN = "127.0.0.1:8787"
 CCB_MOBILE_APP_DOWNLOAD_URL_ENV = "CCB_MOBILE_APP_DOWNLOAD_URL"
 DEFAULT_CCB_MOBILE_APP_DOWNLOAD_URL = (
     "https://github.com/bfly123/claude_code_bridge/releases/download/"
-    "v8.0.7/ccb-mobile-v8.0.7.apk"
+    "v8.0.9/ccb-mobile-v8.0.9.apk"
 )
 TAILSCALE_LINUX_INSTALL_COMMAND = (
     "sh",
@@ -132,7 +132,7 @@ def run_mobile_update_onboarding(
         print_fn(f"   {_shell_join(commands.tailscale_serve)}")
         print_fn("   This uses Tailscale Serve only; it does not enable Funnel.")
         print_fn("")
-        _print_mobile_app_steps(print_fn, environ=env)
+        _print_mobile_app_steps(print_fn, environ=env, qr_ready=True)
         print_fn("")
         print_fn("Open CCB Mobile and scan the pairing QR printed above.")
         print_fn("")
@@ -142,6 +142,57 @@ def run_mobile_update_onboarding(
         print_fn(f"   terminal WS:  {_shell_join(commands.terminal_websocket_smoke)}")
         print_fn(f"   revoke gate:  {_shell_join(commands.revoke_gate_smoke)}")
         return 0
+
+    public_url = _public_url_from_commands(commands)
+    handle = None
+    try:
+        handle = prepare_gateway_fn(
+            SimpleNamespace(
+                listen=DEFAULT_MOBILE_GATEWAY_LISTEN,
+                public_url=public_url,
+                route_provider="tailnet",
+            )
+        )
+    except Exception as exc:
+        print_fn(f"Could not start CCB Mobile gateway: {exc}")
+        return 1
+    try:
+        serve_result = _run_tailscale_serve(commands.tailscale_serve, run_fn=run_fn)
+    except Exception as exc:
+        _close_handle(handle)
+        print_fn(f"Could not start Tailscale Serve: {type(exc).__name__}: {exc}")
+        return 1
+    if serve_result.returncode != 0:
+        _close_handle(handle)
+        serve_enable_url = _tailscale_serve_enable_url(
+            _completed_process_text(serve_result)
+        )
+        if serve_enable_url:
+            print_fn("Step 2/3: enable Tailscale Serve for this computer.")
+            print_fn(
+                "Tailscale requires one-time approval before CCB Mobile can use your tailnet URL."
+            )
+            print_fn(f"Open: {serve_enable_url}")
+            opened = open_url_fn(serve_enable_url)
+            if opened:
+                print_fn("Opened the Tailscale Serve enable page.")
+            print_fn("After approving, run `ccb update mobile` again.")
+            print_fn("The next run starts the gateway and prints the pairing QR.")
+            print_fn("")
+            _print_mobile_app_steps(print_fn, environ=env, qr_ready=False)
+            return 0
+        detail = _completed_process_detail(serve_result)
+        print_fn(
+            f"Could not start Tailscale Serve: exit {serve_result.returncode}{detail}"
+        )
+        return int(serve_result.returncode or 1)
+
+    try:
+        qr_payload = _pairing_qr_text(handle.summary)
+    except ValueError as exc:
+        _close_handle(handle)
+        print_fn(f"Could not generate CCB Mobile pairing QR: {exc}")
+        return 1
 
     print_fn("")
     print_fn("CCB Mobile is ready.")

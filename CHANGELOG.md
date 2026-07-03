@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v8.0.9 (2026-07-03)
+
+### Mobile Gateway And Conversation Refresh
+
+- **Mobile Update Reconnect Stabilized**: `ccb update mobile` now reuses a
+  healthy host-wide mobile gateway, refreshes stale pairing handoffs without
+  restarting the gateway, and returns instead of occupying the foreground.
+- **Lead Conversation Refresh Fixed**: CCB Mobile keeps the visible agent
+  selected across ProjectView refreshes, so large native Codex transcripts such
+  as `ccb_mobile / lead` keep loading and refreshing without drifting to the
+  active tmux pane.
+- **Provider Status Improved**: Claude provider runtime status reporting is
+  available to the mobile and project-view surfaces alongside the existing
+  Codex paths.
+- **Mobile App Link Updated**: `ccb update mobile`, README links, package
+  metadata, and the mobile release manifest now point to the 8.0.9 APK.
+
 ## v8.0.8 (2026-07-01)
 
 ### Mobile Status And Transcript Polish
