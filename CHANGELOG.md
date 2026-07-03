@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v8.0.11 (2026-07-03)
+
+### Release CI And Mobile APK
+
+- **CI Smoke Roots Fixed**: tag and main test workflows now pass explicit
+  `CCB_TEST_ROOTS` for temporary dynamic-layout smoke projects, matching the
+  hardened `ccb_test` source-test boundary.
+- **Mobile App Link Updated**: `ccb update mobile`, README links, package
+  metadata, and the mobile release manifest now point to the 8.0.11 APK.
+
 ## v8.0.10 (2026-07-03)
 
 ### Release Metadata

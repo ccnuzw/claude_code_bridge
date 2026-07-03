@@ -54,6 +54,7 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-dynamic-layout-provider-matrix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export CCB_TEST_ROOTS="$smoke_root"
           python scripts/guarded_dynamic_layout_provider_smoke.py \
             --test-root "$smoke_root" \
             --project-prefix ci-guarded-dynamic-layout \
@@ -78,6 +79,7 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-core-dynamic-layout-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export CCB_TEST_ROOTS="$smoke_root"
           python scripts/guarded_core_dynamic_layout_smoke.py \
             --test-root "$smoke_root" \
             --project-prefix ci-core-dynamic-layout \
@@ -113,6 +115,7 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-dynamic-agent-lifecycle-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export CCB_TEST_ROOTS="$smoke_root"
           python scripts/dynamic_agent_lifecycle_smoke.py \
             --test-root "$smoke_root" \
             --project-name ci-dynamic-agent-lifecycle \
@@ -166,6 +169,7 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-reload-busy-drain-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export CCB_TEST_ROOTS="$smoke_root"
           python scripts/reload_busy_drain_smoke.py \
             --test-root "$smoke_root" \
             --project-name ci-reload-busy-drain \
@@ -216,6 +220,7 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-workflow-closure-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export CCB_TEST_ROOTS="$smoke_root"
           python scripts/workflow_closure_smoke.py \
             --test-root "$smoke_root" \
             --project-name ci-workflow-closure \
@@ -262,6 +267,7 @@ jobs:
           set -euo pipefail
           export TERM=xterm-256color
           smoke_root="${RUNNER_TEMP}/ccb-orchestrator-autonomous-cleanup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export CCB_TEST_ROOTS="$smoke_root"
           python scripts/orchestrator_capacity_semantic_smoke.py \
             --test-root "$smoke_root" \
             --project-name ci-orchestrator-autonomous-cleanup \
