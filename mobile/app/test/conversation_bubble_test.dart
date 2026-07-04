@@ -280,7 +280,7 @@ void main() {
     );
   });
 
-  testWidgets('working reply bubble shows status glyph and active border', (
+  testWidgets('working reply uses normal surface with active border and glow', (
     tester,
   ) async {
     final item = CcbConversationItem(
@@ -323,17 +323,15 @@ void main() {
     );
     final shape = material.shape as RoundedRectangleBorder;
     final colorScheme = ThemeData().colorScheme;
-    expect(material.color, conversationWorkingBubbleTint(colorScheme, 0));
+    expect(material.color, colorScheme.surfaceContainerLow);
     expect(material.color, isNot(colorScheme.primaryContainer));
+    expect(material.color, isNot(colorScheme.errorContainer));
+    expect(material.color, isNot(colorScheme.tertiaryContainer));
     expect(shape.side.color, conversationWorkingBubbleAccent(colorScheme));
     expect(shape.side.color, isNot(colorScheme.primary));
     expect(shape.side.color, isNot(colorScheme.tertiary));
     expect(shape.side.width, 2.4);
 
-    expect(
-      conversationWorkingBubbleTint(colorScheme, 1),
-      isNot(conversationWorkingBubbleTint(colorScheme, 0)),
-    );
     expect(
       conversationWorkingBubbleBorderSide(colorScheme, 1).width,
       greaterThan(conversationWorkingBubbleBorderSide(colorScheme, 0).width),

@@ -85,11 +85,7 @@ class ConversationBubble extends StatelessWidget {
           },
         );
     final bubbleColor =
-        showWorking
-            ? colorScheme.primaryContainer.withValues(alpha: 0.58)
-            : isUser
-            ? colorScheme.primaryContainer
-            : colorScheme.surfaceContainerLow;
+        isUser ? colorScheme.primaryContainer : colorScheme.surfaceContainerLow;
     final borderColor = switch (item.state) {
       CcbConversationDeliveryState.failed => colorScheme.error,
       CcbConversationDeliveryState.unconfirmed => colorScheme.tertiary,
@@ -370,17 +366,13 @@ class _ConversationBubbleSurfaceState extends State<_ConversationBubbleSurface>
     Widget? child,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    final color =
-        widget.isWorking
-            ? conversationWorkingBubbleTint(colorScheme, pulse)
-            : widget.color;
     final borderSide =
         widget.isWorking
             ? conversationWorkingBubbleBorderSide(colorScheme, pulse)
             : BorderSide(color: widget.borderColor, width: widget.borderWidth);
     return Material(
       key: ValueKey('conversation-item-${widget.itemId}'),
-      color: color,
+      color: widget.color,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         side: borderSide,
@@ -389,20 +381,6 @@ class _ConversationBubbleSurfaceState extends State<_ConversationBubbleSurface>
       child: child ?? widget.child,
     );
   }
-}
-
-@visibleForTesting
-Color conversationWorkingBubbleTint(ColorScheme colorScheme, double pulse) {
-  final clampedPulse = pulse.clamp(0.0, 1.0);
-  final base =
-      colorScheme.brightness == Brightness.dark
-          ? const Color(0xFF3E2A12)
-          : const Color(0xFFFFF1CC);
-  final active =
-      colorScheme.brightness == Brightness.dark
-          ? const Color(0xFF513513)
-          : const Color(0xFFFFDD8A);
-  return Color.lerp(base, active, 0.44 + (0.28 * clampedPulse))!;
 }
 
 @visibleForTesting
