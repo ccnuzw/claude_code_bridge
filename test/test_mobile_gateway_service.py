@@ -1939,6 +1939,244 @@ def test_agent_conversation_pages_older_items_from_codex_tail_cursor(
     assert 'next_cursor' not in older['conversation']
 
 
+def test_agent_conversation_caches_codex_latest_page_until_rollout_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    records: list[dict[str, object]] = [
+        {
+            'timestamp': '2026-06-25T10:00:00.000Z',
+            'type': 'event_msg',
+            'payload': {
+                'type': 'user_message',
+                'message': 'older cached question',
+            },
+        },
+        {
+            'timestamp': '2026-06-25T10:00:01.000Z',
+            'type': 'event_msg',
+            'payload': {
+                'type': 'agent_message',
+                'message': 'older cached answer',
+            },
+        },
+    ]
+    records.extend(
+        {
+            'timestamp': f'2026-06-25T11:20:{index % 60:02d}.000Z',
+            'type': 'rollout_noise',
+            'payload': {'ignored': 'x' * 96},
+        }
+        for index in range(1300)
+    )
+    records.extend(
+        [
+            {
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': 'cached latest question',
+                },
+            },
+            {
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'agent_message',
+                    'message': 'cached latest answer',
+                },
+            },
+        ]
+    )
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='large-cache-thread',
+        records=records,
+    )
+    service = _service(
+        _FakeCcbdClientWithConversationComms(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+
+    _, first = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        headers,
+    )
+    assert [item['body'] for item in first['conversation']['items']] == [
+        'cached latest question',
+        'cached latest answer',
+    ]
+
+    original_rollout_parser = service_module._codex_rollout_conversation_items
+
+    def fail_if_rollout_is_parsed(*args, **kwargs):
+        raise AssertionError('cached latest page should not parse rollout again')
+
+    monkeypatch.setattr(
+        service_module,
+        '_codex_rollout_conversation_items',
+        fail_if_rollout_is_parsed,
+    )
+    _, second = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        headers,
+    )
+    assert [item['body'] for item in second['conversation']['items']] == [
+        'cached latest question',
+        'cached latest answer',
+    ]
+
+    monkeypatch.setattr(
+        service_module,
+        '_codex_rollout_conversation_items',
+        original_rollout_parser,
+    )
+    rollout_path = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / 'mobile'
+        / 'provider-state'
+        / 'codex'
+        / 'home'
+        / 'sessions'
+        / '2026'
+        / '06'
+        / '25'
+        / 'rollout-large-cache-thread.jsonl'
+    )
+    with rollout_path.open('a', encoding='utf-8') as handle:
+        for record in [
+            {
+                'timestamp': '2026-06-25T12:01:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': 'fresh changed question',
+                },
+            },
+            {
+                'timestamp': '2026-06-25T12:01:01.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'agent_message',
+                    'message': 'fresh changed answer',
+                },
+            },
+        ]:
+            handle.write(f'{json.dumps(record)}\n')
+
+    _, changed = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        headers,
+    )
+    assert [item['body'] for item in changed['conversation']['items']] == [
+        'fresh changed question',
+        'fresh changed answer',
+    ]
+
+
+def test_agent_conversation_cache_keeps_codex_limit_and_cursor_separate(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo'
+    records: list[dict[str, object]] = [
+        {
+            'timestamp': '2026-06-25T10:00:00.000Z',
+            'type': 'event_msg',
+            'payload': {'type': 'user_message', 'message': 'turn one question'},
+        },
+        {
+            'timestamp': '2026-06-25T10:00:01.000Z',
+            'type': 'event_msg',
+            'payload': {'type': 'agent_message', 'message': 'turn one answer'},
+        },
+    ]
+    records.extend(
+        {
+            'timestamp': f'2026-06-25T11:00:{index % 60:02d}.000Z',
+            'type': 'rollout_noise',
+            'payload': {'ignored': 'x' * 96},
+        }
+        for index in range(1300)
+    )
+    records.extend(
+        [
+            {
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'event_msg',
+                'payload': {'type': 'user_message', 'message': 'turn two question'},
+            },
+            {
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'event_msg',
+                'payload': {'type': 'agent_message', 'message': 'turn two answer'},
+            },
+        ]
+    )
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='large-limit-cursor-thread',
+        records=records,
+    )
+    service = _service(
+        _FakeCcbdClientWithConversationComms(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+
+    _, limit_one = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=1',
+        headers,
+    )
+    assert [item['body'] for item in limit_one['conversation']['items']] == [
+        'turn two answer',
+    ]
+
+    _, latest = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        headers,
+    )
+    assert [item['body'] for item in latest['conversation']['items']] == [
+        'turn two question',
+        'turn two answer',
+    ]
+    assert latest['conversation']['next_cursor'].startswith('codex-before:')
+
+    _, older = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4'
+        f'&limit=2&cursor={latest["conversation"]["next_cursor"]}',
+        headers,
+    )
+    assert [item['body'] for item in older['conversation']['items']] == [
+        'turn one question',
+        'turn one answer',
+    ]
+
+
 def test_agent_conversation_pages_completed_job_history_beyond_project_view_limit(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     jobs_path = project_root / '.ccb' / 'agents' / 'mobile' / 'jobs.jsonl'

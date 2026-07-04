@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import base64
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -77,6 +78,8 @@ _PROJECT_ACTIVITY_REFRESH_LIMIT = 3
 _PROJECT_ACTIVITY_REFRESH_TTL_SECONDS = 10
 _PROJECT_ACTIVITY_REFRESH_BUDGET_SECONDS = 0.75
 _PROJECT_ACTIVITY_REFRESH_PER_PROJECT_SECONDS = 0.25
+_CONVERSATION_PAGE_CACHE_MAX_ENTRIES = 64
+_CONVERSATION_PAGE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,22 @@ class _ConversationItemsResult:
     items: list[dict[str, object]]
     already_paged: bool = False
     next_cursor: str | None = None
+
+
+@dataclass(frozen=True)
+class _ConversationPageCacheKey:
+    project_id: str
+    agent: str
+    namespace_epoch: int
+    limit: int
+    cursor: str | None
+
+
+@dataclass(frozen=True)
+class _ConversationPageCacheEntry:
+    fingerprint: tuple[tuple[str, int, int], ...]
+    page: dict[str, object]
+    byte_size: int
 
 
 class MobileGatewayError(RuntimeError):
@@ -139,6 +158,12 @@ class MobileGatewayService:
         self._project_activity_store = (
             MobileGatewayProjectActivityStore(self._mobile_dir) if mobile_dir is not None else None
         )
+        self._conversation_page_cache: OrderedDict[
+            _ConversationPageCacheKey,
+            _ConversationPageCacheEntry,
+        ] = OrderedDict()
+        self._conversation_page_cache_bytes = 0
+        self._conversation_page_cache_lock = threading.Lock()
 
     @property
     def project_id(self) -> str:
@@ -373,6 +398,30 @@ class MobileGatewayService:
             namespace_epoch=_query_int(query, 'namespace_epoch'),
         )
         limit = min(200, max(1, _query_int(query, 'limit') or 50))
+        cursor = _query_text(query, 'cursor')
+        agent_record = _map(target.get('agent_record'))
+        provider_key = (_optional_text(agent_record.get('provider')) or '').strip().lower()
+        cache_key = _ConversationPageCacheKey(
+            project_id=project.project_id,
+            agent=str(target['agent']),
+            namespace_epoch=int(target['namespace_epoch']),
+            limit=limit,
+            cursor=cursor,
+        )
+        cache_fingerprint = _agent_native_conversation_cache_fingerprint(
+            project.project_root,
+            agent=str(target['agent']),
+            provider=provider_key,
+        )
+        if cache_fingerprint:
+            cached_page = self._conversation_page_cache_get(cache_key, cache_fingerprint)
+            if cached_page is not None:
+                return self._agent_conversation_response(
+                    project_id=project.project_id,
+                    agent=str(target['agent']),
+                    namespace_epoch=int(target['namespace_epoch']),
+                    page=cached_page,
+                )
         terminal_history = self._agent_terminal_history_for_conversation(
             project_id=project.project_id,
             view_payload=view_payload,
@@ -388,7 +437,7 @@ class MobileGatewayService:
             terminal_history=terminal_history,
             mobile_files_dir=self._mobile_files_dir(),
             limit=limit,
-            cursor=_query_text(query, 'cursor'),
+            cursor=cursor,
         )
         if conversation_items.already_paged:
             page = {
@@ -399,22 +448,83 @@ class MobileGatewayService:
             page = _agent_conversation_page(
                 conversation_items.items,
                 limit=limit,
-                cursor=_query_text(query, 'cursor'),
+                cursor=cursor,
             )
+        if cache_fingerprint and _conversation_page_has_provider_native_items(page):
+            self._conversation_page_cache_put(cache_key, cache_fingerprint, page)
+        return self._agent_conversation_response(
+            project_id=project.project_id,
+            agent=str(target['agent']),
+            namespace_epoch=int(target['namespace_epoch']),
+            page=page,
+        )
+
+    def _agent_conversation_response(
+        self,
+        *,
+        project_id: str,
+        agent: str,
+        namespace_epoch: int,
+        page: dict[str, object],
+    ) -> dict[str, object]:
         conversation: dict[str, object] = {
-            'project_id': project.project_id,
-            'agent': target['agent'],
-            'namespace_epoch': target['namespace_epoch'],
+            'project_id': project_id,
+            'agent': agent,
+            'namespace_epoch': namespace_epoch,
             'generated_at': self._clock(),
             'items': page['items'],
         }
-        if page['next_cursor'] is not None:
+        if page.get('next_cursor') is not None:
             conversation['next_cursor'] = page['next_cursor']
         return {
             'schema_version': _SCHEMA_VERSION,
             'status': 'ok',
             'conversation': conversation,
         }
+
+    def _conversation_page_cache_get(
+        self,
+        key: _ConversationPageCacheKey,
+        fingerprint: tuple[tuple[str, int, int], ...],
+    ) -> dict[str, object] | None:
+        with self._conversation_page_cache_lock:
+            entry = self._conversation_page_cache.get(key)
+            if entry is None:
+                return None
+            if entry.fingerprint != fingerprint:
+                self._conversation_page_cache_bytes -= entry.byte_size
+                self._conversation_page_cache.pop(key, None)
+                return None
+            self._conversation_page_cache.move_to_end(key)
+            return _copy_conversation_page(entry.page)
+
+    def _conversation_page_cache_put(
+        self,
+        key: _ConversationPageCacheKey,
+        fingerprint: tuple[tuple[str, int, int], ...],
+        page: dict[str, object],
+    ) -> None:
+        page_copy = _copy_conversation_page(page)
+        byte_size = _conversation_page_byte_size(page_copy)
+        if byte_size > _CONVERSATION_PAGE_CACHE_MAX_BYTES:
+            return
+        with self._conversation_page_cache_lock:
+            old_entry = self._conversation_page_cache.pop(key, None)
+            if old_entry is not None:
+                self._conversation_page_cache_bytes -= old_entry.byte_size
+            self._conversation_page_cache[key] = _ConversationPageCacheEntry(
+                fingerprint=fingerprint,
+                page=page_copy,
+                byte_size=byte_size,
+            )
+            self._conversation_page_cache_bytes += byte_size
+            self._conversation_page_cache.move_to_end(key)
+            while (
+                len(self._conversation_page_cache) > _CONVERSATION_PAGE_CACHE_MAX_ENTRIES
+                or self._conversation_page_cache_bytes > _CONVERSATION_PAGE_CACHE_MAX_BYTES
+            ):
+                _, evicted = self._conversation_page_cache.popitem(last=False)
+                self._conversation_page_cache_bytes -= evicted.byte_size
 
     def _agent_terminal_history_for_conversation(
         self,
@@ -2184,6 +2294,67 @@ def _agent_native_conversation_items(
     return _ConversationItemsResult([])
 
 
+def _agent_native_conversation_cache_fingerprint(
+    project_root: Path,
+    *,
+    agent: str,
+    provider: str | None = None,
+) -> tuple[tuple[str, int, int], ...]:
+    provider_key = str(provider or '').strip().lower()
+    if provider_key in {'', 'codex'}:
+        codex_fingerprint = _codex_native_conversation_cache_fingerprint(
+            project_root,
+            agent=agent,
+        )
+        if codex_fingerprint:
+            return codex_fingerprint
+    if provider_key in {'', 'claude'}:
+        claude_fingerprint = _claude_native_conversation_cache_fingerprint(
+            project_root,
+            agent=agent,
+        )
+        if claude_fingerprint:
+            return claude_fingerprint
+    return ()
+
+
+def _conversation_file_fingerprint_entry(path: Path) -> tuple[str, int, int] | None:
+    try:
+        stat = path.stat()
+    except Exception:
+        return None
+    return (str(path), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _copy_conversation_page(page: dict[str, object]) -> dict[str, object]:
+    copied: dict[str, object] = {
+        'items': [dict(item) for item in _iterable(page.get('items'))],
+        'next_cursor': page.get('next_cursor'),
+    }
+    return copied
+
+
+def _conversation_page_byte_size(page: dict[str, object]) -> int:
+    try:
+        return len(
+            json.dumps(
+                page,
+                ensure_ascii=False,
+                separators=(',', ':'),
+            ).encode('utf-8')
+        )
+    except Exception:
+        return _CONVERSATION_PAGE_CACHE_MAX_BYTES + 1
+
+
+def _conversation_page_has_provider_native_items(page: dict[str, object]) -> bool:
+    for item in _iterable(page.get('items')):
+        source = _optional_text(_map(item).get('source')) or ''
+        if source.startswith('provider_native/'):
+            return True
+    return False
+
+
 def _claude_native_conversation_items(
     project_root: Path,
     *,
@@ -2350,6 +2521,18 @@ def _discover_claude_native_session_path(
     return path if path is not None and path.is_file() else None
 
 
+def _claude_native_conversation_cache_fingerprint(
+    project_root: Path,
+    *,
+    agent: str,
+) -> tuple[tuple[str, int, int], ...]:
+    session_path = _claude_native_session_path(project_root, agent=agent)
+    if session_path is None:
+        return ()
+    entry = _conversation_file_fingerprint_entry(session_path)
+    return (entry,) if entry is not None else ()
+
+
 def _claude_record_id(record: dict[str, object]) -> str:
     message = _map(record.get('message'))
     return (
@@ -2443,6 +2626,46 @@ def _codex_native_conversation_items(
         _without_native_sort_fields(item)
         for item in _coalesce_codex_native_agent_replies(items)
     ])
+
+
+def _codex_native_conversation_cache_fingerprint(
+    project_root: Path,
+    *,
+    agent: str,
+) -> tuple[tuple[str, int, int], ...]:
+    home = project_root / '.ccb' / 'agents' / agent / 'provider-state' / 'codex' / 'home'
+    state_path = home / 'state_5.sqlite'
+    state_entry = _conversation_file_fingerprint_entry(state_path)
+    if state_entry is None:
+        return ()
+    try:
+        connection = sqlite3.connect(f'file:{state_path}?mode=ro', uri=True)
+        connection.row_factory = sqlite3.Row
+        rows = list(
+            connection.execute(
+                'select id, rollout_path, created_at, updated_at from threads '
+                'where rollout_path is not null and rollout_path != "" '
+                'order by created_at asc, updated_at asc, id asc'
+            )
+        )
+    except Exception:
+        return ()
+    finally:
+        try:
+            connection.close()  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+    rollout_entries: list[tuple[str, int, int]] = []
+    for row in rows:
+        rollout_path = _codex_rollout_path(row, home=home)
+        if rollout_path is None:
+            continue
+        entry = _conversation_file_fingerprint_entry(rollout_path)
+        if entry is not None:
+            rollout_entries.append(entry)
+    if not rollout_entries:
+        return ()
+    return (state_entry, *rollout_entries)
 
 
 def _codex_native_conversation_all_items(
