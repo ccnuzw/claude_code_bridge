@@ -140,7 +140,10 @@ def run_mobile_update_onboarding(
             (print_fn is print and sys.stdout.isatty()) if qr_ansi is None else qr_ansi
         )
         for line in render_terminal_qr(
-            qr_payload, ansi=use_ansi, quiet_zone=2, compact=True
+            qr_payload,
+            ansi=use_ansi,
+            quiet_zone=2,
+            compact=True,
         ):
             print_fn(line)
         print_fn("")

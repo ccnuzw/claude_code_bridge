@@ -148,6 +148,43 @@ void main() {
     );
   });
 
+  test('parses mobile update pairing QR payload JSON', () {
+    final payload = GatewayPairingPayload.fromQrText(
+      jsonEncode({
+        'claim_endpoint':
+            'https://desktop.tailnet.ts.net:8787/v1/pairing/claim',
+        'gateway_url': 'https://desktop.tailnet.ts.net:8787',
+        'pairing_code': 'stable-code',
+        'route_provider': 'tailnet',
+        'scopes': [
+          'view',
+          'message_submit',
+          'terminal_input',
+          'file_upload',
+          'file_download',
+        ],
+      }),
+    );
+
+    expect(payload.pairingCode, 'stable-code');
+    expect(payload.routeProvider, RouteProviderKind.tailnet);
+    expect(
+      payload.gatewayUrl,
+      Uri.parse('https://desktop.tailnet.ts.net:8787'),
+    );
+    expect(
+      payload.claimEndpoint,
+      Uri.parse('https://desktop.tailnet.ts.net:8787/v1/pairing/claim'),
+    );
+    expect(payload.scopes, {
+      'view',
+      'message_submit',
+      'terminal_input',
+      'file_upload',
+      'file_download',
+    });
+  });
+
   test('claims relay pairing and stores relay route metadata', () async {
     final secureStore = _MemorySecureStore();
     final store = GatewayHostProfileStore(secureStore: secureStore);

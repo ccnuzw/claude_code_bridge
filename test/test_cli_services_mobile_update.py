@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from cli.services import mobile_update
+from cli.services.terminal_qr import render_terminal_qr
 
 
 class _FakeGatewayHandle:
@@ -428,7 +429,7 @@ def test_onboarding_logged_in_starts_managed_mobile_service_when_callback_provid
     assert "Start the loopback-only CCB Mobile gateway in one terminal" not in text
 
 
-def test_onboarding_managed_service_qr_keeps_payload_and_removes_extra_border() -> None:
+def test_onboarding_managed_service_qr_keeps_full_payload_and_scanner_safe_border() -> None:
     payload = json.dumps(
         {
             "claim_endpoint": "https://desktop.tailnet.ts.net:8787/v1/pairing/claim",
@@ -453,14 +454,15 @@ def test_onboarding_managed_service_qr_keeps_payload_and_removes_extra_border() 
         sort_keys=True,
     )
 
-    old_qr = mobile_update.render_terminal_qr(payload, quiet_zone=2, compact=True)
-    new_qr = mobile_update.render_terminal_qr(payload, quiet_zone=0, compact=True)
-    old_area = len(old_qr) * len(old_qr[0])
-    new_area = len(new_qr) * len(new_qr[0])
+    scanner_safe_qr = render_terminal_qr(payload, quiet_zone=2, compact=True)
+    uncompact_qr = render_terminal_qr(payload, quiet_zone=2, compact=False)
+    scanner_safe_area = len(scanner_safe_qr) * len(scanner_safe_qr[0])
+    uncompact_area = len(uncompact_qr) * len(uncompact_qr[0])
 
-    assert new_area < old_area
-    assert len(new_qr) == len(old_qr) - 2
-    assert len(new_qr[0]) == len(old_qr[0]) - 4
+    assert json.loads(payload)["pairing_code"] == "stable-code-with-realistic-length"
+    assert scanner_safe_area < uncompact_area
+    assert scanner_safe_qr[0].strip("█") == ""
+    assert scanner_safe_qr[-1].strip("█") == ""
 
 
 def test_onboarding_reports_non_mapping_mobile_service_result() -> None:

@@ -97,14 +97,27 @@ void main() {
               )
               .map((box) => box.decoration)
               .whereType<BoxDecoration>();
+      final colorScheme = ThemeData().colorScheme;
+      final accent = projectWorkingRowAccent(colorScheme);
       expect(
         rowDecorations.any((decoration) {
           final border = decoration.border;
-          return border is Border && border.left.width == 4;
+          return border is Border &&
+              border.top.width == 2.2 &&
+              border.top.color == projectWorkingRowBorder(accent, 0);
         }),
         isTrue,
       );
-      final colorScheme = ThemeData().colorScheme;
+      expect(
+        rowDecorations.any((decoration) {
+          final border = decoration.border;
+          return border is Border &&
+              border.left.width == 6 &&
+              border.left.color == accent;
+        }),
+        isTrue,
+      );
+      expect(projectWorkingRowGlow(accent, 0), isNotEmpty);
       expect(
         projectWorkingRowTint(colorScheme, 0),
         isNot(projectWorkingRowTint(colorScheme, 1)),

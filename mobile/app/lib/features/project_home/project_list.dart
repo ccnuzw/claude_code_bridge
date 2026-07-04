@@ -237,19 +237,27 @@ class _ProjectWorkingRowHighlightState extends State<ProjectWorkingRowHighlight>
         child: widget.child,
         builder: (context, child) {
           final pulse = _pulse.value;
-          return Material(
-            color: projectWorkingRowTint(colorScheme, pulse),
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+          final accent = projectWorkingRowAccent(colorScheme);
+          final borderColor = projectWorkingRowBorder(accent, pulse);
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: projectWorkingRowTint(colorScheme, pulse),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: borderColor, width: 2.2),
+              boxShadow: projectWorkingRowGlow(accent, pulse),
             ),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: colorScheme.primary, width: 4),
-                ),
+                border: Border(left: BorderSide(color: accent, width: 6)),
               ),
-              child: child,
+              child: Material(
+                color: Colors.transparent,
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: child,
+              ),
             ),
           );
         },
@@ -261,9 +269,46 @@ class _ProjectWorkingRowHighlightState extends State<ProjectWorkingRowHighlight>
 @visibleForTesting
 Color projectWorkingRowTint(ColorScheme colorScheme, double pulse) {
   final clampedPulse = pulse.clamp(0.0, 1.0);
-  return colorScheme.primaryContainer.withValues(
-    alpha: 0.38 + (0.18 * clampedPulse),
+  final accent = projectWorkingRowAccent(colorScheme);
+  final base =
+      colorScheme.brightness == Brightness.dark
+          ? Color.alphaBlend(
+            accent.withValues(alpha: 0.26),
+            colorScheme.surfaceContainerHighest,
+          )
+          : Color.alphaBlend(
+            accent.withValues(alpha: 0.20),
+            colorScheme.surfaceContainerLowest,
+          );
+  return Color.alphaBlend(
+    accent.withValues(alpha: 0.10 + (0.08 * clampedPulse)),
+    base,
   );
+}
+
+@visibleForTesting
+Color projectWorkingRowAccent(ColorScheme colorScheme) {
+  return colorScheme.brightness == Brightness.dark
+      ? const Color(0xFF59DFFF)
+      : const Color(0xFF0077CC);
+}
+
+@visibleForTesting
+Color projectWorkingRowBorder(Color accent, double pulse) {
+  final clampedPulse = pulse.clamp(0.0, 1.0);
+  return accent.withValues(alpha: 0.86 + (0.14 * clampedPulse));
+}
+
+@visibleForTesting
+List<BoxShadow> projectWorkingRowGlow(Color accent, double pulse) {
+  final clampedPulse = pulse.clamp(0.0, 1.0);
+  return [
+    BoxShadow(
+      color: accent.withValues(alpha: 0.22 + (0.16 * clampedPulse)),
+      blurRadius: 8 + (4 * clampedPulse),
+      spreadRadius: 0.6 + clampedPulse,
+    ),
+  ];
 }
 
 @visibleForTesting
