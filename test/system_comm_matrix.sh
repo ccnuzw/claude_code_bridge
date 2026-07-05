@@ -73,11 +73,30 @@ tmux_cmd() {
   tmux -L "${TMUX_SOCKET}" "$@"
 }
 
+cleanup_project() {
+  local project="$1"
+  "${PYTHON}" - "${ROOT}/ccb" "${project}" <<'PY'
+import subprocess
+import sys
+
+try:
+    subprocess.run(
+        [sys.argv[1], "--project", sys.argv[2], "kill"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    pass
+PY
+}
+
 cleanup() {
   local project
   for project in "${TEST_DIR1}/mixed_${RUN_ID}" "${TEST_DIR1}/dual_codex_${RUN_ID}" "${TEST_DIR1}/dual_claude_${RUN_ID}" "${TEST_DIR1}/dual_gemini_${RUN_ID}" "${TEST_DIR1}/proj_a_${RUN_ID}" "${TEST_DIR2}/proj_b_${RUN_ID}"; do
     if [ -d "${project}" ]; then
-      env HOME="${HOME}" PATH="${PATH}" CCB_TMUX_SOCKET="${CCB_TMUX_SOCKET}" "${ROOT}/ccb" --project "${project}" kill >/dev/null 2>&1 || true
+      cleanup_project "${project}"
     fi
   done
   for session in "${SESSIONS[@]}"; do
@@ -200,7 +219,14 @@ wait_for_mount() {
 ccb_project() {
   local project="$1"
   shift
-  env HOME="${HOME}" PATH="${PATH}" GEMINI_ROOT="${GEMINI_ROOT}" CLAUDE_PROJECTS_ROOT="${CLAUDE_PROJECTS_ROOT}" OPENCODE_STORAGE_ROOT="${OPENCODE_STORAGE_ROOT}" DROID_SESSIONS_ROOT="${DROID_SESSIONS_ROOT}" CODEX_SESSION_ROOT="${CODEX_SESSION_ROOT}" CODEX_START_CMD="${CODEX_START_CMD}" GEMINI_START_CMD="${GEMINI_START_CMD}" CLAUDE_START_CMD="${CLAUDE_START_CMD}" CCB_GEMINI_READY_TIMEOUT_S="${CCB_GEMINI_READY_TIMEOUT_S}" CCB_CLAUDE_READY_TIMEOUT_S="${CCB_CLAUDE_READY_TIMEOUT_S}" CCB_TMUX_SOCKET="${CCB_TMUX_SOCKET}" CCB_CLAUDE_SKILLS=0 CCB_REPLY_LANG=en "${ROOT}/ccb" --project "${project}" "$@"
+  if [ "${1:-}" = "ask" ]; then
+    (
+      cd "${project}" || exit 1
+      env HOME="${HOME}" PATH="${PATH}" GEMINI_ROOT="${GEMINI_ROOT}" CLAUDE_PROJECTS_ROOT="${CLAUDE_PROJECTS_ROOT}" OPENCODE_STORAGE_ROOT="${OPENCODE_STORAGE_ROOT}" DROID_SESSIONS_ROOT="${DROID_SESSIONS_ROOT}" CODEX_SESSION_ROOT="${CODEX_SESSION_ROOT}" CODEX_START_CMD="${CODEX_START_CMD}" GEMINI_START_CMD="${GEMINI_START_CMD}" CLAUDE_START_CMD="${CLAUDE_START_CMD}" CCB_GEMINI_READY_TIMEOUT_S="${CCB_GEMINI_READY_TIMEOUT_S}" CCB_CLAUDE_READY_TIMEOUT_S="${CCB_CLAUDE_READY_TIMEOUT_S}" CCB_TMUX_SOCKET="${CCB_TMUX_SOCKET}" CCB_CLAUDE_SKILLS=0 CCB_REPLY_LANG=en "${ROOT}/ccb" "$@"
+    )
+  else
+    env HOME="${HOME}" PATH="${PATH}" GEMINI_ROOT="${GEMINI_ROOT}" CLAUDE_PROJECTS_ROOT="${CLAUDE_PROJECTS_ROOT}" OPENCODE_STORAGE_ROOT="${OPENCODE_STORAGE_ROOT}" DROID_SESSIONS_ROOT="${DROID_SESSIONS_ROOT}" CODEX_SESSION_ROOT="${CODEX_SESSION_ROOT}" CODEX_START_CMD="${CODEX_START_CMD}" GEMINI_START_CMD="${GEMINI_START_CMD}" CLAUDE_START_CMD="${CLAUDE_START_CMD}" CCB_GEMINI_READY_TIMEOUT_S="${CCB_GEMINI_READY_TIMEOUT_S}" CCB_CLAUDE_READY_TIMEOUT_S="${CCB_CLAUDE_READY_TIMEOUT_S}" CCB_TMUX_SOCKET="${CCB_TMUX_SOCKET}" CCB_CLAUDE_SKILLS=0 CCB_REPLY_LANG=en "${ROOT}/ccb" --project "${project}" "$@"
+  fi
 }
 
 assert_contains() {
