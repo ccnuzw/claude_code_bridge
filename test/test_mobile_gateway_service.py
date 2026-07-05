@@ -2934,6 +2934,38 @@ def test_host_local_device_revoke_lists_devices_and_revokes_terminal_handles(tmp
     assert str(handle['terminal_token']) not in audit
 
 
+def test_terminal_replacement_handle_rejects_previous_handle_resume_cursor(tmp_path: Path) -> None:
+    store = MobileGatewayPairingStore(tmp_path / 'mobile')
+    first = store.create_terminal_handle(
+        project_id='proj-demo',
+        device_id='dev-demo',
+        target_epoch=4,
+        target_summary={'project_id': 'proj-demo', 'agent': 'mobile'},
+        geometry={'columns': 80, 'rows': 24},
+    )
+    store.record_terminal_output_sequence(
+        terminal_id=str(first['terminal_id']),
+        terminal_token=str(first['terminal_token']),
+        sequence=7,
+    )
+    replacement = store.create_terminal_handle(
+        project_id='proj-demo',
+        device_id='dev-demo',
+        target_epoch=4,
+        target_summary={'project_id': 'proj-demo', 'agent': 'mobile'},
+        geometry={'columns': 80, 'rows': 24},
+    )
+
+    with pytest.raises(MobileGatewayPairingError) as denied:
+        store.authenticate_terminal_token(
+            terminal_id=str(replacement['terminal_id']),
+            terminal_token=str(replacement['terminal_token']),
+            resume_cursor=7,
+        )
+
+    assert denied.value.reason == 'stale_resume_cursor'
+
+
 def test_terminal_open_requires_terminal_scope_and_mints_hashed_token(tmp_path: Path) -> None:
     service = _service(_FakeCcbdClient(), mobile_dir=tmp_path / 'mobile')
     pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')

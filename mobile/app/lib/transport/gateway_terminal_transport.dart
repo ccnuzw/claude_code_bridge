@@ -209,7 +209,8 @@ class _GatewayTerminalSession implements TerminalSession {
       return;
     }
     _handle = handle;
-    _connect(resumeCursor: _resumeCursor);
+    _resumeCursor = 0;
+    _connect();
   }
 
   Future<void> _closeOutput() async {

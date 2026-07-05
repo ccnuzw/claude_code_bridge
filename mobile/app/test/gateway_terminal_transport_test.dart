@@ -185,14 +185,15 @@ void main() {
           gateway.openRequests.length == 2 && gateway.resumeCursors.length == 2,
     );
 
-    expect(gateway.resumeCursors, [null, 7]);
+    expect(gateway.resumeCursors, [null, null]);
+    expect(gateway.rejectedResumeCursors, isEmpty);
     expect(gateway.openRequests.last.geometry.columns, 132);
     expect(gateway.openRequests.last.geometry.rows, 43);
     expect(gateway.openRequests.last.geometry.pixelWidth, 1000);
     expect(gateway.openRequests.last.geometry.pixelHeight, 700);
 
     gateway.emit(
-      GatewayTerminalFrame.output(sequence: 8, bytes: utf8.encode('after')),
+      GatewayTerminalFrame.output(sequence: 1, bytes: utf8.encode('after')),
     );
     await pumpEventQueue();
 
@@ -230,9 +231,10 @@ void main() {
           gateway.openRequests.length == 2 && gateway.resumeCursors.length == 2,
     );
 
-    expect(gateway.resumeCursors, [null, 7]);
+    expect(gateway.resumeCursors, [null, null]);
+    expect(gateway.rejectedResumeCursors, isEmpty);
     gateway.emit(
-      GatewayTerminalFrame.output(sequence: 8, bytes: utf8.encode('after')),
+      GatewayTerminalFrame.output(sequence: 1, bytes: utf8.encode('after')),
     );
     await pumpEventQueue();
 
@@ -264,7 +266,10 @@ class _FakeGatewayTransport implements GatewayTransport {
   final openRequests = <GatewayTerminalOpenRequest>[];
   final sentFrames = <GatewayTerminalFrame>[];
   final resumeCursors = <int?>[];
+  final rejectedResumeCursors = <int>[];
   final _frameControllers = <StreamController<GatewayTerminalFrame>>[];
+  final _frameHandles = <GatewayTerminalHandle>[];
+  final _lastOutputByTerminalId = <String, int>{};
 
   @override
   final GatewayHostProfile profile = GatewayHostProfile(
@@ -278,6 +283,12 @@ class _FakeGatewayTransport implements GatewayTransport {
   );
 
   void emit(GatewayTerminalFrame frame) {
+    final handle = _frameHandles.last;
+    if (frame.type == GatewayTerminalFrameType.output) {
+      _lastOutputByTerminalId[handle.terminalId] = _jsonInt(
+        frame.payload['seq'],
+      );
+    }
     _frameControllers.last.add(frame);
   }
 
@@ -397,6 +408,17 @@ class _FakeGatewayTransport implements GatewayTransport {
     resumeCursors.add(resumeCursor);
     final controller = StreamController<GatewayTerminalFrame>.broadcast();
     _frameControllers.add(controller);
+    _frameHandles.add(handle);
+    final lastOutput = _lastOutputByTerminalId[handle.terminalId] ?? 0;
+    if (resumeCursor != null && resumeCursor > lastOutput) {
+      rejectedResumeCursors.add(resumeCursor);
+      scheduleMicrotask(() {
+        if (!controller.isClosed) {
+          controller.add(GatewayTerminalFrame.error('stale_resume_cursor'));
+          controller.close();
+        }
+      });
+    }
     return controller.stream;
   }
 }
@@ -413,4 +435,11 @@ Future<void> _waitFor(
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
   fail('condition was not met within $timeout');
+}
+
+int _jsonInt(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  return int.tryParse((value ?? '').toString()) ?? 0;
 }
