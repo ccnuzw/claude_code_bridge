@@ -202,7 +202,6 @@ def _refresh_reader_for_current_session_binding(submission: ProviderSubmission) 
     updated_state = {
         **state,
         'reader': _reader_factory(session, current_log),
-        'session_path': current_log_str,
         'workspace_path': str(work_dir),
     }
     if current_log_str != poll_state_log_str:
@@ -406,7 +405,6 @@ def _submission_with_locked_reader(
     updated_state = {
         **state,
         'reader': reader,
-        'session_path': log_str,
         'workspace_path': str(work_dir),
     }
     if fallback:
