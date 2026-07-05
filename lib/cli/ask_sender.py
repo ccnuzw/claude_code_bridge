@@ -33,18 +33,23 @@ def resolve_ask_sender(context: CliContext, explicit_sender: str | None) -> str:
 
 
 def _resolve_session_actor(context: CliContext, *, allowed_session_actors: frozenset[str]) -> str | None:
-    for env_name in ('CCB_CALLER_ACTOR',):
-        actor = _normalized_actor_candidate(os.environ.get(env_name))
-        if actor in allowed_session_actors:
-            return actor
-
+    runtime_env_seen = False
     for env_name in ('CCB_CALLER_RUNTIME_DIR', 'CODEX_RUNTIME_DIR'):
+        if str(os.environ.get(env_name) or '').strip():
+            runtime_env_seen = True
         actor = _actor_from_runtime_dir(
             os.environ.get(env_name),
             agents_dir=context.paths.agents_dir,
             allowed_session_actors=allowed_session_actors,
         )
         if actor is not None:
+            return actor
+    if runtime_env_seen:
+        return None
+
+    for env_name in ('CCB_CALLER_ACTOR',):
+        actor = _normalized_actor_candidate(os.environ.get(env_name))
+        if actor in allowed_session_actors:
             return actor
 
     return _actor_from_session_id(os.environ.get('CCB_SESSION_ID'), allowed_session_actors=allowed_session_actors)

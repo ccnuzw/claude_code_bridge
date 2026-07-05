@@ -27,7 +27,18 @@ from completion.snapshot_store import CompletionSnapshotStore
 from jobs.store import JobStore
 from message_bureau import AttemptRecord, AttemptState, AttemptStore, ReplyRecord, ReplyStore, ReplyTerminalStatus
 from project.ids import compute_project_id
+from provider_core.caller_env import caller_context_env
 from storage.paths import PathLayout
+
+
+@pytest.fixture(autouse=True)
+def _clear_caller_project_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('CCB_CALLER_ACTOR', raising=False)
+    monkeypatch.delenv('CCB_CALLER_RUNTIME_DIR', raising=False)
+    monkeypatch.delenv('CCB_CALLER_PROJECT_ROOT', raising=False)
+    monkeypatch.delenv('CCB_CALLER_PROJECT_ID', raising=False)
+    monkeypatch.delenv('CODEX_RUNTIME_DIR', raising=False)
+    monkeypatch.delenv('CCB_SESSION_ID', raising=False)
 
 
 def _build_context(project_root: Path) -> object:
@@ -35,6 +46,11 @@ def _build_context(project_root: Path) -> object:
     (project_root / '.ccb' / 'ccb.config').write_text('cmd; agent1:codex, agent2:claude\n', encoding='utf-8')
     command = ParsedAskCommand(project=None, target='agent1', sender=None, message='hello')
     return CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+
+def _write_config(project_root: Path, text: str = 'cmd; agent1:codex, agent2:claude\n') -> None:
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text(text, encoding='utf-8')
 
 
 def test_submit_ask_rejects_unknown_target(tmp_path: Path) -> None:
@@ -49,6 +65,73 @@ def test_submit_ask_rejects_unknown_target(tmp_path: Path) -> None:
         )
 
     assert str(exc_info.value) == 'unknown agent: agent9'
+
+
+def test_submit_ask_rejects_explicit_cross_project_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    other_project = tmp_path / 'other'
+    project_root.mkdir()
+    other_project.mkdir()
+    _write_config(project_root)
+    _write_config(other_project)
+    monkeypatch.delenv('CCB_CALLER_PROJECT_ROOT', raising=False)
+    monkeypatch.delenv('CCB_CALLER_PROJECT_ID', raising=False)
+    command = ParsedAskCommand(project=str(other_project), target='agent1', sender=None, message='hello')
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    with pytest.raises(ValueError, match='ask is project-local'):
+        ask_service.submit_ask(context, command)
+
+
+def test_submit_ask_rejects_workspace_binding_that_escapes_current_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'subdir'
+    other_project = tmp_path / 'other'
+    workspace.mkdir(parents=True)
+    other_project.mkdir()
+    _write_config(project_root)
+    _write_config(other_project)
+    (workspace / '.ccb-workspace.json').write_text(
+        f'{{"target_project":"{other_project}"}}',
+        encoding='utf-8',
+    )
+    monkeypatch.delenv('CCB_CALLER_PROJECT_ROOT', raising=False)
+    monkeypatch.delenv('CCB_CALLER_PROJECT_ID', raising=False)
+    command = ParsedAskCommand(project=None, target='agent1', sender=None, message='hello')
+    context = CliContextBuilder().build(command, cwd=workspace, bootstrap_if_missing=False)
+    assert context.project.project_root == other_project.resolve()
+    assert context.project.source == 'workspace-binding'
+
+    with pytest.raises(ValueError, match='ask is project-local'):
+        ask_service.submit_ask(context, command)
+
+
+def test_submit_ask_rejects_stale_same_name_caller_runtime_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_project = tmp_path / 'current'
+    stale_project = tmp_path / 'stale'
+    current_project.mkdir()
+    stale_project.mkdir()
+    _write_config(current_project)
+    _write_config(stale_project)
+    stale_runtime_dir = stale_project / '.ccb' / 'agents' / 'agent1' / 'provider-runtime' / 'codex'
+    stale_runtime_dir.mkdir(parents=True, exist_ok=True)
+    command = ParsedAskCommand(project=None, target='agent2', sender=None, message='hello')
+    context = CliContextBuilder().build(command, cwd=current_project, bootstrap_if_missing=False)
+    monkeypatch.setenv('CCB_CALLER_ACTOR', 'agent1')
+    monkeypatch.delenv('CCB_CALLER_RUNTIME_DIR', raising=False)
+    monkeypatch.setenv('CODEX_RUNTIME_DIR', str(stale_runtime_dir))
+
+    with pytest.raises(ValueError, match='caller runtime belongs to another'):
+        ask_service.submit_ask(context, command)
 
 
 def test_submit_ask_allows_removed_target_when_reload_drain_active(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -624,6 +707,26 @@ def test_resolve_ask_sender_prefers_runtime_dir_actor(monkeypatch: pytest.Monkey
     assert ask_service.resolve_ask_sender(context, None) == 'agent1'
 
 
+def test_resolve_ask_sender_ignores_stale_runtime_dir_actor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-ask-current'
+    stale_project = tmp_path / 'repo-ask-stale'
+    project_root.mkdir()
+    stale_project.mkdir()
+    context = _build_context(project_root)
+    stale_runtime_dir = stale_project / '.ccb' / 'agents' / 'agent1' / 'provider-runtime' / 'codex'
+    stale_runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv('CCB_CALLER_ACTOR', 'agent1')
+    monkeypatch.delenv('CCB_CALLER_RUNTIME_DIR', raising=False)
+    monkeypatch.setenv('CODEX_RUNTIME_DIR', str(stale_runtime_dir))
+    monkeypatch.setenv('CCB_SESSION_ID', 'ccb-agent1-stale')
+
+    assert ask_service.resolve_ask_sender(context, None) == 'user'
+
+
 def test_resolve_ask_sender_prefers_relocated_runtime_dir_actor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-ask-relocated-runtime-actor'
     (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
@@ -649,6 +752,17 @@ def test_resolve_ask_sender_prefers_relocated_runtime_dir_actor(monkeypatch: pyt
 
     assert context.paths.runtime_state_root == relocated_root
     assert ask_service.resolve_ask_sender(context, None) == 'agent1'
+
+
+def test_caller_context_env_includes_project_identity(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-caller-env-project'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-runtime' / 'codex'
+    runtime_dir.mkdir(parents=True)
+
+    env = caller_context_env(actor='agent1', runtime_dir=runtime_dir, launch_session_id='ccb-agent1-1')
+
+    assert env['CCB_CALLER_PROJECT_ROOT'] == str(project_root.resolve())
+    assert env['CCB_CALLER_PROJECT_ID'] == compute_project_id(project_root)
 
 
 def test_watch_ask_job_reconnects_and_preserves_cursor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
+import os
+from pathlib import Path
 
 from agents.config_loader_runtime.role_lookup import looks_like_role_id, normalize_role_id
 from agents.models import AgentValidationError
 from ccbd.api_models import DeliveryScope, MessageEnvelope
 from mailbox_runtime.targets import NON_AGENT_ACTORS, normalize_actor_name
+from project.discovery import find_nearest_project_anchor, find_workspace_binding, load_workspace_binding, project_ccb_dir
+from storage.path_helpers import runtime_project_root_from_path
 from storage.text_artifacts import artifact_stub, maybe_spill_text, write_text_artifact
 
 from .models import AskSummary
@@ -68,6 +72,7 @@ def submit_ask(
     invoke_mounted_daemon_fn: Callable,
 ) -> AskSummary:
     config = load_project_config_fn(context.project.project_root).config
+    _validate_project_local_ask_context(context, command, configured_agents=config.agents)
     try:
         normalized_target = _resolve_target(command.target, config.agents)
         _validate_target(normalized_target, config.agents)
@@ -293,6 +298,103 @@ def _summary_from_payload(project_id: str, payload: dict) -> AskSummary:
         jobs = tuple(payload.get('jobs', ()))
         submission_id = payload.get('submission_id')
     return AskSummary(project_id=project_id, submission_id=submission_id, jobs=jobs)
+
+
+def _validate_project_local_ask_context(context, command, *, configured_agents: Collection[str]) -> None:
+    project_root = _resolve_path(Path(context.project.project_root))
+    cwd = _resolve_path(Path(context.cwd))
+    local_anchor = _resolve_optional(find_nearest_project_anchor(cwd))
+    source = str(getattr(context.project, 'source', '') or '')
+
+    if str(getattr(command, 'project', '') or '').strip():
+        if local_anchor is None:
+            raise ValueError(
+                'ask is project-local; --project cannot select a CCB project from outside that project'
+            )
+        if local_anchor != project_root:
+            raise ValueError(
+                'ask is project-local; --project cannot target another .ccb project'
+            )
+
+    if local_anchor is not None and local_anchor != project_root and source != 'caller-runtime':
+        raise ValueError(
+            'ask is project-local; workspace or cwd resolved to another .ccb project'
+        )
+
+    if source == 'workspace-binding':
+        _validate_workspace_binding_project(context, project_root)
+
+    _validate_caller_runtime_project(project_root, configured_agents=configured_agents)
+
+
+def _validate_workspace_binding_project(context, project_root: Path) -> None:
+    binding_path = find_workspace_binding(Path(context.cwd))
+    if binding_path is None:
+        raise ValueError('ask is project-local; workspace binding is missing')
+    binding = load_workspace_binding(binding_path)
+    target_project = _resolve_path(Path(str(binding['target_project'])))
+    if target_project != project_root:
+        raise ValueError('ask is project-local; workspace binding targets another .ccb project')
+    binding_project_id = str(binding.get('project_id') or '').strip()
+    if binding_project_id and binding_project_id != str(context.project.project_id):
+        raise ValueError('ask is project-local; workspace binding project id does not match')
+
+
+def _validate_caller_runtime_project(project_root: Path, *, configured_agents: Collection[str]) -> None:
+    runtime_project = _caller_runtime_project_root()
+    if runtime_project is None or runtime_project == project_root:
+        return
+    caller = _normalized_actor_candidate(os.environ.get('CCB_CALLER_ACTOR'))
+    if caller is not None and caller in configured_agents:
+        raise ValueError(
+            'ask is project-local; caller runtime belongs to another .ccb project'
+        )
+
+
+def _caller_runtime_project_root() -> Path | None:
+    for env_name in ('CCB_CALLER_RUNTIME_DIR', 'CODEX_RUNTIME_DIR'):
+        root = _project_root_from_runtime_path(os.environ.get(env_name))
+        if root is not None:
+            return root
+    return None
+
+
+def _project_root_from_runtime_path(value: str | None) -> Path | None:
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+    runtime_path = _resolve_path(Path(raw))
+    marker_project_root = runtime_project_root_from_path(runtime_path)
+    if marker_project_root is not None:
+        marker_root = _resolve_path(marker_project_root)
+        if project_ccb_dir(marker_root).is_dir():
+            return marker_root
+    for candidate in (runtime_path, *runtime_path.parents):
+        if candidate.name != 'agents' or candidate.parent.name != '.ccb':
+            continue
+        project_root = _resolve_path(candidate.parent.parent)
+        if project_ccb_dir(project_root).is_dir():
+            return project_root
+    return None
+
+
+def _normalized_actor_candidate(value: str | None) -> str | None:
+    try:
+        return normalize_actor_name(value)
+    except AgentValidationError:
+        return None
+
+
+def _resolve_optional(path: Path | None) -> Path | None:
+    return _resolve_path(path) if path is not None else None
+
+
+def _resolve_path(path: Path) -> Path:
+    current = Path(path).expanduser()
+    try:
+        return current.resolve()
+    except Exception:
+        return current.absolute()
 
 
 __all__ = ['message_with_reply_guidance', 'submit_ask']

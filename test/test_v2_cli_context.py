@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from cli.context import CliContextBuilder
-from cli.models import ParsedConfigValidateCommand, ParsedStartCommand
+from cli.models import ParsedAskCommand, ParsedConfigValidateCommand, ParsedStartCommand
+from project.ids import compute_project_id
 from project.discovery import WORKSPACE_BINDING_FILENAME
 
 
@@ -50,6 +51,29 @@ def test_cli_context_uses_explicit_project_over_cwd(tmp_path: Path) -> None:
     assert context.cwd == elsewhere
     assert context.project.project_root == project_root.resolve()
     assert context.project.source == 'explicit'
+
+
+def test_cli_context_ask_uses_caller_project_root_when_cwd_moves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    other_project = tmp_path / 'other'
+    project_root.mkdir()
+    other_project.mkdir()
+    (project_root / '.ccb').mkdir(parents=True)
+    (other_project / '.ccb').mkdir(parents=True)
+    monkeypatch.setenv('CCB_CALLER_PROJECT_ROOT', str(project_root))
+    monkeypatch.setenv('CCB_CALLER_PROJECT_ID', compute_project_id(project_root))
+
+    context = CliContextBuilder().build(
+        ParsedAskCommand(project=None, target='agent1', sender=None, message='hello'),
+        cwd=other_project,
+    )
+
+    assert context.cwd == other_project
+    assert context.project.project_root == project_root.resolve()
+    assert context.project.source == 'caller-runtime'
 
 
 def test_cli_context_bootstraps_missing_project_when_requested(tmp_path: Path) -> None:
