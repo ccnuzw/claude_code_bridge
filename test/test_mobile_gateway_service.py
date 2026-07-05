@@ -3244,7 +3244,7 @@ def test_terminal_websocket_resumes_after_transport_disconnect_with_matching_cur
         thread.join(timeout=2)
 
 
-def test_terminal_websocket_rejects_stale_resume_cursor(tmp_path: Path) -> None:
+def test_terminal_websocket_accepts_stale_output_resume_cursor(tmp_path: Path) -> None:
     sessions: list[_FakeTerminalSession] = []
     service = _service(
         _FakeCcbdClient(),
@@ -3283,6 +3283,9 @@ def test_terminal_websocket_rejects_stale_resume_cursor(tmp_path: Path) -> None:
         sock = None
         _wait_for(lambda: sessions[0].closed)
 
+        stored_after_disconnect = (tmp_path / 'mobile' / 'terminal-tokens.jsonl').read_text(encoding='utf-8')
+        assert '"last_output_seq": 1' in stored_after_disconnect
+
         stale_sock = _websocket_connect(host, port, f'/v1/terminals/{handle["terminal_id"]}')
         _websocket_send_json(
             stale_sock,
@@ -3293,16 +3296,83 @@ def test_terminal_websocket_rejects_stale_resume_cursor(tmp_path: Path) -> None:
                 'resume_cursor': 0,
             },
         )
-        error = _websocket_read_until(stale_sock, 'error')
-        assert error['code'] == 'stale_resume_cursor'
-        closed = _websocket_read_until(stale_sock, 'closed')
-        assert closed['reason'] == 'stale_resume_cursor'
-        assert len(sessions) == 1
+        open_ack = _websocket_read_until(stale_sock, 'open')
+        assert open_ack['resume_cursor'] == 1
+        output = _websocket_read_until(stale_sock, 'output')
+        assert output['seq'] == 2
+        assert len(sessions) == 2
+        stored_after_resume = (tmp_path / 'mobile' / 'terminal-tokens.jsonl').read_text(encoding='utf-8')
+        assert '"last_resume_cursor": 0' in stored_after_resume
+        assert '"last_resume_gap": 1' in stored_after_resume
     finally:
         if sock is not None:
             sock.close()
         if stale_sock is not None:
             stale_sock.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_terminal_websocket_rejects_future_resume_cursor(tmp_path: Path) -> None:
+    sessions: list[_FakeTerminalSession] = []
+    service = _service(
+        _FakeCcbdClient(),
+        mobile_dir=tmp_path / 'mobile',
+        terminal_session_factory=lambda target: sessions.append(_FakeTerminalSession(target)) or sessions[-1],
+    )
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': str(pairing['pairing_code'])})
+    _, handle = service.dispatch_post(
+        '/v1/projects/proj-demo/terminals',
+        {
+            'project_id': 'proj-demo',
+            'namespace_epoch': 4,
+            'target': {'kind': 'agent', 'agent': 'mobile', 'window': 'main'},
+        },
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+    server = build_mobile_gateway_server(parse_listen_address('127.0.0.1:0'), service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    sock = None
+    future_sock = None
+    try:
+        thread.start()
+        host, port = server.server_address[:2]
+        sock = _websocket_connect(host, port, f'/v1/terminals/{handle["terminal_id"]}')
+        _websocket_send_json(
+            sock,
+            {
+                'type': 'open',
+                'terminal_id': handle['terminal_id'],
+                'token': handle['terminal_token'],
+            },
+        )
+        assert _websocket_read_until(sock, 'output')['seq'] == 1
+        sock.close()
+        sock = None
+        _wait_for(lambda: sessions[0].closed)
+
+        future_sock = _websocket_connect(host, port, f'/v1/terminals/{handle["terminal_id"]}')
+        _websocket_send_json(
+            future_sock,
+            {
+                'type': 'open',
+                'terminal_id': handle['terminal_id'],
+                'token': handle['terminal_token'],
+                'resume_cursor': 99,
+            },
+        )
+        error = _websocket_read_until(future_sock, 'error')
+        assert error['code'] == 'stale_resume_cursor'
+        closed = _websocket_read_until(future_sock, 'closed')
+        assert closed['reason'] == 'stale_resume_cursor'
+        assert len(sessions) == 1
+    finally:
+        if sock is not None:
+            sock.close()
+        if future_sock is not None:
+            future_sock.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)

@@ -515,7 +515,7 @@ class MobileGatewayPairingStore:
             )
         if resume_cursor is not None:
             cursor = int(resume_cursor)
-            if cursor != last_output_seq:
+            if cursor > last_output_seq:
                 self._append_audit(
                     event='terminal_resume_denied',
                     result='denied',
@@ -535,6 +535,7 @@ class MobileGatewayPairingStore:
             updated['disconnected_at'] = None
             updated['resumed_at'] = _iso(self._clock())
             updated['last_resume_cursor'] = cursor
+            updated['last_resume_gap'] = max(0, last_output_seq - cursor)
             _append_jsonl(self.terminal_tokens_path, updated)
             self._append_audit(
                 event='terminal_resume_ok',
@@ -543,6 +544,8 @@ class MobileGatewayPairingStore:
                 device_id=device_id,
                 terminal_id=terminal_id,
                 resume_cursor=cursor,
+                last_output_seq=last_output_seq,
+                skipped_output_count=updated['last_resume_gap'],
             )
             return updated
         return record

@@ -241,7 +241,8 @@ bool _isRenewableTerminalError(String code) {
   final normalized = code.trim().toLowerCase();
   return normalized == 'expired' ||
       normalized == 'terminal_token_expired' ||
-      normalized == 'token_expired';
+      normalized == 'token_expired' ||
+      normalized == 'stale_resume_cursor';
 }
 
 int _int(Object? value) {

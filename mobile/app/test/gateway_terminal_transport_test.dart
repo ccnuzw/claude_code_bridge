@@ -200,6 +200,46 @@ void main() {
     expect(errors, isEmpty);
     await subscription.cancel();
   });
+
+  test('gateway terminal renews handle when resume cursor is stale', () async {
+    final gateway = _FakeGatewayTransport();
+    final session = await GatewayTerminalTransport(transport: gateway).open(
+      TerminalOpenRequest.gateway(
+        target: CcbTerminalTarget.agent(
+          projectId: 'proj-demo',
+          namespaceEpoch: 4,
+          agent: 'mobile',
+          scopes: {CcbScope.view, CcbScope.terminalInput},
+        ),
+      ),
+    );
+    final output = <String>[];
+    final errors = <Object>[];
+    final subscription = session.output
+        .map(utf8.decode)
+        .listen(output.add, onError: errors.add);
+
+    gateway.emit(
+      GatewayTerminalFrame.output(sequence: 7, bytes: utf8.encode('before')),
+    );
+    await pumpEventQueue();
+
+    gateway.emit(GatewayTerminalFrame.error('stale_resume_cursor'));
+    await _waitFor(
+      () =>
+          gateway.openRequests.length == 2 && gateway.resumeCursors.length == 2,
+    );
+
+    expect(gateway.resumeCursors, [null, 7]);
+    gateway.emit(
+      GatewayTerminalFrame.output(sequence: 8, bytes: utf8.encode('after')),
+    );
+    await pumpEventQueue();
+
+    expect(output, ['before', 'after']);
+    expect(errors, isEmpty);
+    await subscription.cancel();
+  });
 }
 
 class _FakeGatewayTransport implements GatewayTransport {
