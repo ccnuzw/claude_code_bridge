@@ -192,6 +192,11 @@ Current landing batch:
   Android debug APK builds successfully;
 - validate the first terminal path only against an isolated CCB test project,
   not `/home/bfly/yunwei/ccb_source` or this project's active runtime.
+- land per-agent Terminal mode from
+  [topics/agent-terminal-mode-remote-pane-control.md](topics/agent-terminal-mode-remote-pane-control.md):
+  reuse the existing gateway `TerminalView`/WebSocket transport inside the
+  selected-agent workspace, complete direct pane input controls, and require
+  real Android Emulator screenshots/recording before acceptance.
 
 ## Phase 1: Gateway Contract And Native Tmux Terminal Vertical Slice
 

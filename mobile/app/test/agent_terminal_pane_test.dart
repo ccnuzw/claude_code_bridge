@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
 
+import 'support/project_home_test_fakes.dart';
+
 void main() {
   testWidgets('terminal toolbar exposes direct pane controls on phone width', (
     tester,
@@ -111,4 +113,99 @@ void main() {
     expect(paste.onPressed, isNull);
     expect(called, isFalse);
   });
+
+  testWidgets('live terminal pane reopens when target epoch changes', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    var view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: [
+                  TextButton(
+                    key: const ValueKey('advance-epoch'),
+                    onPressed: () {
+                      setState(() {
+                        view = _view(namespaceEpoch: 5);
+                      });
+                    },
+                    child: const Text('advance'),
+                  ),
+                  Expanded(
+                    child: AgentTerminalPane(
+                      view: view,
+                      target: view.terminalTargetForAgent('mobile'),
+                      terminalTransport: transport,
+                      gatewayTerminal: true,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(transport.requests, hasLength(1));
+    expect(transport.requests.single.target.namespaceEpoch, 4);
+    expect(
+      find.byKey(const ValueKey('ccb-live-terminal-view')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('advance-epoch')));
+    await tester.pumpAndSettle();
+
+    expect(transport.requests, hasLength(2));
+    expect(transport.requests.last.target.namespaceEpoch, 5);
+    expect(
+      find.byKey(const ValueKey('ccb-live-terminal-view')),
+      findsOneWidget,
+    );
+  });
+}
+
+CcbProjectView _view({required int namespaceEpoch}) {
+  return CcbProjectView(
+    project: const CcbProject(
+      id: 'proj-demo',
+      displayName: 'demo',
+      root: '/srv/ccb/demo',
+    ),
+    namespaceEpoch: namespaceEpoch,
+    tmuxSocketPath: '/tmp/ccb-demo/tmux.sock',
+    tmuxSessionName: 'ccb-demo',
+    activeWindow: 'main',
+    activePaneId: '%2',
+    windows: const [
+      CcbWindow(
+        name: 'main',
+        label: 'main',
+        kind: 'agents',
+        order: 0,
+        active: true,
+        agents: ['mobile'],
+      ),
+    ],
+    agents: const [
+      CcbAgent(
+        name: 'mobile',
+        provider: 'codex',
+        window: 'main',
+        order: 0,
+        active: true,
+        queueDepth: 0,
+      ),
+    ],
+    contentItems: const [],
+    notifications: const [],
+    terminalHistories: const {},
+  );
 }

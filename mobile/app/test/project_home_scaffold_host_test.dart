@@ -227,7 +227,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.byKey(const ValueKey('agent-terminal-pane-mobile')),
+        find.byKey(const ValueKey('agent-terminal-pane-proj-demo-4-mobile')),
         findsOneWidget,
       );
       expect(
@@ -310,6 +310,68 @@ void main() {
         );
         expect(
           find.byKey(const ValueKey('agent-chat-timeline-lead')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'mobile host resets terminal mode when namespace epoch changes',
+      (tester) async {
+        var view = _view(namespaceEpoch: 4);
+        var selectedAgent = view.agentByName('mobile');
+        final terminalTransport = RecordingTerminalTransport();
+
+        await _pump(
+          tester,
+          StatefulBuilder(
+            builder: (context, setState) {
+              return ProjectHomeMobileChatScaffoldHost(
+                view: view,
+                selectedAgent: selectedAgent,
+                repository: RecordingGatewayRepository(),
+                terminalTransport: terminalTransport,
+                usePaneInputForMessages: true,
+                mobileAgentsCollapsed: false,
+                onBack: () {},
+                onOpenTerminal: (_) {},
+                onOpenConnectionDetails: () {},
+                onCollapseAgents: () {},
+                onExpandAgents: () {},
+                onWindowSelected: (_) {},
+                onAgentSelected: (_) {},
+                onRefreshView: () async {
+                  setState(() {
+                    view = _view(namespaceEpoch: 5);
+                    selectedAgent = view.agentByName('mobile');
+                  });
+                  return null;
+                },
+                onTimelineScrollDirectionChanged: (_) {},
+              );
+            },
+          ),
+        );
+
+        await tester.tap(find.text('Terminal'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('agent-terminal-pane-proj-demo-4-mobile')),
+          findsOneWidget,
+        );
+        expect(terminalTransport.requests.single.target.namespaceEpoch, 4);
+
+        await tester.tap(
+          find.byKey(const ValueKey('agent-conversation-refresh-action')),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('ccb-live-terminal-view')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('agent-message-composer')),
           findsOneWidget,
         );
       },
@@ -510,14 +572,14 @@ Future<void> _pump(
   await tester.pumpAndSettle();
 }
 
-CcbProjectView _view() {
-  return const CcbProjectView(
+CcbProjectView _view({int namespaceEpoch = 4}) {
+  return CcbProjectView(
     project: CcbProject(
       id: 'proj-demo',
       displayName: 'demo',
       root: '/srv/ccb/demo',
     ),
-    namespaceEpoch: 4,
+    namespaceEpoch: namespaceEpoch,
     tmuxSocketPath: '/tmp/ccb-demo/tmux.sock',
     tmuxSessionName: 'ccb-demo',
     activeWindow: 'main',

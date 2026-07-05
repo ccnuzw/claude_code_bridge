@@ -162,6 +162,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     final projectOrAgentChanged =
         oldWidget.view.project.id != widget.view.project.id ||
         oldWidget.agent?.name != widget.agent?.name;
+    final terminalScopeChanged =
+        projectOrAgentChanged ||
+        oldWidget.view.namespaceEpoch != widget.view.namespaceEpoch ||
+        oldWidget.terminalTransport != widget.terminalTransport;
     if (oldWidget.repository != widget.repository ||
         oldWidget.terminalTransport != widget.terminalTransport ||
         oldWidget.view.project.id != widget.view.project.id ||
@@ -173,8 +177,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         unawaited(_paneMessageSubmitter.closeSessions());
         _chatController.clearRefreshedTerminalHistories();
       }
-      if (projectOrAgentChanged) {
+      if (terminalScopeChanged) {
         _mode = SelectedAgentWorkspaceMode.chat;
+      }
+      if (projectOrAgentChanged) {
         _restoreLocalMessagesForSelectedAgent();
       }
       _loadSelectedAgentConversation();
@@ -1148,7 +1154,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
           const SizedBox(height: 2),
           Expanded(
             child: AgentTerminalPane(
-              key: ValueKey('agent-terminal-pane-${selectedAgent.name}'),
+              key: ValueKey(
+                'agent-terminal-pane-${widget.view.project.id}-'
+                '${widget.view.namespaceEpoch}-${selectedAgent.name}',
+              ),
               view: widget.view,
               target: widget.view.terminalTargetForAgent(selectedAgent.name),
               terminalTransport: widget.terminalTransport,

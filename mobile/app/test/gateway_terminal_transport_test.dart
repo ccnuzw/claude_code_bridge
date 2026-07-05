@@ -92,6 +92,62 @@ void main() {
     expect(gateway.resumeCursors, [null, 7]);
   });
 
+  test('gateway terminal reconnects after stream disconnect', () async {
+    final gateway = _FakeGatewayTransport();
+    final session = await GatewayTerminalTransport(transport: gateway).open(
+      TerminalOpenRequest.gateway(
+        target: CcbTerminalTarget.agent(
+          projectId: 'proj-demo',
+          namespaceEpoch: 4,
+          agent: 'mobile',
+          scopes: {CcbScope.view, CcbScope.terminalInput},
+        ),
+      ),
+    );
+    final output = <String>[];
+    final errors = <Object>[];
+    final subscription = session.output
+        .map(utf8.decode)
+        .listen(output.add, onError: errors.add);
+
+    gateway.emit(
+      GatewayTerminalFrame.output(sequence: 7, bytes: utf8.encode('before')),
+    );
+    await pumpEventQueue();
+    await gateway.closeCurrentStream();
+    await pumpEventQueue();
+
+    expect(output, ['before']);
+    expect(
+      errors,
+      contains(
+        isA<TerminalTransportException>().having(
+          (error) => error.message,
+          'message',
+          'terminal stream disconnected',
+        ),
+      ),
+    );
+
+    await session.reconnect();
+    expect(gateway.resumeCursors, [null, 7]);
+
+    gateway.emit(
+      GatewayTerminalFrame.output(sequence: 8, bytes: utf8.encode('after')),
+    );
+    await pumpEventQueue();
+
+    expect(output, ['before', 'after']);
+    await session.writeBytes([0x03]);
+    expect(gateway.sentFrames.last.toJson(), {
+      'type': 'input',
+      'seq': 1,
+      'bytes_b64': base64Encode([0x03]),
+    });
+
+    await subscription.cancel();
+  });
+
   test('gateway terminal renews handle when token expires', () async {
     final gateway = _FakeGatewayTransport();
     final session = await GatewayTerminalTransport(transport: gateway).open(
@@ -168,7 +224,7 @@ class _FakeGatewayTransport implements GatewayTransport {
   final openRequests = <GatewayTerminalOpenRequest>[];
   final sentFrames = <GatewayTerminalFrame>[];
   final resumeCursors = <int?>[];
-  final _frames = StreamController<GatewayTerminalFrame>.broadcast();
+  final _frameControllers = <StreamController<GatewayTerminalFrame>>[];
 
   @override
   final GatewayHostProfile profile = GatewayHostProfile(
@@ -182,7 +238,11 @@ class _FakeGatewayTransport implements GatewayTransport {
   );
 
   void emit(GatewayTerminalFrame frame) {
-    _frames.add(frame);
+    _frameControllers.last.add(frame);
+  }
+
+  Future<void> closeCurrentStream() {
+    return _frameControllers.last.close();
   }
 
   @override
@@ -295,7 +355,9 @@ class _FakeGatewayTransport implements GatewayTransport {
     int? resumeCursor,
   }) {
     resumeCursors.add(resumeCursor);
-    return _frames.stream;
+    final controller = StreamController<GatewayTerminalFrame>.broadcast();
+    _frameControllers.add(controller);
+    return controller.stream;
   }
 }
 

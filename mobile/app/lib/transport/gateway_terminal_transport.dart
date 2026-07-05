@@ -157,7 +157,11 @@ class _GatewayTerminalSession implements TerminalSession {
   }
 
   void _handleDone() {
-    _closeOutput();
+    if (!_closed && !_output.isClosed) {
+      _output.addError(
+        const TerminalTransportException('terminal stream disconnected'),
+      );
+    }
   }
 
   void _handleTransportError(Object error, StackTrace stackTrace) {

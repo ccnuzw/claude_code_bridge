@@ -4,6 +4,16 @@ Date: 2026-06-27
 
 ## Current Phase
 
+Current execution target added 2026-07-04: land the per-agent Terminal mode
+described in
+[topics/agent-terminal-mode-remote-pane-control.md](topics/agent-terminal-mode-remote-pane-control.md).
+This package should be implemented in `/home/bfly/yunwei/ccb_source` only. It
+must promote the existing gateway `xterm` terminal transport into a selected
+agent `Chat / Terminal` mode, complete direct pane-control input coverage, and
+produce real Android Emulator screenshots/recording before review acceptance.
+`ccb_mobile` remains a retired implementation surface and must not receive app
+or gateway code changes.
+
 Phase 4F: Pane live-output smoothness implementation.
 
 Manual real-project AVD testing exposed the prior product-contract mismatch:

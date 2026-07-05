@@ -161,9 +161,10 @@ class _LiveTerminalPane extends StatefulWidget {
 class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     with WidgetsBindingObserver {
   late final Terminal _terminal;
-  late final Future<TerminalSession> _sessionFuture;
+  Future<TerminalSession>? _sessionFuture;
   TerminalSession? _session;
   StreamSubscription<String>? _outputSubscription;
+  var _openGeneration = 0;
   TerminalGeometry _lastGeometry = const TerminalGeometry(
     columns: 100,
     rows: 30,
@@ -195,15 +196,50 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
         _session?.resize(geometry);
       },
     );
-    _sessionFuture = _openSession();
+    _startSession(clearTerminal: false);
   }
 
-  Future<TerminalSession> _openSession() async {
+  @override
+  void didUpdateWidget(covariant _LiveTerminalPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.transport != widget.transport ||
+        oldWidget.gatewayTerminal != widget.gatewayTerminal ||
+        oldWidget.model.target.sessionScopeKey !=
+            widget.model.target.sessionScopeKey) {
+      _startSession(clearTerminal: true);
+    }
+  }
+
+  void _startSession({required bool clearTerminal}) {
+    _openGeneration += 1;
+    final generation = _openGeneration;
+    unawaited(_closeCurrentSession());
+    if (clearTerminal) {
+      _terminal.write('\x1b[2J\x1b[H');
+    }
+    _setControlStatus('Connecting');
+    final future = _openSession(generation);
+    setState(() {
+      _sessionFuture = future;
+    });
+  }
+
+  Future<TerminalSession> _openSession(int generation) async {
     final request =
         widget.gatewayTerminal || widget.transport is GatewayTerminalTransport
-            ? TerminalOpenRequest.gateway(target: widget.model.target)
-            : TerminalOpenRequest(target: widget.model.target);
+            ? TerminalOpenRequest.gateway(
+              target: widget.model.target,
+              geometry: _lastGeometry,
+            )
+            : TerminalOpenRequest(
+              target: widget.model.target,
+              geometry: _lastGeometry,
+            );
     final session = await widget.transport.open(request);
+    if (!mounted || generation != _openGeneration) {
+      await session.close();
+      throw const TerminalTransportException('stale terminal session');
+    }
     _session = session;
     _setControlStatus('Connected');
     _outputSubscription = session.output
@@ -212,10 +248,18 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
         .listen(
           _terminal.write,
           onError: (Object error) {
+            if (generation != _openGeneration) {
+              return;
+            }
+            _session = null;
             _terminal.write('\r\n\x1b[31m$error\x1b[0m\r\n');
             _setControlStatus('Stream error');
           },
           onDone: () {
+            if (generation != _openGeneration) {
+              return;
+            }
+            _session = null;
             _setControlStatus('Closed');
           },
         );
@@ -232,11 +276,20 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _outputSubscription?.cancel();
-    _session?.close().catchError((_) {
+    _openGeneration += 1;
+    unawaited(_closeCurrentSession());
+    super.dispose();
+  }
+
+  Future<void> _closeCurrentSession() async {
+    final subscription = _outputSubscription;
+    _outputSubscription = null;
+    final session = _session;
+    _session = null;
+    await subscription?.cancel();
+    await session?.close().catchError((_) {
       // Best-effort route teardown; the gateway may already have closed.
     });
-    super.dispose();
   }
 
   void _writeTerminalBytes(List<int> bytes) {
@@ -304,7 +357,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
   Future<void> _reconnect() async {
     final session = _session;
     if (session == null) {
-      _setControlStatus('Connecting');
+      _startSession(clearTerminal: false);
       return;
     }
     try {
@@ -333,7 +386,8 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
       builder: (context, snapshot) {
         final connected =
             snapshot.connectionState == ConnectionState.done &&
-            snapshot.hasData;
+            snapshot.hasData &&
+            _session != null;
         final status = connected ? _controlStatus : 'Connecting';
         return Column(
           children: [
@@ -600,4 +654,19 @@ bool _sameGeometry(TerminalGeometry a, TerminalGeometry b) {
       a.rows == b.rows &&
       a.pixelWidth == b.pixelWidth &&
       a.pixelHeight == b.pixelHeight;
+}
+
+extension on CcbTerminalTarget {
+  Object get sessionScopeKey {
+    return Object.hash(
+      projectId,
+      namespaceEpoch,
+      kind,
+      agent,
+      window,
+      paneId,
+      tmuxSocketPath,
+      tmuxSessionName,
+    );
+  }
 }

@@ -207,6 +207,11 @@ Relevant implementation anchors in `/home/bfly/yunwei/ccb_source`:
 - [topics/terminal-viewport-and-input-design.md](topics/terminal-viewport-and-input-design.md)
   preserves the terminal-mode viewport, zoom, mouse, wheel, and shortcut
   design while keeping the chat-first workspace clean.
+- [topics/agent-terminal-mode-remote-pane-control.md](topics/agent-terminal-mode-remote-pane-control.md)
+  defines the ready-to-execute package for per-agent Terminal mode: promote the
+  existing gateway `xterm` terminal surface into the selected-agent workspace,
+  complete direct pane input controls, and require real Android Emulator
+  evidence before acceptance.
 - [open-questions.md](open-questions.md) captures decisions still needed before
   implementation.
 - [decisions/001-ccb-authority-before-generic-tmux.md](decisions/001-ccb-authority-before-generic-tmux.md)
@@ -283,7 +288,8 @@ chat-first agent workspace with explicit raw-terminal fallback:
    compact chat-style entries. CCB ask/job history is supplemental
    compatibility data, not the default conversation source. Full raw
    terminal/tmux control remains available through explicit Open Terminal
-   actions with keyboard, paste, resize, and reconnect support.
+   actions and per-agent Terminal mode with keyboard, paste, resize, and
+   reconnect support.
 5. Move project path, gateway URL, pairing code, runtime id, route diagnostics,
    and low-level terminal state behind connection details or settings.
 6. Discover CCB projects and agents through `ccbd`, not raw filesystem scans or
