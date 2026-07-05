@@ -432,7 +432,7 @@ def _append_runner(
         results,
         name,
         command,
-        cwd=test_root,
+        cwd=project_root,
         env=env,
         timeout=timeout_s + 60,
     )
