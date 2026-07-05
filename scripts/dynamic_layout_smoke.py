@@ -2888,10 +2888,11 @@ def _run(
     timeout: int,
     input_text: str | None = None,
 ) -> dict[str, Any]:
+    run_command, run_cwd = _project_local_ask_command(command, cwd)
     try:
         completed = subprocess.run(
-            command,
-            cwd=str(cwd),
+            run_command,
+            cwd=str(run_cwd),
             env=env,
             text=True,
             input=input_text,
@@ -2901,7 +2902,7 @@ def _run(
     except subprocess.TimeoutExpired as exc:
         return {
             "name": name,
-            "command": command,
+            "command": run_command,
             "returncode": None,
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "",
@@ -2909,12 +2910,25 @@ def _run(
         }
     return {
         "name": name,
-        "command": command,
+        "command": run_command,
         "returncode": completed.returncode,
         "stdout": completed.stdout,
         "stderr": completed.stderr,
         "timeout": False,
     }
+
+
+def _project_local_ask_command(command: list[str], cwd: Path) -> tuple[list[str], Path]:
+    try:
+        project_index = command.index("--project")
+    except ValueError:
+        return command, cwd
+    if project_index + 2 >= len(command):
+        return command, cwd
+    if command[project_index + 2] != "ask":
+        return command, cwd
+    project_root = Path(command[project_index + 1]).expanduser()
+    return command[:project_index] + command[project_index + 2 :], project_root
 
 
 def _disturb_window_layout(

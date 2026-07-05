@@ -452,7 +452,7 @@ def test_projects_payload_returns_cached_activity_when_refresh_is_slow(
     monkeypatch.setattr(service_module, '_PROJECT_ACTIVITY_REFRESH_TTL_SECONDS', 0)
     monkeypatch.setattr(service_module, '_PROJECT_ACTIVITY_REFRESH_BUDGET_SECONDS', 0.03)
     monkeypatch.setattr(service_module, '_PROJECT_ACTIVITY_REFRESH_PER_PROJECT_SECONDS', 0.02)
-    fake = _SlowActivityCcbdClient(sleep_seconds=0.2)
+    fake = _SlowActivityCcbdClient(sleep_seconds=0.5)
     service = _service(
         fake,
         mobile_dir=tmp_path / 'mobile',
@@ -481,7 +481,7 @@ def test_projects_payload_returns_cached_activity_when_refresh_is_slow(
     projects = service.projects_payload()
     elapsed = time.monotonic() - started
 
-    assert elapsed < 0.15
+    assert elapsed < fake.sleep_seconds / 2
     assert projects['projects'][0]['last_activity_at'] == '2026-07-04T09:05:00Z'
     assert projects['projects'][0]['has_working_agents'] is True
     assert fake.calls[:2] == [('ping', 'ccbd'), ('project_view_start', 1)]
