@@ -170,6 +170,106 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('live terminal pane can reconnect after output stream error', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final session = transport.sessions.single;
+    session.addOutput('before');
+    await tester.pump();
+    expect(session.hasOutputListener, isTrue);
+
+    session.addOutputError(
+      const TerminalTransportException('terminal stream disconnected'),
+    );
+    await tester.pump();
+
+    expect(find.text('Stream error'), findsWidgets);
+    final ctrlC = tester.widget<TextButton>(
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-key-ctrl-c')),
+        matching: find.byType(TextButton),
+      ),
+    );
+    final reconnect = tester.widget<IconButton>(
+      find.byKey(const ValueKey('terminal-reconnect-button')),
+    );
+    expect(ctrlC.onPressed, isNull);
+    expect(reconnect.onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
+    await tester.pump();
+
+    expect(session.reconnectCount, 1);
+    expect(find.text('Reconnected'), findsWidgets);
+
+    session.addOutput('after');
+    await tester.pump();
+    expect(session.hasOutputListener, isTrue);
+  });
+
+  testWidgets('live terminal pane can reopen after output stream closes', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await transport.sessions.single.endOutput();
+    await tester.pump();
+
+    expect(find.text('Closed'), findsWidgets);
+    final ctrlC = tester.widget<TextButton>(
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-key-ctrl-c')),
+        matching: find.byType(TextButton),
+      ),
+    );
+    final reconnect = tester.widget<IconButton>(
+      find.byKey(const ValueKey('terminal-reconnect-button')),
+    );
+    expect(ctrlC.onPressed, isNull);
+    expect(reconnect.onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
+    await tester.pumpAndSettle();
+
+    expect(transport.sessions, hasLength(2));
+    expect(transport.requests, hasLength(2));
+    transport.sessions.last.addOutput('after reopen');
+    await tester.pump();
+    expect(transport.sessions.last.hasOutputListener, isTrue);
+  });
 }
 
 CcbProjectView _view({required int namespaceEpoch}) {

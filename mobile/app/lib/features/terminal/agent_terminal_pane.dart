@@ -251,7 +251,6 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
             if (generation != _openGeneration) {
               return;
             }
-            _session = null;
             _terminal.write('\r\n\x1b[31m$error\x1b[0m\r\n');
             _setControlStatus('Stream error');
           },
@@ -384,11 +383,20 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     return FutureBuilder<TerminalSession>(
       future: _sessionFuture,
       builder: (context, snapshot) {
+        final disconnected =
+            _controlStatus == 'Stream error' || _controlStatus == 'Closed';
         final connected =
             snapshot.connectionState == ConnectionState.done &&
             snapshot.hasData &&
-            _session != null;
-        final status = connected ? _controlStatus : 'Connecting';
+            _session != null &&
+            !disconnected;
+        final opened =
+            snapshot.connectionState == ConnectionState.done &&
+            snapshot.hasData;
+        final status =
+            snapshot.connectionState == ConnectionState.done
+                ? _controlStatus
+                : 'Connecting';
         return Column(
           children: [
             if (widget.showHeader)
@@ -399,6 +407,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
               ),
             TerminalControlToolbar(
               enabled: connected,
+              reconnectEnabled: opened,
               status: status,
               onEscape: () => _sendKey(const [27], 'Esc'),
               onTab: () => _sendKey(const [9], 'Tab'),
@@ -463,6 +472,7 @@ class AgentTerminalHeader extends StatelessWidget {
 class TerminalControlToolbar extends StatelessWidget {
   const TerminalControlToolbar({
     required this.enabled,
+    bool? reconnectEnabled,
     required this.status,
     required this.onEscape,
     required this.onTab,
@@ -477,9 +487,10 @@ class TerminalControlToolbar extends StatelessWidget {
     required this.onResize,
     required this.onReconnect,
     super.key,
-  });
+  }) : reconnectEnabled = reconnectEnabled ?? enabled;
 
   final bool enabled;
+  final bool reconnectEnabled;
   final String status;
   final VoidCallback onEscape;
   final VoidCallback onTab;
@@ -611,7 +622,7 @@ class TerminalControlToolbar extends StatelessWidget {
                   key: const ValueKey('terminal-reconnect-button'),
                   tooltip: 'Reconnect terminal',
                   visualDensity: VisualDensity.compact,
-                  onPressed: enabled ? onReconnect : null,
+                  onPressed: reconnectEnabled ? onReconnect : null,
                   icon: const Icon(Icons.refresh),
                 ),
               ],

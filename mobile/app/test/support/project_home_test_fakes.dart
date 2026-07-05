@@ -47,6 +47,16 @@ class RecordingTerminalSession implements TerminalSession {
     _output.add(Uint8List.fromList(utf8.encode(text)));
   }
 
+  void addOutputError(Object error) {
+    _output.addError(error);
+  }
+
+  Future<void> endOutput() {
+    return _output.close();
+  }
+
+  bool get hasOutputListener => _output.hasListener;
+
   @override
   Future<void> close() async {
     await _output.close();
