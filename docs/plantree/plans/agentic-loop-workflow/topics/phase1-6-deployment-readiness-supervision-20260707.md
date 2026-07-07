@@ -91,6 +91,38 @@ is claimed.
   lineage if present, task terminal authority, and dynamic coder/reviewer
   release. Until that artifact is inspectable and passes, deployment readiness
   remains blocked.
+- Latest strict-audit update:
+  - worker1 `job_c8174e64f651` is accepted as a real single-task
+    frontdesk-to-terminal pass. Fresh root
+    `/home/bfly/yunwei/test_ccb2/deploy-frontdesk-default-plan-e2e-worker1-20260707191048`
+    proved empty-project `frontdesk-intake` bootstrap, frontdesk -> planner ->
+    orchestrator -> worker -> reviewer -> `ccb_round_reviewer`, final task
+    `done`, `round_result=pass`, project tests passing, and dynamic release
+    for loop `lp924e60` with `released_count=2`, `retained_count=0`, observed
+    topology `agents=[]`, and only resident roles in final `ps`.
+  - worker3 `job_5b7340b05ef8` is accepted as blocker exposure, not readiness
+    evidence. A single frontdesk ask produced two planner authority paths: the
+    desired dispatcher/frontdesk handoff and a legacy loop-runner frontdesk
+    role-output import path. Source repair now treats an existing
+    `.ccb/runtime/frontdesk-handoff/<job>.json` marker with status
+    `starting`/`started` as authoritative and returns
+    `frontdesk_handoff_already_started` instead of submitting a second planner
+    job. Failed/blocked handoff markers stay blockers and do not fall back to
+    a second planner path.
+  - worker2 `job_a62553e07afe` is accepted as blocker exposure for the L1-L4
+    route-mix lane. L1 and L2 direct rows reached `done/pass`; L3 observed
+    `needs_detail` and task_detailer replied with a `detail_ready`
+    recommendation, but role-output import rejected the reply as
+    `task_detailer_reply_missing_required_sections` because the real provider
+    used markdown headings such as `## task-detail-design.md` and inner human
+    headings such as `# Task Detail Design`. Source repair now parses both
+    bold-label and markdown-heading task_detailer sections while avoiding
+    extensionless inner-heading terminators. Verified locally:
+    `test_loop_runner_imports_task_detailer_markdown_heading_sections` ->
+    pass; focused task_detailer/needs_detail selection -> `4 passed`; full
+    `test/test_loop_capacity_cli.py` -> `118 passed`; py_compile and
+    `git diff --check` clean for the touched surface. A fresh worker2 L1-L4
+    real-provider rerun is required before this lane can be accepted.
 
 ## Current Boundary
 
