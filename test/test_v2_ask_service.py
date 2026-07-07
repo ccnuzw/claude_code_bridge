@@ -136,6 +136,48 @@ def test_submit_ask_allows_internal_explicit_project_context_from_outer_project(
     assert summary.jobs[0]['job_id'] == 'job_1'
 
 
+def test_submit_ask_allows_source_test_explicit_project_from_allowed_test_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_root = tmp_path / 'test-root'
+    outer_project = test_root / 'outer'
+    project_root = test_root / 'target'
+    outer_project.mkdir(parents=True)
+    project_root.mkdir(parents=True)
+    _write_config(outer_project)
+    _write_config(project_root)
+    monkeypatch.setenv('CCB_TEST_ENTRYPOINT', '1')
+    monkeypatch.setenv('CCB_SOURCE_ALLOWED_ROOTS', str(test_root))
+    command = ParsedAskCommand(project=str(project_root), target='agent1', sender=None, message='hello')
+    context = CliContextBuilder().build(command, cwd=outer_project, bootstrap_if_missing=False)
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def submit(self, envelope) -> dict:
+            captured['project_id'] = envelope.project_id
+            captured['to_agent'] = envelope.to_agent
+            return {
+                'job_id': 'job_1',
+                'agent_name': envelope.to_agent,
+                'target_name': envelope.to_agent,
+                'status': 'accepted',
+            }
+
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FakeClient()),
+    )
+
+    summary = ask_service.submit_ask(context, command)
+
+    assert context.project.source == 'explicit'
+    assert context.cwd == outer_project
+    assert captured == {'project_id': context.project.project_id, 'to_agent': 'agent1'}
+    assert summary.jobs[0]['job_id'] == 'job_1'
+
+
 def test_submit_ask_rejects_workspace_binding_that_escapes_current_project(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
