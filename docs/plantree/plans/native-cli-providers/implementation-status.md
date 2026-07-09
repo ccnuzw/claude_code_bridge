@@ -36,6 +36,14 @@ headless `--prompt` support, such as `@guizmo-ai/zai-cli`; official
 `@z_ai/coding-helper` remains a setup helper for loading GLM Coding Plan into
 other tools, not a standalone CCB ask runtime.
 
+Grok Build CLI provider support has landed in source as `provider = "grok"`.
+The official xAI Grok Build CLI is distributed as a closed-source binary through
+`@xai-official/grok`, so the CCB integration uses the published CLI contract
+instead of internal source logs: per-job asks run `grok --no-auto-update -p
+<prompt> --cwd <workdir> --output-format streaming-json --session-id <job>`,
+using managed per-agent `HOME` and Grok JSON/session-update output as
+completion evidence.
+
 ## Last Landed
 
 - Shared pane-quiet support and Kimi/DeepSeek provider backends were added in
@@ -78,8 +86,8 @@ other tools, not a standalone CCB ask runtime.
     `part.text` and stop reason is in `part.reason` under a
     `step_finish` event.
 - Next-wave native CLI provider implementation:
-  - Optional provider ids `qwen`, `cursor`, `copilot`, `crush`, `kiro`, and
-    `pi`
+  - Optional provider ids `qwen`, `cursor`, `copilot`, `crush`, `grok`,
+    `kiro`, and `pi`
     are registered through provider-core manifests, execution adapters,
     session bindings, runtime launchers, runtime specs, command defaults, and
     session filenames.
@@ -90,7 +98,8 @@ other tools, not a standalone CCB ask runtime.
   - Default commands and overrides:
     `qwen`/`QWEN_START_CMD`, `agent`/`CURSOR_START_CMD`,
     `copilot`/`COPILOT_START_CMD`, `crush`/`CRUSH_START_CMD`,
-    `kiro-cli`/`KIRO_START_CMD`, and `pi`/`PI_START_CMD`.
+    `grok`/`GROK_START_CMD`, `kiro-cli`/`KIRO_START_CMD`, and
+    `pi`/`PI_START_CMD`.
   - Visible panes use the shared simple-tmux launcher while CCB ask execution
     uses per-job subprocesses: structured JSON for Qwen/Cursor/Copilot/Pi and
     process exit plus stdout for Crush/Kiro.
@@ -98,9 +107,10 @@ other tools, not a standalone CCB ask runtime.
     `--data-dir`, but the visible pane did not. The shared native CLI launcher
     now supports prepared-state-derived visible arguments, and the Crush visible
     pane starts with `--data-dir <provider-state>/data`.
-  - Storage classification now recognizes Qwen, Cursor, Copilot, Crush, Kiro,
-    and Pi provider-state contents as native CLI provider-owned session/cache
-    or projected skill evidence instead of leaving them as unknown paths.
+  - Storage classification now recognizes Qwen, Cursor, Copilot, Crush, Grok,
+    Kiro, and Pi provider-state contents as native CLI provider-owned
+    session/cache or projected skill evidence instead of leaving them as
+    unknown paths.
 - Kimi receipt and diagnostics hardening:
   - Kimi inherited ask skill now projects a structured receipt contract with
     `status`, inspected files, findings, reject cases, required tests, no-open,
@@ -132,6 +142,15 @@ other tools, not a standalone CCB ask runtime.
   - Override env: `ZAI_START_CMD`.
   - Completion detection: provider-native subprocess exit/stdout through the
     shared native CLI adapter, not model-printed `CCB_DONE`.
+- Grok provider registration:
+  - Built-in optional provider id: `grok`.
+  - Pane launcher: `grok --no-auto-update` with per-agent managed `HOME`.
+  - Ask runner: `grok --no-auto-update -p <wrapped prompt> --cwd <workspace>
+    --output-format streaming-json --session-id <job_id>`.
+  - Override env: `GROK_START_CMD`.
+  - Completion detection: Grok streaming-json / JSON-RPC session update chunks
+    plus process exit through the shared native CLI adapter, not model-printed
+    `CCB_DONE`.
 
 ## Active TODO
 
@@ -139,15 +158,16 @@ other tools, not a standalone CCB ask runtime.
    fixtures.
 2. Decide whether provider-specific auth diagnostics should land before the
    next public release or remain a follow-up.
-3. Decide whether real authenticated blackbox asks for all six next-wave CLIs
+3. Decide whether real authenticated blackbox asks for all next-wave CLIs
    should be required before a public release or tracked as manual follow-up.
 
 ## Blocked By
 
 None for design. Real provider API execution may require user-owned
-Kimi/DeepSeek/MiMo/Qwen/Copilot/Cursor/Kiro/Crush/Pi/Z.ai credentials; CCB integration
-can still be validated with provider command templates, installed CLI
-help/version checks, and source-backed parser tests.
+Kimi/DeepSeek/MiMo/Qwen/Copilot/Cursor/Kiro/Crush/Pi/Z.ai/Grok credentials;
+CCB integration can still be validated with provider command templates,
+installed CLI help/version checks, and source-backed or contract-backed parser
+tests.
 
 Kimi hardening source work is unblocked. Remaining Kimi prompt-mode and auth
 diagnostic ideas stay deferred/open until real usage needs them.
@@ -165,6 +185,26 @@ AGY delivery stability focused verification:
   `/home/bfly/yunwei/ccb_source/ccb_test`, stub AGY, isolated `HOME` and
   `CCB_SOURCE_HOME`: completed `job_74d4989cca04` with
   `agy_transcript_response_done`.
+
+Grok provider focused verification:
+
+- `python -m py_compile lib/provider_backends/grok/*.py
+  lib/provider_core/registry_runtime/builtin_backends.py
+  lib/provider_core/runtime_shared.py lib/provider_core/runtime_specs.py
+  lib/provider_core/__init__.py lib/storage_classification/provider_home.py
+  lib/provider_core/pathing.py test/test_native_cli_provider_execution.py
+  test/test_v2_provider_catalog.py test/test_runtime_specs.py
+  test/test_v2_runtime_launch.py test/test_v2_provider_core_registry.py
+  test/test_storage_classification.py test/stubs/provider_stub.py
+  test/conftest.py`:
+  passed.
+- `pytest -q test/test_native_cli_provider_execution.py
+  test/test_v2_provider_catalog.py test/test_runtime_specs.py
+  test/test_storage_classification.py test/test_v2_provider_core_registry.py
+  test/test_v2_runtime_launch.py::test_provider_start_parts_respect_env_override
+  test/test_v2_runtime_launch.py::test_provider_start_parts_fall_back_to_default_binary
+  test/test_v2_runtime_launch.py::test_native_cli_launcher_builds_provider_state_payload`:
+  `72 passed`.
 
 Kimi hardening focused verification:
 

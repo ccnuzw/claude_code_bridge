@@ -30,6 +30,19 @@ Roles should not be designed as one omnipotent main agent. Each role should
 hold only the context required for its phase, produce explicit artifacts, and
 respect script-owned authority.
 
+The context-lifecycle split is part of the role boundary:
+
+- `frontdesk` and `planner` are the only intended long-lived conversation
+  holders.
+- `frontdesk` keeps user-facing intake, preferences, confirmations, and
+  escalation breadcrumbs, not implementation detail.
+- `planner` keeps macro plan-tree state, the compact brief, roadmap/TODO,
+  decisions, open questions, and stable evidence links.
+- `orchestrator`, `task_detailer`, workers, reviewers, and round reviewers are
+  immaculate (`无垢`) roles. They may be mounted or visible for observability,
+  but each semantic activation must be fresh and rehydrated from durable
+  artifacts, not old conversation memory.
+
 ## Role Design Tiers
 
 ### V1 Core RolePacks
@@ -41,12 +54,12 @@ generic where they are useful outside CCB.
 | RolePack | Default Agent | Lifetime | Main Output |
 | :--- | :--- | :--- | :--- |
 | `agentroles.ccb_frontdesk` | `ccb_frontdesk` | long-lived / user-facing | macro task intake, user-facing summary, escalation display |
-| `agentroles.ccb_task_detailer` | `ccb_task_detailer` | V1 resident visible / task-scoped activation | task-scoped detail docs, detailed execution packet, source-evidence map, task-local clarification artifacts, stable summary backfill |
+| `agentroles.ccb_task_detailer` | `ccb_task_detailer` | V1 visible / immaculate task-scoped activation | task-scoped detail docs, detailed execution packet, source-evidence map, task-local clarification artifacts, stable summary backfill |
 | `agentroles.ccb_planner` | `ccb_planner` | long-lived or phase-activated | macro task packet, plan-tree brief, readiness recommendation, macro adjustment review |
-| `agentroles.ccb_orchestrator` | `ccb_orchestrator` | V1 resident visible / task-round activation | triage result, optional detailer request, node plan, constrained task dispatch, round aggregation |
-| `agentroles.coder` | `coder` | short-lived per work item | bounded implementation or investigation result |
-| `agentroles.code_reviewer` | `code_reviewer` | short-lived per work item | node verification, fallback audit, pass/rework/block decision |
-| `agentroles.ccb_round_reviewer` | `ccb_round_reviewer` | per execution round | round result report: `pass`, `partial`, `replan_required`, or `global_blocker` |
+| `agentroles.ccb_orchestrator` | `ccb_orchestrator` | V1 visible / immaculate task-round activation | triage result, optional detailer request, node plan, constrained task dispatch, round aggregation |
+| `agentroles.coder` | `coder` | immaculate per work item | bounded implementation or investigation result |
+| `agentroles.code_reviewer` | `code_reviewer` | immaculate per work item | node verification, fallback audit, pass/rework/block decision |
+| `agentroles.ccb_round_reviewer` | `ccb_round_reviewer` | immaculate per execution round | round result report: `pass`, `partial`, `replan_required`, or `global_blocker` |
 
 ### V1 Optional Or On-Demand RolePacks
 
@@ -188,7 +201,7 @@ Owns:
 - asking task-local clarification when self-research cannot safely resolve a
   detail;
 - recording clarification summary and normalized answers before continuing
-  refinement.
+  refinement;
 - emitting `macro-adjustment-request` when a source-backed finding requires
   macro planner review.
 
@@ -202,6 +215,8 @@ Must not:
 - dispatch workers, reviewers, orchestrator, or runtime topology directly;
 - write authoritative task status, indexes, runtime state, provider state, or
   `.ccb` authority files;
+- reuse old detailer conversation as context for a new task, detail pass, or
+  clarification continuation;
 - lower acceptance criteria to avoid user clarification;
 - stay alive as a general user conversation agent after the task-local
   clarification is resolved.
@@ -294,6 +309,7 @@ Must not:
 
 - call reload/kill/tmux directly;
 - write `.ccb/runtime` or task status directly;
+- reuse previous task or round conversation as dispatch context;
 - create unbounded fanout;
 - convert `partial` into `done`;
 - lower acceptance criteria.

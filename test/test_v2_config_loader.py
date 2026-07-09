@@ -135,6 +135,46 @@ main = "agentroles.mother:codex"
     assert loaded.windows[0].layout_spec == 'mother:codex'
 
 
+def test_load_project_config_prefers_project_local_role_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-project-local-role-store'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        '''
+version = 2
+entry_window = "main"
+
+[windows]
+main = "agentroles.ccb_frontdesk:codex"
+
+[loop.capacity]
+enabled = true
+max_nodes = 1
+
+[loop.role_profiles.ccb_frontdesk]
+role = "agentroles.ccb_frontdesk"
+provider = "codex"
+workspace_mode = "inplace"
+max_instances = 1
+''',
+    )
+    _write_installed_role(
+        project_root / 'roles',
+        'agentroles.ccb_frontdesk',
+        default_agent_name='frontdesk',
+    )
+    monkeypatch.delenv('AGENT_ROLES_STORE', raising=False)
+
+    loaded = load_project_config(project_root).config
+
+    assert loaded.agents['frontdesk'].role == 'agentroles.ccb_frontdesk'
+    assert loaded.windows[0].layout_spec == 'frontdesk:codex'
+    assert loaded.loop_capacity.role_profiles['ccb_frontdesk'].role == 'agentroles.ccb_frontdesk'
+
+
 def test_load_project_config_role_missing_reports_resolved_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1714,14 +1754,14 @@ def test_load_project_config_supports_managed_tool_windows(tmp_path: Path) -> No
     _write(
         config_path,
         """version = 2
-entry_window = "neovim"
+entry_window = "files"
 
 [windows]
 main = "agent1:codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.files]
+command = "ccb-workbench files"
+label = "files"
 show_in_sidebar = true
 """,
     )
@@ -1730,26 +1770,57 @@ show_in_sidebar = true
 
     assert result.config.default_agents == ('agent1',)
     assert set(result.config.agents) == {'agent1'}
-    assert result.config.entry_window == 'neovim'
+    assert result.config.entry_window == 'files'
     assert [window.name for window in result.config.windows] == ['main']
     assert len(result.config.tool_windows) == 1
     tool = result.config.tool_windows[0]
-    assert tool.name == 'neovim'
+    assert tool.name == 'files'
     assert tool.order == 0
-    assert tool.command == 'ccb-nvim'
-    assert tool.label == 'neovim'
+    assert tool.command == 'ccb-workbench files'
+    assert tool.label == 'files'
     assert tool.show_in_sidebar is True
     record = result.config.to_record()
     assert record['tool_windows'] == [
         {
-            'name': 'neovim',
+            'name': 'files',
             'order': 0,
-            'command': 'ccb-nvim',
-            'label': 'neovim',
+            'command': 'ccb-workbench files',
+            'label': 'files',
             'show_in_sidebar': True,
         }
     ]
-    assert 'neovim' not in project_config_identity_payload(result.config)['known_agents']
+    assert 'files' not in project_config_identity_payload(result.config)['known_agents']
+
+
+@pytest.mark.parametrize(
+    ('tool_name', 'command'),
+    [
+        ('neovim', 'ccb-workbench files'),
+        ('nvim', 'ccb-workbench files'),
+        ('files', 'ccb-nvim'),
+    ],
+)
+def test_load_project_config_rejects_legacy_neovim_tool_windows(
+    tmp_path: Path,
+    tool_name: str,
+    command: str,
+) -> None:
+    project_root = tmp_path / f'repo-legacy-tool-{tool_name}'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        f"""version = 2
+
+[windows]
+main = "agent1:codex"
+
+[tool_windows.{tool_name}]
+command = "{command}"
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='managed Neovim tool windows are no longer supported'):
+        load_project_config(project_root)
 
 
 def test_load_project_config_supports_rich_layout_alias_without_agent_runtime(tmp_path: Path) -> None:
@@ -1810,13 +1881,13 @@ main = "agent1:codex"
         config_path,
         base
         + """
-[tool_windows.neovim]
-command = "ccb-nvim"
+[tool_windows.files]
+command = "ccb-workbench files"
 """,
     )
     with_tool = load_project_config(project_root).config
 
-    assert with_tool.tool_windows[0].label == 'neovim'
+    assert with_tool.tool_windows[0].label == 'files'
     assert with_tool.topology_signature != without_tool.topology_signature
     assert project_config_identity_payload(with_tool)['config_signature'] != project_config_identity_payload(without_tool)['config_signature']
 
@@ -1829,12 +1900,12 @@ def test_load_project_config_tool_window_label_and_sidebar_visibility_are_view_o
 [windows]
 main = "agent1:codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.files]
+command = "ccb-workbench files"
+label = "files"
 show_in_sidebar = true
 """
-    changed = base.replace('label = "neovim"', 'label = "editor"').replace(
+    changed = base.replace('label = "files"', 'label = "editor"').replace(
         'show_in_sidebar = true',
         'show_in_sidebar = false',
     )
@@ -1861,10 +1932,10 @@ def test_load_project_config_rejects_tool_window_name_conflict(tmp_path: Path) -
         """version = 2
 
 [windows]
-neovim = "agent1:codex"
+files = "agent1:codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
+[tool_windows.files]
+command = "ccb-workbench files"
 """,
     )
 
@@ -1884,8 +1955,8 @@ layout = "agent1:codex"
 [agents.agent1]
 provider = "codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
+[tool_windows.files]
+command = "ccb-workbench files"
 """,
     )
 
@@ -1903,7 +1974,7 @@ def test_load_project_config_rejects_invalid_tool_window(tmp_path: Path) -> None
 [windows]
 main = "agent1:codex"
 
-[tool_windows.neovim]
+[tool_windows.files]
 command = ""
 """,
     )

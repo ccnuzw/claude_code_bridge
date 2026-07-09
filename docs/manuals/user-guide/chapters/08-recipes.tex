@@ -48,25 +48,20 @@ mode = "every_window"
 width = "15%"
 \end{lstlisting}
 
-\section{添加 Neovim tool window}
+\section{添加 rich workbench}
 
 \begin{lstlisting}
 version = 2
 entry_window = "main"
 
 [windows]
-main = "archi:codex"
-
-[tool_windows.nvim]
-command = "ccb-nvim"
-label = "Neovim"
-show_in_sidebar = true
+main = "archi:codex, rich"
 \end{lstlisting}
 
-安装 tool：
+安装或更新 rich：
 
 \begin{lstlisting}
-ccb tools install neovim
+ccb update rich
 \end{lstlisting}
 
 \section{安装并使用 Archi role}

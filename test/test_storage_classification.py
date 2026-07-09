@@ -196,6 +196,7 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     crush_state = ccb / 'agents' / 'agent10' / 'provider-state' / 'crush'
     kiro_state = ccb / 'agents' / 'agent11' / 'provider-state' / 'kiro'
     pi_state = ccb / 'agents' / 'agent12' / 'provider-state' / 'pi'
+    grok_state = ccb / 'agents' / 'agent13' / 'provider-state' / 'grok'
 
     _write(ccb / 'ccb.config', 'agent1:codex\n')
     _write(ccb / 'ccb_memory.md', '# shared memory\n')
@@ -263,6 +264,7 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     _write(kiro_state / 'home' / 'logs' / 'chat.log', 'log\n')
     _write(pi_state / 'home' / '.pi' / 'agent' / 'settings.json', '{}\n')
     _write(pi_state / 'sessions' / 'session.jsonl', '{}\n')
+    _write(grok_state / 'home' / '.grok' / 'sessions' / 'session.jsonl', '{}\n')
 
     payload = summarize_storage(PathLayout(project_root))
     records = _records_by_suffix(payload)
@@ -356,6 +358,8 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     assert records['agents/agent11/provider-state/kiro/home/logs/chat.log']['storage_class'] == 'session'
     assert records['agents/agent12/provider-state/pi/home/.pi/agent/settings.json']['storage_class'] == 'session'
     assert records['agents/agent12/provider-state/pi/sessions/session.jsonl']['storage_class'] == 'session'
+    assert records['agents/agent13/provider-state/grok/home/.grok/sessions/session.jsonl']['storage_class'] == 'session'
+    assert records['agents/agent13/provider-state/grok/home/.grok/sessions/session.jsonl']['reason'] == 'native_cli_provider_state'
 
 
 def test_storage_summary_rust_inventory_path_matches_python_path(

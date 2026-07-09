@@ -77,25 +77,26 @@ agentroles.archi:codex
 
 \section{tools 命令}
 
-当前 tools 命令支持 managed Neovim：
+当前 tools 命令支持 rich workbench：
 
 \begin{longtable}{p{0.36\linewidth}p{0.54\linewidth}}
 \toprule
 命令 & 作用 \\
 \midrule
-\cmd{ccb tools doctor neovim} & 检查 managed Neovim 状态。 \\
-\cmd{ccb tools install neovim} & 安装或配置 managed Neovim。 \\
-\cmd{ccb tools update neovim} & 更新 managed Neovim/LazyVim profile。 \\
+\cmd{ccb update rich} & 安装、更新并启用 rich workbench。 \\
+\cmd{ccb tools doctor workbench --profile rich} & 检查 rich workbench 状态。 \\
+\cmd{ccb tools install workbench --profile rich} & 生成隔离的 WezTerm/Yazi/Markdown 配置。 \\
+\cmd{ccb tools launch workbench --profile rich} & 启动 rich workbench。 \\
 \bottomrule
 \end{longtable}
 
-相关环境变量：
+常用环境变量：
 
 \begin{itemize}
-  \item \src{CCB_INSTALL_NEOVIM}
-  \item \src{CCB_LAZYVIM_PROFILE}
-  \item \src{CCB_LAZYVIM_SYNC_TIMEOUT_S}
-  \item \src{CCB_LAZYVIM_BOOTSTRAP_TIMEOUT_S}
+  \item \src{CCB_WORKBENCH_PROFILE}
+  \item \src{CCB_WORKBENCH_FORCE_RICH}
+  \item \src{CCB_WORKBENCH_THEME}
+  \item \src{CCB_RICH_AUTO_START}
 \end{itemize}
 
-managed Neovim 使用 XDG data/state/cache 目录下的 \src{ccb/tools/neovim} 维护状态。
+rich workbench 使用 XDG data/state/cache 目录下的 \src{ccb/tools/workbench} 维护状态。

@@ -66,6 +66,26 @@ def test_retry_policy_retries_empty_provider_reply_incomplete() -> None:
     )
 
 
+def test_retry_policy_honors_delivery_retryable_incomplete_diagnostic() -> None:
+    decision = SimpleNamespace(
+        status=CompletionStatus.INCOMPLETE,
+        reason="codex_session_file_missing",
+        diagnostics={
+            "delivery_failure_kind": "delivery_session_missing",
+            "delivery_retryable": True,
+        },
+    )
+
+    assert is_retryable_failure(
+        decision,
+        retry_policy={
+            "retryable_reasons": ["api_error", "transport_error"],
+            "retryable_runtime_reasons": ["pane_dead", "pane_unavailable"],
+        },
+        provider_supports_resume_value=True,
+    )
+
+
 def test_retry_policy_does_not_override_nonretryable_api_failure() -> None:
     decision = SimpleNamespace(
         status=CompletionStatus.FAILED,

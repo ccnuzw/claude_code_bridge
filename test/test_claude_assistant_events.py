@@ -84,6 +84,53 @@ def test_handle_assistant_event_appends_boundary_on_main_end_turn_without_done_m
     assert poll.reached_turn_boundary is True
 
 
+def test_handle_assistant_event_appends_boundary_for_real_text_message_without_stop_reason() -> None:
+    poll = ClaudePollState(
+        request_anchor="job_1",
+        next_seq=1,
+        anchor_seen=True,
+        reply_buffer="",
+        raw_buffer="",
+        session_path="/tmp/session.jsonl",
+        last_assistant_uuid="",
+    )
+
+    handle_assistant_event(
+        _submission(),
+        poll,
+        {
+            "text": "round result: pass\nsummary: ok",
+            "uuid": "assistant-1",
+            "stop_reason": None,
+            "entry": {
+                "type": "assistant",
+                "uuid": "assistant-1",
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": None,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "round result: pass\nsummary: ok",
+                        }
+                    ],
+                },
+            },
+        },
+        now="2026-04-06T00:01:00Z",
+    )
+
+    assert [item.kind for item in poll.items] == [
+        CompletionItemKind.ASSISTANT_CHUNK,
+        CompletionItemKind.TURN_BOUNDARY,
+    ]
+    assert poll.items[1].payload["reason"] == "assistant_text_message"
+    assert poll.items[1].payload["last_agent_message"] == "round result: pass\nsummary: ok"
+    assert poll.items[1].payload["assistant_uuid"] == "assistant-1"
+    assert "stop_reason" not in poll.items[1].payload
+    assert poll.reached_turn_boundary is True
+
+
 def test_handle_assistant_event_keeps_primary_uuid_for_subagent_chunks() -> None:
     poll = ClaudePollState(
         request_anchor="job_1",
@@ -131,6 +178,49 @@ def test_handle_assistant_event_does_not_complete_tool_use_stop_reason() -> None
             "text": "I need to inspect a file.",
             "uuid": "assistant-1",
             "stop_reason": "tool_use",
+        },
+        now="2026-04-06T00:01:00Z",
+    )
+
+    assert [item.kind for item in poll.items] == [CompletionItemKind.ASSISTANT_CHUNK]
+    assert poll.reached_turn_boundary is False
+
+
+def test_handle_assistant_event_does_not_complete_text_message_with_tool_use_without_stop_reason() -> None:
+    poll = ClaudePollState(
+        request_anchor="job_1",
+        next_seq=1,
+        anchor_seen=True,
+        reply_buffer="",
+        raw_buffer="",
+        session_path="/tmp/session.jsonl",
+        last_assistant_uuid="",
+    )
+
+    handle_assistant_event(
+        _submission(),
+        poll,
+        {
+            "text": "I need to inspect a file.",
+            "uuid": "assistant-1",
+            "stop_reason": None,
+            "entry": {
+                "type": "assistant",
+                "uuid": "assistant-1",
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": None,
+                    "content": [
+                        {"type": "text", "text": "I need to inspect a file."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": "Read",
+                            "input": {"file_path": "README.md"},
+                        },
+                    ],
+                },
+            },
         },
         now="2026-04-06T00:01:00Z",
     )

@@ -273,6 +273,7 @@ def _workflow_partition_proposal(*, absent_pair: int | None = None) -> dict[str,
         ('wf-ccb-task-detailer', 'ccb_task_detailer', 'present'),
         ('wf-ccb-planner', 'ccb_planner', 'present'),
         ('wf-ccb-orchestrator', 'ccb_orchestrator', 'present'),
+        ('wf-ccb-round-reviewer', 'ccb_round_reviewer', 'present'),
     ]
     nodes: list[dict[str, object]] = [
         {
@@ -672,7 +673,7 @@ def test_loop_topology_defaults_workflow_roles_to_window_partitions_and_reflows_
     windows = _window_agents(project_root)
     assert list(windows)[:4] == ['ccb-user', 'ccb-plan', 'ccb-exec', 'ccb-exec-2']
     assert windows['ccb-user'] == ('bootstrap', 'wf-ccb-frontdesk', 'wf-ccb-task-detailer')
-    assert windows['ccb-plan'] == ('wf-ccb-planner', 'wf-ccb-orchestrator')
+    assert windows['ccb-plan'] == ('wf-ccb-planner', 'wf-ccb-orchestrator', 'wf-ccb-round-reviewer')
     assert windows['ccb-exec'] == (
         'wf-coder-1',
         'wf-code-reviewer-1',
@@ -690,8 +691,14 @@ def test_loop_topology_defaults_workflow_roles_to_window_partitions_and_reflows_
     assert observed_windows['wf-ccb-task-detailer'] == 'ccb-user'
     assert observed_windows['wf-ccb-planner'] == 'ccb-plan'
     assert observed_windows['wf-ccb-orchestrator'] == 'ccb-plan'
+    assert observed_windows['wf-ccb-round-reviewer'] == 'ccb-plan'
     assert observed_windows['wf-coder-4'] == 'ccb-exec-2'
     assert observed_windows['wf-code-reviewer-4'] == 'ccb-exec-2'
+    observed_states = {
+        str(agent['id']): str(agent['desired_state'])
+        for agent in committed['reconcile']['observed']['agents']
+    }
+    assert all(state == 'present' for state in observed_states.values())
 
     compact_path = project_root / 'workflow-topology-compact.json'
     _write_json(compact_path, _workflow_partition_proposal(absent_pair=2))
@@ -744,6 +751,13 @@ def test_loop_topology_batches_missing_workflow_agents_before_mounted_reload(
     proposal_path = project_root / 'workflow-topology.json'
     _write_json(proposal_path, _workflow_partition_proposal())
     apply_windows: list[dict[str, tuple[str, ...]]] = []
+    add_commands: list[SimpleNamespace] = []
+
+    original_add_lifecycle_agents = loop_topology_module.add_lifecycle_agents
+
+    def capture_add_lifecycle_agents(context, commands, *, action: str):
+        add_commands.extend(commands)
+        return original_add_lifecycle_agents(context, commands, action=action)
 
     def fake_apply(context, *, action: str) -> dict[str, object]:
         assert action == 'topology-agent-add-batch'
@@ -757,6 +771,7 @@ def test_loop_topology_batches_missing_workflow_agents_before_mounted_reload(
             'namespace_agent_panes': {agent_name: f'%{index}' for index, agent_name in enumerate(loaded.agents, start=1)},
         }
 
+    monkeypatch.setattr(loop_topology_module, 'add_lifecycle_agents', capture_add_lifecycle_agents)
     monkeypatch.setattr(agent_lifecycle_module, '_apply_reload_if_mounted', fake_apply)
 
     result, _proposed, stderr = _run_phase2(
@@ -783,9 +798,21 @@ def test_loop_topology_batches_missing_workflow_agents_before_mounted_reload(
 
     assert result == 0, stderr
     assert committed['reconcile']['loop_topology_status'] == 'reconciled'
+    assert add_commands
+    assert {command.visibility for command in add_commands} == {'visible'}
+    command_windows = {str(command.agent_name): str(command.window_name) for command in add_commands}
+    assert command_windows['wf-ccb-frontdesk'] == 'ccb-user'
+    assert command_windows['wf-ccb-task-detailer'] == 'ccb-user'
+    assert command_windows['wf-ccb-planner'] == 'ccb-plan'
+    assert command_windows['wf-ccb-orchestrator'] == 'ccb-plan'
+    assert command_windows['wf-ccb-round-reviewer'] == 'ccb-plan'
+    assert command_windows['wf-coder-1'] == 'ccb-exec'
+    assert command_windows['wf-code-reviewer-3'] == 'ccb-exec'
+    assert command_windows['wf-coder-4'] == 'ccb-exec-2'
+    assert command_windows['wf-code-reviewer-4'] == 'ccb-exec-2'
     assert len(apply_windows) == 1
     assert apply_windows[0]['ccb-user'] == ('bootstrap', 'wf-ccb-frontdesk', 'wf-ccb-task-detailer')
-    assert apply_windows[0]['ccb-plan'] == ('wf-ccb-planner', 'wf-ccb-orchestrator')
+    assert apply_windows[0]['ccb-plan'] == ('wf-ccb-planner', 'wf-ccb-orchestrator', 'wf-ccb-round-reviewer')
     assert apply_windows[0]['ccb-exec'] == (
         'wf-coder-1',
         'wf-code-reviewer-1',

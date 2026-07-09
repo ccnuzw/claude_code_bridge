@@ -27,6 +27,7 @@ class CcbdSocketServer:
         'project_restart_panes',
         'project_clear_context',
         'stop-all',
+        'frontdesk_forward_planner',
     })
 
     def __init__(self, socket_path: str | Path) -> None:

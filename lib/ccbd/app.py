@@ -152,8 +152,19 @@ class CcbdApp:
             failure_reason=failure_reason,
         )
 
-    def persist_start_policy(self, *, auto_permission: bool, source: str = 'start_command') -> None:
-        persist_start_policy_impl(self, auto_permission=auto_permission, source=source)
+    def persist_start_policy(
+        self,
+        *,
+        auto_permission: bool,
+        recovery_restore: bool = True,
+        source: str = 'start_command',
+    ) -> None:
+        persist_start_policy_impl(
+            self,
+            auto_permission=auto_permission,
+            recovery_restore=recovery_restore,
+            source=source,
+        )
 
     def recovery_start_options(self) -> tuple[bool, bool]:
         return recovery_start_options_impl(self)

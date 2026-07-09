@@ -7,12 +7,18 @@ from ccbd.services.start_policy import CcbdStartPolicy, recovery_start_options a
 from .request_guard import lifecycle_is_stopping
 
 
-def persist_start_policy(app, *, auto_permission: bool, source: str = 'start_command') -> None:
+def persist_start_policy(
+    app,
+    *,
+    auto_permission: bool,
+    recovery_restore: bool = True,
+    source: str = 'start_command',
+) -> None:
     app.start_policy_store.save(
         CcbdStartPolicy(
             project_id=app.project_id,
             auto_permission=bool(auto_permission),
-            recovery_restore=True,
+            recovery_restore=bool(recovery_restore),
             last_started_at=app.clock(),
             source=str(source or 'start_command'),
         )

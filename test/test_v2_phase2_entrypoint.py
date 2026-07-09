@@ -68,6 +68,25 @@ def _dual_named_agent_config_text(agent1: str, provider1: str, agent2: str, prov
     return f'{agent1}:{provider1},{agent2}:{provider2}\n'
 
 
+_PHASE2_LOCAL_ENV_NAMES = frozenset({'CCB_SESSION_FILE', 'CCB_SESSION_ID'})
+_PHASE2_LOCAL_ENV_PREFIXES = ('CCB_CALLER_', 'CODEX_', 'CLAUDE_', 'GEMINI_', 'OPENCODE_', 'DROID_')
+
+
+def _push_isolated_phase2_local_env() -> dict[str, str]:
+    saved: dict[str, str] = {}
+    for name in tuple(os.environ):
+        if name in _PHASE2_LOCAL_ENV_NAMES or name.startswith(_PHASE2_LOCAL_ENV_PREFIXES):
+            saved[name] = os.environ.pop(name)
+    return saved
+
+
+def _pop_isolated_phase2_local_env(saved: dict[str, str]) -> None:
+    for name in tuple(os.environ):
+        if name in _PHASE2_LOCAL_ENV_NAMES or name.startswith(_PHASE2_LOCAL_ENV_PREFIXES):
+            os.environ.pop(name, None)
+    os.environ.update(saved)
+
+
 def _wait_for_status(cwd: Path, target: str, expected: str, *, timeout: float = 3.0) -> subprocess.CompletedProcess[str]:
     deadline = time.time() + timeout
     last = None
@@ -142,16 +161,20 @@ def _wait_for_doctor_any_line(
 def _run_phase2_local(args: list[str], *, cwd: Path, start_app: CcbdApp | None = None) -> tuple[int, str, str]:
     stdout = StringIO()
     stderr = StringIO()
-    if start_app is None or args:
-        code = maybe_handle_phase2(args, cwd=cwd, stdout=stdout, stderr=stderr)
-        return code, stdout.getvalue(), stderr.getvalue()
-    original_start_agents = phase2_module.start_agents
+    saved_env = _push_isolated_phase2_local_env()
     try:
-        phase2_module.start_agents = _phase2_start_against_app(start_app)
-        code = maybe_handle_phase2(args, cwd=cwd, stdout=stdout, stderr=stderr)
+        if start_app is None or args:
+            code = maybe_handle_phase2(args, cwd=cwd, stdout=stdout, stderr=stderr)
+            return code, stdout.getvalue(), stderr.getvalue()
+        original_start_agents = phase2_module.start_agents
+        try:
+            phase2_module.start_agents = _phase2_start_against_app(start_app)
+            code = maybe_handle_phase2(args, cwd=cwd, stdout=stdout, stderr=stderr)
+        finally:
+            phase2_module.start_agents = original_start_agents
+        return code, stdout.getvalue(), stderr.getvalue()
     finally:
-        phase2_module.start_agents = original_start_agents
-    return code, stdout.getvalue(), stderr.getvalue()
+        _pop_isolated_phase2_local_env(saved_env)
 
 
 def _phase2_start_against_app(app: CcbdApp):

@@ -20,11 +20,17 @@ plan artifact for review.
 Produce these exact reply-visible sections. Do not replace them with prose,
 tables, alternate headings, or "equivalent" sections.
 
+Do not run shell commands, file searches, file reads, tests, builds, or CCB
+commands before replying. Use only the intake evidence and compact artifacts
+provided in the prompt.
+
 - `task-packet.md`
 - `readiness.json`
+- `task-set.json` when the controller prompt requests `Planner contract:
+  task_set` or the macro request clearly contains multiple bounded tasks
 - `candidate-questions.jsonl` when user input may be needed
 
-Use fenced blocks with these exact labels:
+For single-slice work, use fenced blocks with these exact labels:
 
 ````markdown
 **task-packet.md**
@@ -40,6 +46,30 @@ Verification:
 **readiness.json**
 ```json
 {"readiness":"ready","route":"direct_execution","blockers":[],"allowed_paths":["path"],"verification":["command"]}
+```
+````
+
+For task-set work, use exactly one fenced `**task-set.json**` section. Do not
+also return single-task sections for the same reply.
+
+````markdown
+**task-set.json**
+```json
+{
+  "tasks": [
+    {
+      "task_id": "stable-bounded-task-id",
+      "title": "Bounded task title",
+      "route": "direct_execution",
+      "readiness": "ready",
+      "task_packet": "# Task: Bounded task title\nRoute: direct_execution\n",
+      "execution_contract": "# Execution Contract\nRoute: direct_execution\n\nAllowed Change Paths:\n- relative/path\n",
+      "allowed_paths": ["relative/path"],
+      "verification": ["command or evidence review"],
+      "blockers": []
+    }
+  ]
+}
 ```
 ````
 
@@ -59,10 +89,25 @@ For `route: blocked`, use `readiness: blocked`, include specific `blockers`,
 include verification evidence for the blocker, and set `allowed_paths` to an
 empty list. Do not authorize implementation paths for blocked prerequisites.
 
+For `route: direct_execution` or `route: partial_completion`, include non-empty
+`allowed_paths`, concrete `verification`, and an `Allowed Change Paths` section
+inside `execution_contract` matching `allowed_paths`. The runner uses this
+section as the authority boundary when promoting isolated worker workspace
+changes into the project root.
+
+For Python unit tests stored under `tests/`, use unittest discovery commands
+such as `python -m unittest discover -s tests -p test_example.py`. Do not use
+file-path unittest commands such as `python -m unittest tests/test_example.py`;
+those can resolve to an installed third-party `tests` package in inherited
+provider environments.
+
 ## Rules
 
 - Do not mark task state directly.
 - Do not start execution.
 - Do not call workers, checkers, or orchestrator.
 - Do not reduce acceptance criteria to make the task executable.
+- Do not collapse a multi-capability or multi-surface request into one oversized
+  direct_execution task when separate bounded tasks can be independently routed
+  and verified.
 - Questions must be current-phase questions; defer later-phase questions.

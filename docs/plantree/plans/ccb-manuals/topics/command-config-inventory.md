@@ -145,21 +145,22 @@ Manual implication:
 
 Primary file:
 
-- `lib/cli/tools_runtime/neovim.py`
+- `lib/cli/tools_runtime/workbench.py`
 
 Observed commands:
 
-- `tools doctor neovim`.
-- `tools install neovim`.
-- `tools update neovim`.
+- `update rich`.
+- `tools doctor workbench --profile rich`.
+- `tools install workbench --profile rich`.
+- `tools launch workbench --profile rich`.
 
 Observed behavior:
 
-- Tool support is currently Neovim-specific.
+- Tool support is currently centered on rich workbench.
 - The managed tool stores state under XDG data/state/cache roots in
-  `ccb/tools/neovim`.
-- `CCB_INSTALL_NEOVIM`, `CCB_LAZYVIM_PROFILE`,
-  `CCB_LAZYVIM_SYNC_TIMEOUT_S`, and `CCB_LAZYVIM_BOOTSTRAP_TIMEOUT_S`
+  `ccb/tools/workbench`.
+- `CCB_WORKBENCH_PROFILE`, `CCB_WORKBENCH_FORCE_RICH`,
+  `CCB_WORKBENCH_THEME`, and `CCB_RICH_AUTO_START`
   influence provisioning.
 
 ## Management And Auxiliary Commands

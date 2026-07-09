@@ -309,14 +309,17 @@ def test_frontdesk_rolepack_is_read_only_intake_not_implementation() -> None:
     assert manifest.manifest['adapters']['ccb']['command_surface'] == 'adapters/ccb/command-surface.toml'
     assert 'first non-empty line exactly\n  `**Intake Evidence**`' in combined
     assert 'Every turn, classify the user message first' in combined
-    assert 'ccbd controller validates' in combined
-    assert 'completed reply and performs' in combined
-    assert 'script-owned handoff to planner' in combined
-    assert 'Do not run `ccb frontdesk forward-planner`' in combined
+    assert 'Every user turn must pass this gate' in combined
+    assert 'choose `planner_handoff`' in combined
+    assert 'active command surface is closed' in combined
+    assert 'controller observes your final reply' in combined
+    assert 'ccb frontdesk forward-planner --request-id <stable-request-id> --intake-base64' not in combined
+    assert 'ordinary `ccb ask`' in combined
+    assert 'heredocs' in combined
+    assert '`--file` handoff' in combined
     assert '--intake-base64 <base64-utf8-artifact>' not in combined
     assert "<<'EOF'" not in combined
     assert 'frontdesk_intake_status: ok' not in combined
-    assert 'ordinary `ccb ask`' in combined
     assert 'Do not implement the request' in combined or 'Do not perform implementation' in combined
     assert 'Do not create, edit, delete, or format' in combined
     assert 'Do not run tests, builds, linters' in combined
@@ -333,7 +336,7 @@ def test_frontdesk_rolepack_is_read_only_intake_not_implementation() -> None:
         assert forbidden not in combined
 
 
-def test_frontdesk_rolepack_declares_hard_forward_planner_command_surface() -> None:
+def test_frontdesk_rolepack_declares_closed_observer_handoff_surface() -> None:
     manifest = load_role_manifest(role_root('agentroles.ccb_frontdesk'))
     policy = load_role_command_policy(manifest)
 
@@ -344,11 +347,43 @@ def test_frontdesk_rolepack_declares_hard_forward_planner_command_surface() -> N
     assert policy.generic_shell is False
     assert policy.generic_ccb is False
     assert policy.supported_providers == ('codex', 'claude')
-    assert policy.allowed_effects == ()
+    assert policy.allowed_effects == ('observer_intake_handoff',)
     assert {'task_create', 'artifact_import', 'status_write', 'runner_start', 'worker_dispatch'} <= set(
         policy.forbidden_effects
     )
     assert policy.allowed == ()
+
+
+def test_planner_rolepack_is_closed_reply_only_planning_surface() -> None:
+    root = role_root('agentroles.ccb_planner')
+    manifest = load_role_manifest(root)
+    policy = load_role_command_policy(manifest)
+    combined = '\n'.join(
+        [
+            (root / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'adapters' / 'ccb' / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'skills' / 'planner-task-packet' / 'SKILL.md').read_text(encoding='utf-8'),
+        ]
+    )
+
+    assert manifest.manifest['permissions']['read_files'] is False
+    assert manifest.manifest['permissions']['write_files'] is False
+    assert manifest.manifest['adapters']['ccb']['command_surface'] == 'adapters/ccb/command-surface.toml'
+    assert policy is not None
+    assert policy.mode == 'deny_all_except'
+    assert policy.enforcement == 'required'
+    assert policy.if_unsupported == 'fail_mount'
+    assert policy.generic_shell is False
+    assert policy.generic_ccb is False
+    assert policy.supported_providers == ('codex', 'claude')
+    assert policy.allowed_effects == ('semantic_planning_reply',)
+    assert {'shell_exec', 'file_search', 'file_read', 'file_write', 'implementation'} <= set(
+        policy.forbidden_effects
+    )
+    assert policy.allowed == ()
+    assert 'Do not run shell commands' in combined
+    assert 'file searches' in combined
+    assert 'Allowed Change Paths' in combined
 
 
 def test_coder_rolepack_is_workspace_only_and_reply_only_for_workflow_authority() -> None:

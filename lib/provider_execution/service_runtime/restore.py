@@ -9,6 +9,7 @@ from .restore_helpers import (
     persist_restored_submission,
     persisted_state_or_result,
     recover_pending_items,
+    restarted_runtime_without_pending_result,
     restored_result,
     restore_preflight_result,
     resume_or_result,
@@ -40,6 +41,10 @@ def restore_submission(
         return pending_result
 
     restored_context = runtime_context or persisted.runtime_context
+    restarted_result = restarted_runtime_without_pending_result(service, job, persisted, pending_items, restored_context)
+    if restarted_result is not None:
+        return restarted_result
+
     submission, resume_result = resume_or_result(
         adapter,
         service,

@@ -200,13 +200,14 @@ def test_prepare_provider_workspace_materializes_claude_settings_before_hooks(tm
     project_root = tmp_path / 'repo'
     workspace = project_root / 'workspace'
     system_home = tmp_path / 'system-home'
+    system_token = 'sk-test-abcdefghijklmnopqrstuvwxyz1234567890'
     system_settings = system_home / '.claude' / 'settings.json'
     system_settings.parent.mkdir(parents=True, exist_ok=True)
     system_settings.write_text(
         json.dumps(
             {
                 'env': {
-                    'ANTHROPIC_AUTH_TOKEN': 'system-token',
+                    'ANTHROPIC_AUTH_TOKEN': system_token,
                     'ANTHROPIC_BASE_URL': 'https://claude.example.test',
                 },
                 'theme': 'light',
@@ -229,11 +230,48 @@ def test_prepare_provider_workspace_materializes_claude_settings_before_hooks(tm
 
     settings_path = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'claude' / 'home' / '.claude' / 'settings.json'
     payload = json.loads(settings_path.read_text(encoding='utf-8'))
-    assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == 'system-token'
+    assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == system_token
+    assert payload['env']['ANTHROPIC_API_KEY'] == system_token
     assert payload['env']['ANTHROPIC_BASE_URL'] == 'https://claude.example.test'
     assert payload['theme'] == 'light'
+    assert payload['allowedTools'] == []
     assert payload['hooks']['Stop'][0]['hooks'][0]['command']
+    trust_path = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'claude' / 'home' / '.claude.json'
+    trust_text = trust_path.read_text(encoding='utf-8')
+    trust_payload = json.loads(trust_text)
+    assert system_token not in trust_text
+    assert trust_payload['customApiKeyResponses']['approved'] == [system_token[-20:]]
     assert not (workspace / '.claude').exists()
+
+
+def test_prepare_provider_workspace_accepts_claude_bypass_permission_prompt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'workspace'
+    system_home = tmp_path / 'system-home'
+    (system_home / '.claude').mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('HOME', str(system_home))
+
+    prepare_provider_workspace(
+        layout=PathLayout(project_root),
+        spec=_spec('agent1'),
+        workspace_path=workspace,
+        completion_dir=project_root / '.ccb' / 'agents' / 'agent1' / 'provider-runtime' / 'claude' / 'completion',
+        agent_name='agent1',
+        refresh_profile=True,
+        auto_permission=True,
+    )
+
+    trust_path = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'claude' / 'home' / '.claude.json'
+    payload = json.loads(trust_path.read_text(encoding='utf-8'))
+    workspace_key = str(workspace.resolve())
+    assert payload['bypassPermissionsModeAccepted'] is True
+    assert payload[workspace_key]['hasTrustDialogAccepted'] is True
+    assert payload[workspace_key]['allowedTools'] == []
+    assert payload['projects'][workspace_key]['hasTrustDialogAccepted'] is True
+    assert payload['projects'][workspace_key]['allowedTools'] == []
 
 
 def test_prepare_provider_workspace_removes_frontdesk_provider_command_permissions(
@@ -419,6 +457,52 @@ def test_prepare_provider_workspace_materializes_frontdesk_codex_with_hard_comma
     assert not (home / 'skills' / 'bug-fix-prove-it.ccb-projection.json').exists()
     assert not (home / 'commands' / 'unsafe.md').exists()
     assert 'inherited-hook' not in (home / 'config.toml').read_text(encoding='utf-8')
+
+
+def test_prepare_provider_workspace_rejects_fake_frontdesk_hard_command_surface_without_source_test(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _install_frontdesk_role(tmp_path, monkeypatch)
+    monkeypatch.delenv('CCB_TEST_ENTRYPOINT', raising=False)
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'workspace'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(RuntimeError, match='role command surface requires hard provider enforcement'):
+        prepare_provider_workspace(
+            layout=PathLayout(project_root),
+            spec=_spec('frontdesk', provider='fake', role='agentroles.ccb_frontdesk'),
+            workspace_path=workspace,
+            completion_dir=project_root / '.ccb' / 'agents' / 'frontdesk' / 'provider-runtime' / 'fake' / 'completion',
+            agent_name='frontdesk',
+            refresh_profile=True,
+        )
+
+
+def test_prepare_provider_workspace_allows_fake_frontdesk_hard_command_surface_for_source_test(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _install_frontdesk_role(tmp_path, monkeypatch)
+    monkeypatch.setenv('CCB_TEST_ENTRYPOINT', '1')
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'workspace'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+
+    profile = prepare_provider_workspace(
+        layout=PathLayout(project_root),
+        spec=_spec('frontdesk', provider='fake', role='agentroles.ccb_frontdesk'),
+        workspace_path=workspace,
+        completion_dir=project_root / '.ccb' / 'agents' / 'frontdesk' / 'provider-runtime' / 'fake' / 'completion',
+        agent_name='frontdesk',
+        refresh_profile=True,
+    )
+
+    assert profile.provider == 'fake'
+    shim = project_root / '.ccb' / 'bin' / 'ccb'
+    assert shim.is_file()
+    assert 'ccb_test' in shim.read_text(encoding='utf-8')
 
 
 def test_prepare_provider_workspace_materializes_claude_mcp_from_source_home(
@@ -1532,6 +1616,7 @@ def test_prepare_provider_workspace_repairs_existing_claude_hook_only_settings(t
 
     payload = json.loads(managed_settings.read_text(encoding='utf-8'))
     assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == 'system-token'
+    assert payload['env']['ANTHROPIC_API_KEY'] == 'system-token'
     assert payload['theme'] == 'dark'
     commands = [hook['command'] for group in payload['hooks']['Stop'] for hook in group.get('hooks', []) if isinstance(hook, dict)]
     assert 'echo legacy-hook' in commands
@@ -1600,6 +1685,7 @@ def test_prepare_provider_workspace_preserves_managed_claude_auth_when_system_ho
 
     payload = json.loads(managed_settings.read_text(encoding='utf-8'))
     assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == 'managed-token'
+    assert payload['env']['ANTHROPIC_API_KEY'] == 'managed-token'
     assert payload['env']['ANTHROPIC_BASE_URL'] == 'https://claude.example.test'
     assert payload['theme'] == 'light'
     commands = [hook['command'] for group in payload['hooks']['Stop'] for hook in group.get('hooks', []) if isinstance(hook, dict)]

@@ -1108,7 +1108,7 @@ def test_start_persists_policy(tmp_path: Path, monkeypatch) -> None:
     policy = app.start_policy_store.load()
     assert policy is not None
     assert policy.auto_permission is True
-    assert policy.recovery_restore is True
+    assert policy.recovery_restore is False
     assert policy.source == 'start_command'
 
     client.shutdown()

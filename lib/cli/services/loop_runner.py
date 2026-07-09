@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from dataclasses import replace
+import json
 from pathlib import Path
+import re
 import time
 from types import SimpleNamespace
 from uuid import uuid4
 
-from cli.models import ParsedAskCommand
+from cli.models import ParsedAskCommand, ParsedClearCommand
 from cli.models_mailbox import ParsedTraceCommand
 from storage.atomic import atomic_write_json, atomic_write_text
 
 from .auto_runner_lock import AutoRunnerLock
 from .ask import submit_ask
+from .clear import clear_agent_context
 from .loop_ask_first import release_ask_first_execution_round, run_ask_first_execution_round
 from .loop_run_once import loop_run_once
 from .plan_tasks import find_first_actionable_task, plan_task
@@ -22,6 +26,19 @@ from .trace import trace_target
 _ORCHESTRATOR_ROUTES = ('direct_execution', 'needs_detail', 'macro_adjustment_request', 'blocked', 'partial_completion')
 _ROUND_REVIEWER_FIELD = 'ccb_round_reviewer'
 _LEGACY_ROUND_CHECKER_FIELD = 'round_checker'
+_INLINE_COMPACT_ARTIFACT_CONTENT_LIMIT = 500
+_DETAIL_READY_STOP_PATTERNS = (
+    ('expected_stop_detail_ready', r'\bexpected\s+stop\s*:\s*`?detail_ready`?\b'),
+    ('stop_at_detail_ready', r'\bstop(?:s|ped|ping)?\s+(?:at|as|on)\s+`?detail_ready`?\b'),
+    (
+        'controller_visible_detail_ready',
+        r'\bcontroller-visible\s+task\s+outcome\s+remains\s+`?detail_ready`?\b',
+    ),
+    (
+        'expected_controller_visible_detail_ready',
+        r'\bexpected\s+controller-visible\s+(?:task\s+)?(?:outcome|status|stop)\s+is\s+`?detail_ready`?\b',
+    ),
+)
 
 
 def loop_runner_auto(context, command, services=None) -> dict[str, object]:
@@ -486,6 +503,16 @@ def _orchestrator_route_for_record(record: dict[str, object]) -> str:
 def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> dict[str, object]:
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
+    existing = _consume_existing_activation_for_task(
+        context,
+        command,
+        deps,
+        task_id=task_id,
+        target='orchestrator',
+        record=record,
+    )
+    if existing is not None:
+        return existing
     activation_id = f'act-{uuid4().hex[:12]}'
     activation = _orchestrator_activation_packet(
         context,
@@ -494,6 +521,16 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
         reason=str(task.get('runner_reason') or 'ready_for_orchestration'),
     )
     activation_path = _activation_path(context, activation_id)
+    atomic_write_json(activation_path, activation)
+    freshness = _prepare_immaculate_activation(
+        context,
+        deps,
+        activation_id=activation_id,
+        target='orchestrator',
+        role='ccb_orchestrator',
+        reason='fresh_before_orchestrator_ask',
+    )
+    activation['freshness'] = freshness
     atomic_write_json(activation_path, activation)
     summary = deps.submit_ask(
         context,
@@ -504,7 +541,7 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
             message=_orchestrator_message(activation),
             task_id=activation_id,
             compact=True,
-            artifact_request=True,
+            inline_request=True,
         ),
     )
     job = _single_job(summary.jobs, target='orchestrator')
@@ -527,6 +564,7 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
         'next_owner': 'orchestrator',
         'activation_id': activation_id,
         'activation_path': str(activation_path),
+        'freshness': freshness,
         'ask': activation['ask'],
         'next_activation': 'stop_after_one_activation',
     }
@@ -535,6 +573,16 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
 def _activate_planner(context, command, deps, task: dict[str, object]) -> dict[str, object]:
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
+    existing = _consume_existing_activation_for_task(
+        context,
+        command,
+        deps,
+        task_id=task_id,
+        target='planner',
+        record=record,
+    )
+    if existing is not None:
+        return existing
     activation_id = f'act-{uuid4().hex[:12]}'
     activation = _planner_activation_packet(
         context,
@@ -554,7 +602,7 @@ def _activate_planner(context, command, deps, task: dict[str, object]) -> dict[s
             message=_planner_message(activation),
             task_id=activation_id,
             compact=True,
-            artifact_request=True,
+            inline_request=True,
         ),
     )
     job = _single_job(summary.jobs, target='planner')
@@ -603,7 +651,7 @@ def _activate_plan_reviewer(context, command, deps, task: dict[str, object]) -> 
             message=_plan_reviewer_message(activation),
             task_id=activation_id,
             compact=True,
-            artifact_request=True,
+            inline_request=True,
         ),
     )
     job = _single_job(summary.jobs, target='plan_reviewer')
@@ -635,6 +683,16 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
     next_owner = str(task.get('next_owner') or record.get('next_owner') or 'planner')
+    existing = _consume_existing_activation_for_task(
+        context,
+        command,
+        deps,
+        task_id=task_id,
+        target='task_detailer',
+        record=record,
+    )
+    if existing is not None:
+        return existing
     activation_id = f'act-{uuid4().hex[:12]}'
     activation = _task_detailer_activation_packet(
         context,
@@ -643,6 +701,16 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         reason=str(task.get('runner_reason') or 'detail_required'),
     )
     activation_path = _activation_path(context, activation_id)
+    atomic_write_json(activation_path, activation)
+    freshness = _prepare_immaculate_activation(
+        context,
+        deps,
+        activation_id=activation_id,
+        target='task_detailer',
+        role='ccb_task_detailer',
+        reason='fresh_before_task_detailer_ask',
+    )
+    activation['freshness'] = freshness
     atomic_write_json(activation_path, activation)
     summary = deps.submit_ask(
         context,
@@ -653,7 +721,7 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
             message=_task_detailer_message(activation),
             task_id=activation_id,
             compact=True,
-            artifact_request=True,
+            inline_request=True,
         ),
     )
     job = _single_job(summary.jobs, target='task_detailer')
@@ -676,6 +744,7 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         'next_owner': next_owner,
         'activation_id': activation_id,
         'activation_path': str(activation_path),
+        'freshness': freshness,
         'ask': activation['ask'],
         'next_activation': 'stop_after_one_activation',
     }
@@ -741,6 +810,7 @@ def _deps(services):
             'consume_explicit_role_output',
             consume_explicit_role_output,
         ),
+        clear_agent_context=getattr(services, 'clear_agent_context', clear_agent_context),
         submit_ask=getattr(services, 'submit_ask', submit_ask),
         trace_target=getattr(services, 'trace_target', trace_target),
         sleep=getattr(services, 'sleep', time.sleep),
@@ -757,6 +827,83 @@ def _wait_for_job_terminal(context, job_id: str, deps, command) -> None:
         if status in {'completed', 'failed', 'cancelled', 'timed_out'}:
             return
         deps.sleep(poll_interval)
+
+
+def _prepare_immaculate_activation(
+    context,
+    deps,
+    *,
+    activation_id: str,
+    target: str,
+    role: str,
+    reason: str,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        'schema_version': 1,
+        'record_type': 'ccb_immaculate_activation_freshness',
+        'activation_id': activation_id,
+        'target': target,
+        'role': role,
+        'reason': reason,
+        'required': True,
+        'freshness_mechanism': 'provider_native_clear_before_ask',
+        'created_at': _utc_now(),
+    }
+    try:
+        summary = deps.clear_agent_context(
+            context,
+            ParsedClearCommand(project=None, agent_names=(target,)),
+        )
+    except Exception as exc:
+        payload.update(
+            {
+                'status': 'unavailable',
+                'reason_detail': str(exc)[:300],
+            }
+        )
+        return payload
+    payload['clear_summary'] = _compact_clear_summary(summary)
+    payload['status'] = _clear_status_for_target(summary, target)
+    return payload
+
+
+def _compact_clear_summary(summary: object) -> dict[str, object]:
+    if not isinstance(summary, dict):
+        return {'status': 'unknown', 'raw_type': type(summary).__name__}
+    compact: dict[str, object] = {
+        'status': summary.get('status'),
+    }
+    results = summary.get('results')
+    if isinstance(results, list):
+        compact['results'] = [
+            {
+                key: item.get(key)
+                for key in ('agent', 'status', 'reason', 'pane_id', 'command')
+                if isinstance(item, dict) and item.get(key) is not None
+            }
+            for item in results
+            if isinstance(item, dict)
+        ]
+    return compact
+
+
+def _clear_status_for_target(summary: object, target: str) -> str:
+    if not isinstance(summary, dict):
+        return 'unknown'
+    results = summary.get('results')
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get('agent') or '').strip() == target:
+                status = str(item.get('status') or '').strip()
+                return status or 'unknown'
+    status = str(summary.get('status') or '').strip()
+    return status or 'unknown'
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
 def _payload_ask_job_id(payload: dict[str, object]) -> str | None:
@@ -786,12 +933,15 @@ def _auto_should_stop(payload: dict[str, object]) -> bool:
     status = str(payload.get('loop_runner_status') or '').strip()
     if action in {'activated_orchestrator', 'activated_planner', 'activated_task_detailer', 'activated_plan_reviewer'}:
         return False
+    if action == 'ran_one_round':
+        round_result = str(payload.get('round_result') or '').strip()
+        task_status = str(payload.get('task_status') or '').strip()
+        return not (round_result == 'pass' and task_status == 'done')
     if action in {
         'imported_planner_task_authority',
         'imported_orchestration_notes',
         'imported_macro_adjustment_request',
         'imported_blocker_evidence',
-        'ran_one_round',
     }:
         return False
     return status in {'idle', 'paused', 'blocked', 'terminal'}
@@ -1018,7 +1168,12 @@ def _orchestrator_activation_packet(
         'required_next_output': 'reply-only route decision and compact orchestration notes for supervisor-owned import',
         'task_packet_root': str(task_root.relative_to(context.project.project_root)),
         'artifact_refs': refs,
-        'compact_artifacts': _compact_artifacts(context, artifacts, refs.keys()),
+        'compact_artifacts': _compact_artifacts(
+            context,
+            artifacts,
+            refs.keys(),
+            content_limit=_INLINE_COMPACT_ARTIFACT_CONTENT_LIMIT,
+        ),
         'allowed_routes': _ORCHESTRATOR_ROUTES,
         'script_write_rules': [
             'Reply only; do not run ccb, ccb_test, artifact import commands, or wrapper commands.',
@@ -1106,6 +1261,13 @@ def _task_detailer_activation_packet(
     artifacts = record.get('artifacts') if isinstance(record.get('artifacts'), dict) else {}
     task_root = Path(context.project.project_root) / str(record.get('task_root') or '')
     plan_root = Path(context.project.project_root) / str(record.get('plan_root') or '')
+    compact_artifacts = _compact_artifacts(
+        context,
+        artifacts,
+        ('task_packet', 'execution_contract', 'orchestration_notes'),
+        content_limit=_INLINE_COMPACT_ARTIFACT_CONTENT_LIMIT,
+    )
+    detail_ready_stop_contract = _detail_ready_stop_contract(compact_artifacts)
     return {
         'schema_version': 1,
         'record_type': 'ccb_loop_task_detailer_activation',
@@ -1125,6 +1287,8 @@ def _task_detailer_activation_packet(
             for kind, artifact in sorted(artifacts.items())
             if isinstance(artifact, dict) and artifact.get('path')
         },
+        'compact_artifacts': compact_artifacts,
+        'detail_ready_stop_contract': detail_ready_stop_contract,
         'script_write_rules': [
             'Do not edit roadmap, decisions, open questions, task status, index, current_loop, runtime capacity, or tmux state directly.',
             'Return detail_design, detail_summary, and detail_packet artifacts for script import.',
@@ -1195,6 +1359,89 @@ def _question_refs(artifacts: dict[str, object]) -> list[str]:
     return refs
 
 
+def _consume_existing_activation_for_task(
+    context,
+    command,
+    deps,
+    *,
+    task_id: str,
+    target: str,
+    record: dict[str, object],
+) -> dict[str, object] | None:
+    task_id = str(task_id or '').strip()
+    target = str(target or '').strip()
+    if not task_id or target not in {'planner', 'orchestrator', 'task_detailer'}:
+        return None
+    for activation_path, activation in _iter_activation_records(context):
+        if str(activation.get('task_id') or '').strip() != task_id:
+            continue
+        ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
+        if str(ask.get('target') or '').strip() != target:
+            continue
+        job_id = str(ask.get('job_id') or '').strip()
+        if not job_id:
+            continue
+        if _activation_satisfied_by_task_record(activation, target=target, record=record, job_id=job_id):
+            continue
+        consume_command = replace(command, role_job_id=job_id, task_id=task_id, consume_role_output=True)
+        payload = deps.consume_explicit_role_output(context, consume_command, deps.services)
+        if isinstance(payload, dict):
+            payload.setdefault('activation_id', activation.get('activation_id'))
+            payload.setdefault('activation_path', str(activation_path))
+            payload.setdefault('task_id', task_id)
+        return payload
+    return None
+
+
+def _activation_satisfied_by_task_record(
+    activation: dict[str, object],
+    *,
+    target: str,
+    record: dict[str, object],
+    job_id: str,
+) -> bool:
+    artifacts = record.get('artifacts') if isinstance(record.get('artifacts'), dict) else {}
+    if target == 'orchestrator':
+        notes = artifacts.get('orchestration_notes') if isinstance(artifacts, dict) else None
+        if not isinstance(notes, dict):
+            return False
+        reason = str(activation.get('reason_for_activation') or '')
+        if reason == 'orchestrator_route_needs_detail_detail_ready':
+            return _artifact_actor_job_id(notes) == job_id
+        return True
+    if target == 'planner':
+        return all(isinstance(artifacts.get(kind), dict) for kind in ('task_packet', 'execution_contract'))
+    if target == 'task_detailer':
+        status = str(record.get('status') or '')
+        if status == 'blocked':
+            return isinstance(artifacts.get('blocker_evidence'), dict)
+        return status == 'detail_ready' and all(
+            isinstance(artifacts.get(kind), dict)
+            for kind in ('detail_design', 'detail_summary', 'detail_packet')
+        )
+    return False
+
+
+def _artifact_actor_job_id(artifact: object) -> str:
+    if not isinstance(artifact, dict):
+        return ''
+    actor = artifact.get('actor') if isinstance(artifact.get('actor'), dict) else {}
+    return str(actor.get('job_id') or '')
+
+
+def _iter_activation_records(context):
+    activations_dir = Path(context.paths.runtime_state_root) / 'runtime' / 'loops' / 'activations'
+    if not activations_dir.is_dir():
+        return
+    for path in sorted(activations_dir.glob('act-*.json')):
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            yield path, payload
+
+
 def _planner_question_refs(context, record: dict[str, object]) -> dict[str, object] | tuple[str, ...]:
     task_id = str(record.get('task_id') or '').strip()
     if task_id:
@@ -1205,7 +1452,13 @@ def _planner_question_refs(context, record: dict[str, object]) -> dict[str, obje
     return tuple(_question_refs(artifacts))
 
 
-def _compact_artifacts(context, artifacts: dict[str, object], kinds) -> dict[str, dict[str, object]]:
+def _compact_artifacts(
+    context,
+    artifacts: dict[str, object],
+    kinds,
+    *,
+    content_limit: int = 4000,
+) -> dict[str, dict[str, object]]:
     root = Path(context.project.project_root)
     compact: dict[str, dict[str, object]] = {}
     for kind in sorted(kinds):
@@ -1221,11 +1474,38 @@ def _compact_artifacts(context, artifacts: dict[str, object], kinds) -> dict[str
         except FileNotFoundError:
             text = ''
         if text:
-            limit = 4000
-            item['content'] = text[:limit]
-            item['truncated'] = len(text) > limit
+            item['content'] = _compact_text_excerpt(text, content_limit)
+            item['truncated'] = len(text) > content_limit
         compact[kind] = item
     return compact
+
+
+def _compact_text_excerpt(text: str, limit: int) -> str:
+    if limit <= 0:
+        return ''
+    if len(text) <= limit:
+        return text
+    if limit <= 16:
+        return text[:limit]
+    marker = '\n...\n'
+    head_len = max(1, (limit - len(marker)) // 2)
+    tail_len = max(1, limit - len(marker) - head_len)
+    return f'{text[:head_len]}{marker}{text[-tail_len:]}'
+
+
+def _detail_ready_stop_contract(compact_artifacts: dict[str, dict[str, object]]) -> dict[str, object] | None:
+    evidence: list[dict[str, object]] = []
+    for kind, item in sorted(compact_artifacts.items()):
+        text = str(item.get('content') or '')
+        if not text:
+            continue
+        for name, pattern in _DETAIL_READY_STOP_PATTERNS:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                evidence.append({'kind': kind, 'path': item.get('path'), 'match': name})
+                break
+    if not evidence:
+        return None
+    return {'status': 'detail_ready', 'evidence': evidence}
 
 
 def _orchestrator_message(activation: dict[str, object]) -> str:
@@ -1277,6 +1557,14 @@ def _planner_message(activation: dict[str, object]) -> str:
 
 
 def _task_detailer_message(activation: dict[str, object]) -> str:
+    detail_ready_stop_guidance = ''
+    if activation.get('detail_ready_stop_contract'):
+        detail_ready_stop_guidance = (
+            '\nDetail-ready stop contract:\n'
+            '- Task artifacts explicitly require the controller-visible stop/status detail_ready for this activation.\n'
+            '- Produce the requested detail artifacts and use "detail readiness recommendation: detail_ready" when those artifacts are complete.\n'
+            '- Do not downgrade to needs_clarification solely because implementation dispatch remains intentionally out of scope.\n'
+        )
     return (
         'Role: task_detailer\n'
         f"Activation id: {activation.get('activation_id')}\n"
@@ -1286,11 +1574,14 @@ def _task_detailer_message(activation: dict[str, object]) -> str:
         f"Plan brief ref: {activation.get('plan_brief_ref')}\n"
         f"Task packet root: {activation.get('task_packet_root')}\n"
         f"Detail root: {activation.get('detail_root')}\n"
-        f"Artifact refs: {activation.get('artifact_refs')}\n\n"
+        f"Artifact refs: {activation.get('artifact_refs')}\n"
+        f"Compact artifacts: {activation.get('compact_artifacts')}\n"
+        f"Detail-ready stop contract: {activation.get('detail_ready_stop_contract')}\n\n"
         'Required next output:\n'
         '- task-scoped detail design, stable brief-update summary, and detail packet manifest\n'
         '- detail readiness recommendation: detail_ready|needs_clarification|blocked|not_ready\n'
-        '- macro-adjustment request only as an artifact/ref when macro assumptions need planner review\n\n'
+        '- macro-adjustment request only as an artifact/ref when macro assumptions need planner review\n'
+        f'{detail_ready_stop_guidance}\n'
         'Authority boundary:\n'
         '- reply only with task-scoped detail artifact content and recommendations\n'
         '- do not run ccb, ccb_test, ccb plan, ccb loop, ccb ask, wrapper commands, or provider/runtime mutation commands\n'

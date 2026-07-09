@@ -259,11 +259,10 @@ rich content.
 
 ## Relation To Existing CCB Markdown Work
 
-CCB already has Neovim-side Markdown enhancement for the isolated LazyVim
-profile, including render-markdown integration when parsers are ready. Mobile
-Markdown should be separate from that editor integration:
+CCB already has rich/workbench-side Markdown preview behavior. Mobile Markdown
+should be separate from that terminal integration:
 
-- Neovim rendering improves editing inside terminal/editor surfaces;
+- rich/workbench rendering improves terminal-side reading and preview surfaces;
 - mobile rendering improves remote reading and Comms handling;
 - both should use CCB content authority rather than raw pane identity.
 

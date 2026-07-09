@@ -339,7 +339,7 @@ def test_question_user_batch_pauses_runner_with_question_refs(tmp_path: Path) ->
     assert code == 0, err
     assert runner['loop_runner_status'] == 'paused'
     assert runner['action'] == 'paused'
-    assert runner['question_refs']['next_owner'] == 'frontdesk'
+    assert runner['question_refs']['next_owner'] == 'task_detailer'
     assert runner['question_refs']['latest']['user_questions']['path'] == payload['artifact']['path']
 
 

@@ -41,7 +41,7 @@ class ProtocolTurnDetector(BaseCompletionDetector):
         reply = first_non_empty(item.payload, 'last_agent_message', 'final_answer', 'reply', 'text') or ''
         if reply:
             self._record_reply(item, reply, stable=True)
-        elif not self._state.reply_started:
+        elif bool(item.payload.get('empty_final_message')) or not self._state.reply_started:
             self._set_terminal(
                 status=CompletionStatus.INCOMPLETE,
                 reason='task_complete_empty_reply',

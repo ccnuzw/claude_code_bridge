@@ -18,8 +18,24 @@ still preserving stable summaries and links in plan-tree.
 
 `task_detailer` also owns task-local clarification. If it cannot safely refine
 the task without user input, it creates a clarification-needed artifact and the
-frontend or `frontdesk` notifies the user to continue with that same
-`task_detailer` instance.
+frontend or `frontdesk` notifies the user. The controller then reactivates
+`task_detailer` for the same task/detail thread with a fresh context rehydrated
+from durable clarification and detail artifacts.
+
+## Context Purity
+
+`task_detailer` is an immaculate (`无垢`) role. It may be resident or visible in
+V1 layouts for observability, but each refinement pass and each clarification
+continuation must be context-fresh. The detailer should receive artifact refs,
+task ids, source refs, and normalized answers from the controller; it should not
+rely on conversational memory from a prior task, a prior detail pass, or another
+user clarification.
+
+Freshness is a runtime requirement, not a prompt convention. The controller
+should use a new provider session, a unique detailer identity, or a proven
+clear/reset step before delivering the next ask, and should preserve evidence of
+that freshness. The durable continuity is the task/detail packet and
+clarification artifacts, not the detailer's chat history.
 
 ## Placement In The Workflow
 
@@ -233,6 +249,8 @@ task_detailer -> continue refinement
 Rules:
 
 - Ask only questions that block task-local refinement.
+- Route the answer back to the same task/detail packet, not necessarily the
+  same provider conversation.
 - Prefer options and concrete tradeoffs over broad open-ended questions.
 - Record raw answer refs when the host provides them.
 - Normalize the answer into a stable summary before continuing.

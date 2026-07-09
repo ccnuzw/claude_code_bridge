@@ -15,6 +15,7 @@ Date: 2026-06-13
 | `kiro` | `kiro-cli` | `KIRO_START_CMD` |
 | `crush` | `crush` | `CRUSH_START_CMD` |
 | `pi` | `pi` | `PI_START_CMD` |
+| `grok` | `grok` | `GROK_START_CMD` |
 
 The `deepseek` provider key follows user intent and model family language; the
 actual CLI command remains `deepcode` because that is the DeepSeek documented
@@ -46,8 +47,8 @@ These providers enter CCB as optional built-in managed providers:
 
 Next-wave runtime should split visible pane startup from ask execution:
 
-- `qwen`, `copilot`, `cursor`, and `pi` use per-job subprocess execution with
-  JSONL/stream-json parsing.
+- `qwen`, `copilot`, `cursor`, `grok`, and `pi` use per-job subprocess
+  execution with JSONL/stream-json parsing.
 - `crush` and `kiro` use per-job subprocess execution with process exit plus
   stdout as the completion signal.
 - Visible panes still use simple tmux launchers for user observation and
@@ -59,6 +60,9 @@ Next-wave runtime should split visible pane startup from ask execution:
 - Shared native CLI launchers may also derive visible-pane env vars from
   prepared provider-state. Pi uses this to set `PI_CODING_AGENT_DIR`,
   `PI_CODING_AGENT_SESSION_DIR`, `PI_SKIP_VERSION_CHECK`, and `PI_TELEMETRY`.
+- Grok uses the shared native CLI launcher with per-agent managed `HOME` and
+  visible `--no-auto-update`, while CCB ask execution runs official headless
+  `grok -p` jobs and reads streaming-json output artifacts.
 - Existing partial backend directories for `qwen` and `copilot` have been
   upgraded to modern backend shape before registration:
   `manifest.py`, `launcher.py`, `execution.py`, and tests.
@@ -102,9 +106,14 @@ result streams:
    chat event source is found.
 13. Pi asks parse `pi --mode json` JSONL and terminalize from native
    `turn_end` events carrying assistant message content.
-14. Completed-native-empty replies are `incomplete` with
+14. Grok asks parse official `grok --no-auto-update -p ... --output-format
+   streaming-json --session-id <job>` output. CCB accepts both generic
+   assistant/result envelopes and JSON-RPC style `session/update`
+   `agent_message_chunk` events, terminalizing from native stop/end events or
+   process exit with captured reply text.
+15. Completed-native-empty replies are `incomplete` with
    `empty_provider_reply` diagnostics, not `completed`.
-15. Long-running native CLI subprocesses terminalize with explicit
+16. Long-running native CLI subprocesses terminalize with explicit
    provider-specific timeout reasons such as `qwen_run_timeout` and terminate
    the child process group instead of waiting only for the outer reliability
    fallback.
@@ -151,6 +160,10 @@ Current behavior:
   provider state.
 - Kiro should use prompt wrapping first because no stable skill/instruction
   projection surface has been confirmed for chat mode.
+- Grok supports AGENTS.md, skills, plugins, hooks, and MCP according to official
+  docs. The first CCB slice uses prompt wrapping plus managed `HOME`; richer
+  Grok skill/plugin projection should be designed only after a local contract
+  is verified.
 - `inherit_skills = false` disables inherited skill projection. For OpenCode,
   `inherit_memory = false` disables only the memory bridge; inherited ask
   instructions continue unless `inherit_skills = false` is also set.
@@ -177,7 +190,7 @@ Next-wave provider config:
 
 ```toml
 [windows]
-main = "qwen1:qwen, cursor1:cursor, copilot1:copilot, crush1:crush, kiro1:kiro, pi1:pi"
+main = "qwen1:qwen, cursor1:cursor, copilot1:copilot, crush1:crush, grok1:grok, kiro1:kiro, pi1:pi"
 
 [agents.qwen1]
 provider = "qwen"
@@ -191,6 +204,9 @@ provider = "copilot"
 [agents.crush1]
 provider = "crush"
 
+[agents.grok1]
+provider = "grok"
+
 [agents.kiro1]
 provider = "kiro"
 
@@ -202,10 +218,11 @@ Not supported in first slice:
 
 - `key` / `url` shortcuts for Kimi or DeepSeek.
 - `key` / `url` shortcuts for MiMo.
-- `key` / `url` shortcuts for Qwen, Cursor, Copilot, Crush, or Kiro.
+- `key` / `url` shortcuts for Qwen, Cursor, Copilot, Crush, Grok, or Kiro.
 - Automatic writing of `~/.deepcode/settings.json`.
 - Automatic Kimi login.
 - Automatic credential acquisition for Qwen, Cursor, Copilot, Crush, or Kiro.
+- Automatic Grok login or SuperGrok/X subscription acquisition.
 
 ## Tests
 
@@ -234,7 +251,7 @@ Focused unit tests should cover:
 - Config loader accepts agents using `provider = "kimi"` and
   `provider = "deepseek"` and `provider = "mimo"`.
 - Optional provider registry includes `qwen`, `cursor`, `copilot`, `crush`,
-  `kiro`, and `pi`.
+  `grok`, `kiro`, and `pi`.
 - Existing partial `qwen` and `copilot` backend packages are migrated to
   modern manifest/launcher/execution contracts while old protocol helpers
   remain only for compatibility tests.
@@ -243,13 +260,15 @@ Focused unit tests should cover:
 - Copilot parser handles prompt-mode JSONL output.
 - Crush execution treats nonzero exit as failure and zero exit/stdout as
   completion, with empty stdout producing an empty-reply diagnostic.
+- Grok execution builds the official headless command and parses
+  `session/update` chunk/stop events.
 - Kiro execution treats nonzero exit as failure and zero exit/stdout as
   completion until a better native event source is confirmed.
-- All six next-wave adapters report provider-specific run timeouts and
+- All next-wave adapters report provider-specific run timeouts and
   terminate the subprocess when `CCB_<PROVIDER>_RUN_TIMEOUT_S` is exceeded.
 - Crush visible pane launch includes `--data-dir <provider-state>/data`.
 - Native CLI provider-state classification covers session/cache/projected skill
-  evidence for Qwen, Cursor, Copilot, Crush, Kiro, and Pi.
+  evidence for Qwen, Cursor, Copilot, Crush, Grok, Kiro, and Pi.
 
 Source-runtime validation should run from `/home/bfly/yunwei/test_ccb2` using
 `/home/bfly/yunwei/ccb_source/ccb_test` and isolated source home. Real CLI

@@ -89,6 +89,35 @@ def test_protocol_turn_detector_marks_empty_task_complete_incomplete() -> None:
     assert 'without assistant reply text' in decision.diagnostics['diagnosis']
 
 
+def test_protocol_turn_detector_does_not_fallback_to_commentary_for_empty_final_message() -> None:
+    detector = ProtocolTurnDetector()
+    detector.bind(_ctx(), _cursor(0))
+    detector.ingest(_item(CompletionItemKind.ANCHOR_SEEN, 1, '2026-03-18T00:00:01Z'))
+    detector.ingest(
+        _item(
+            CompletionItemKind.ASSISTANT_CHUNK,
+            2,
+            '2026-03-18T00:00:02Z',
+            {'text': "I'll inspect the artifact first.", 'phase': 'commentary'},
+        )
+    )
+    detector.ingest(
+        _item(
+            CompletionItemKind.TURN_BOUNDARY,
+            3,
+            '2026-03-18T00:00:03Z',
+            {'reason': 'task_complete', 'empty_final_message': True, 'turn_id': 'turn-empty-final'},
+        )
+    )
+
+    decision = detector.decision()
+    assert decision.terminal is True
+    assert decision.status is CompletionStatus.INCOMPLETE
+    assert decision.reason == 'task_complete_empty_reply'
+    assert decision.reply == ''
+    assert decision.provider_turn_ref == 'turn-empty-final'
+
+
 def test_session_boundary_detector_marks_empty_boundary_incomplete() -> None:
     detector = SessionBoundaryDetector()
     detector.bind(_ctx(), _cursor(0))

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from functools import lru_cache
 import os
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from agents.models import AgentSpec
@@ -18,6 +20,7 @@ from .launcher_runtime import (
     build_session_payload as _build_session_payload_impl,
     build_start_cmd as _build_start_cmd_impl,
     claude_history_state as _claude_history_state_impl,
+    claude_user_api_env as _claude_user_api_env_impl,
     claude_user_base_url as _claude_user_base_url_impl,
     local_tcp_listener_available as _local_tcp_listener_available_impl,
     prepare_launch_context as _prepare_launch_context_impl,
@@ -88,6 +91,7 @@ def build_start_cmd(
         build_env_prefix_fn=build_claude_env_prefix,
         resolve_restore_target_fn=_resolve_claude_restore_target,
         provider_start_parts_fn=provider_start_parts,
+        cli_supports_flag_fn=claude_cli_supports_flag,
         is_root_user_fn=is_root_user,
     )
 
@@ -218,8 +222,13 @@ def build_claude_env_prefix(
         extra_env=extra_env,
         env=os.environ,
         should_drop_base_url_fn=should_drop_claude_base_url,
+        claude_user_api_env_fn=claude_user_api_env,
         claude_user_base_url_fn=claude_user_base_url,
     )
+
+
+def claude_user_api_env() -> dict[str, str]:
+    return _claude_user_api_env_impl(user_settings_path=Path.home() / '.claude' / 'settings.json')
 
 
 def claude_user_base_url() -> str:
@@ -237,6 +246,31 @@ def local_tcp_listener_available(host: str, port: int) -> bool:
     return _local_tcp_listener_available_impl(host, port)
 
 
+def claude_cli_supports_flag(cmd_parts: list[str], flag: str) -> bool:
+    normalized = str(flag or '').strip()
+    if not normalized:
+        return False
+    help_text = _claude_help_text(tuple(str(part) for part in cmd_parts if str(part or '').strip()))
+    return normalized in help_text
+
+
+@lru_cache(maxsize=16)
+def _claude_help_text(cmd_parts: tuple[str, ...]) -> str:
+    command = tuple(cmd_parts or ('claude',))
+    try:
+        completed = subprocess.run(
+            [*command, '--help'],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3,
+        )
+    except Exception:
+        return ''
+    return f'{completed.stdout or ""}\n{completed.stderr or ""}'
+
+
 def is_root_user() -> bool:
     geteuid = getattr(os, 'geteuid', None)
     if geteuid is None:
@@ -249,6 +283,8 @@ def is_root_user() -> bool:
 
 __all__ = [
     'build_claude_env_prefix',
+    'claude_user_api_env',
+    'claude_cli_supports_flag',
     'build_runtime_launcher',
     'build_start_cmd',
     'resolve_run_cwd',

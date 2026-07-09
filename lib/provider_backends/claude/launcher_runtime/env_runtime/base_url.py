@@ -8,13 +8,18 @@ from .overlay import read_user_settings_payload
 
 
 def claude_user_base_url(*, user_settings_path: Path) -> str:
+    env_payload = claude_user_api_env(user_settings_path=user_settings_path)
+    return str(env_payload.get("ANTHROPIC_BASE_URL") or "").strip()
+
+
+def claude_user_api_env(*, user_settings_path: Path) -> dict[str, str]:
     payload = read_user_settings_payload(user_settings_path)
     if payload is None:
-        return ""
+        return {}
     env_payload = payload.get("env")
     if not isinstance(env_payload, dict):
-        return ""
-    return str(env_payload.get("ANTHROPIC_BASE_URL") or "").strip()
+        return {}
+    return {str(key): str(value) for key, value in env_payload.items() if str(value).strip()}
 
 
 def should_drop_claude_base_url(value: str, *, local_tcp_listener_available_fn) -> bool:
@@ -41,6 +46,7 @@ def local_tcp_listener_available(host: str, port: int) -> bool:
 
 
 __all__ = [
+    "claude_user_api_env",
     "claude_user_base_url",
     "local_base_url_target",
     "local_tcp_listener_available",

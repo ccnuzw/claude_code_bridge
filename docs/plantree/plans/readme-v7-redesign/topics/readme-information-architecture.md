@@ -68,7 +68,8 @@ discoverable but not dominate the first screen.
    `[windows]`, sidebar options, worktree, per-agent key/url/model.
 9. Agent-to-agent work: `/ask`, `$ask`, implicit delegation, callback chaining,
    and submit-once discipline.
-10. Editor workflow: VS Code/Neovim style use with a concise screenshot.
+10. Rich/workbench workflow: file browsing, previews, and project control with
+    a concise screenshot.
 11. Troubleshooting: startup, bad layout, stuck job, stale pane, kill/rebuild,
     support bundle or diagnostics if confirmed stable.
 12. Community and release history: keep latest v7 highlights in README and link

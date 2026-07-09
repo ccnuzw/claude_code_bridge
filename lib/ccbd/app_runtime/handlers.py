@@ -31,6 +31,7 @@ from ccbd.handlers import (
     build_trace_handler,
     build_watch_handler,
 )
+from ccbd.frontdesk_handler import build_frontdesk_forward_planner_handler
 
 
 def register_handlers(app) -> None:
@@ -66,6 +67,10 @@ def register_handlers(app) -> None:
     )
     app.socket_server.register_handler('ack', _graph_request(graph_source, build_ack_handler(dispatcher)))
     app.socket_server.register_handler('cancel', _graph_request(graph_source, build_cancel_handler(dispatcher)))
+    app.socket_server.register_handler(
+        'frontdesk_forward_planner',
+        _graph_request(graph_source, build_frontdesk_forward_planner_handler(dispatcher)),
+    )
     app.socket_server.register_handler(
         'project_view',
         _graph_request(graph_source, build_project_view_handler(project_view_service)),

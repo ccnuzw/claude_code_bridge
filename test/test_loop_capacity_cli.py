@@ -14,6 +14,9 @@ from types import SimpleNamespace
 import pytest
 
 from agents.config_loader import load_project_config
+from ccbd.api_models import AcceptedJobReceipt, JobStatus, SubmitReceipt
+from ccbd.frontdesk_handler import build_frontdesk_forward_planner_handler
+from ccbd.frontdesk_session_observer import observe_frontdesk_session
 from ccbd.reload_plan import build_reload_dry_run_plan
 from cli.context import CliContextBuilder
 from cli.models import (
@@ -35,8 +38,11 @@ from cli.services.loop_run_once import loop_run_once
 from cli.services.loop_runner import loop_runner_auto, loop_runner_once
 from cli.services.plan_tasks import plan_task
 from cli.services.frontdesk_intake import frontdesk_intake
+import cli.services.frontdesk_intake_command as frontdesk_intake_command_module
+from cli.services.frontdesk_intake_command import frontdesk_intake_command
 from cli.services.watch import WatchEventBatch
 import cli.services.loop_capacity as loop_capacity_module
+from storage.paths import PathLayout
 
 
 def _write(path: Path, text: str) -> None:
@@ -1318,6 +1324,7 @@ def test_loop_runner_once_ready_for_orchestration_activates_orchestrator_only(
         seen['sender'] = ask_command.sender
         seen['task_id'] = ask_command.task_id
         seen['artifact_request'] = ask_command.artifact_request
+        seen['inline_request'] = ask_command.inline_request
         seen['message'] = ask_command.message
         return AskSummary(
             project_id=context.project.project_id,
@@ -1361,7 +1368,8 @@ def test_loop_runner_once_ready_for_orchestration_activates_orchestrator_only(
     assert payload['next_activation'] == 'stop_after_one_activation'
     assert seen['target'] == 'orchestrator'
     assert seen['sender'] == 'system'
-    assert seen['artifact_request'] is True
+    assert seen['artifact_request'] is False
+    assert seen['inline_request'] is True
     assert seen['calls'] == 1
     message = str(seen['message'])
     assert 'Allowed routes: direct_execution, needs_detail, macro_adjustment_request, blocked, partial_completion' in message
@@ -1417,6 +1425,57 @@ def test_loop_runner_once_ready_for_orchestration_activates_orchestrator_only(
     assert shown['task']['current_loop'] is None
     assert shown['task']['next_owner'] == 'orchestrator'
     assert set(shown['task']['artifacts']) == {'task_packet', 'execution_contract'}
+
+
+def test_loop_runner_once_waits_for_existing_same_task_orchestrator_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-runner')
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-existing-orchestrator.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_orchestrator_activation',
+            'activation_id': 'act-existing-orchestrator',
+            'action': 'activate_orchestrator',
+            'task_id': 'task-runner',
+            'ask': {'target': 'orchestrator', 'job_id': 'job_orchestrator_existing', 'status': 'accepted'},
+        },
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[str] = []
+
+    def forbidden_submit_ask(_context, ask_command):
+        submitted.append(ask_command.target)
+        raise AssertionError('existing same-task orchestrator activation must be consumed or awaited')
+
+    pending = loop_runner_once(context, command, services=SimpleNamespace(submit_ask=forbidden_submit_ask))
+
+    assert pending['loop_runner_status'] == 'pending'
+    assert pending['action'] == 'role_output_pending'
+    assert pending['job_id'] == 'job_orchestrator_existing'
+    assert pending['task_id'] == 'task-runner'
+    assert submitted == []
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_orchestrator_existing',
+        agent_name='orchestrator',
+        reply='route: direct_execution\norchestration_notes: Task is ready for direct execution.\n',
+    )
+
+    imported = loop_runner_once(context, command, services=SimpleNamespace(submit_ask=forbidden_submit_ask))
+
+    assert imported['loop_runner_status'] == 'ok'
+    assert imported['action'] == 'imported_orchestration_notes'
+    assert imported['task_id'] == 'task-runner'
+    assert imported['route'] == 'direct_execution'
+    assert submitted == []
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-runner'))
+    assert shown['task']['artifacts']['orchestration_notes']['orchestrator_route'] == 'direct_execution'
 
 
 def test_loop_runner_task_filter_ignores_unrelated_pending_role_output_activation(
@@ -1791,6 +1850,60 @@ Verification:
     )
 
 
+def test_loop_runner_auto_stops_after_non_pass_direct_round_before_next_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=False,
+        auto=True,
+        max_steps=3,
+        poll_interval_s=0.0,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    calls = []
+
+    def fake_once(_context, _command, _services):
+        calls.append('once')
+        if len(calls) > 1:
+            raise AssertionError('auto-runner must stop before activating the next task after a blocked round')
+        return {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_runner_once',
+            'loop_runner_status': 'ok',
+            'action': 'ran_one_round',
+            'task_id': 'phase6b-l1-doc-direct-execution',
+            'task_status': 'blocked',
+            'round_result': 'blocked',
+            'round_result_source': 'round_reviewer_reply',
+        }
+
+    monkeypatch.setattr(loop_runner_module, 'loop_runner_once', fake_once)
+
+    payload = loop_runner_auto(
+        context,
+        command,
+        services=SimpleNamespace(sleep=lambda _seconds: None),
+    )
+
+    assert calls == ['once']
+    assert payload['action'] == 'auto_runner_finished'
+    assert payload['steps'] == [
+        {
+            'loop_runner_status': 'ok',
+            'action': 'ran_one_round',
+            'task_id': 'phase6b-l1-doc-direct-execution',
+            'task_status': 'blocked',
+            'round_result': 'blocked',
+            'round_result_source': 'round_reviewer_reply',
+        }
+    ]
+    assert payload['final_action'] == 'ran_one_round'
+
+
 def test_loop_runner_auto_skips_settled_blocked_frontdesk_activation_for_wait_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1997,11 +2110,11 @@ def test_loop_runner_once_explicit_project_from_outer_cwd_submits_orchestrator_a
     assert captured['project_id'] == context.project.project_id
     assert captured['to_agent'] == 'orchestrator'
     assert captured['from_actor'] == 'system'
-    assert captured['route_options'] == {'artifact_request': True}
+    assert captured['route_options'] == {}
     assert str(captured['task_id']).startswith('act-')
-    artifact = captured['body_artifact']
-    assert isinstance(artifact, dict)
-    message = Path(str(artifact['path'])).read_text(encoding='utf-8')
+    assert captured['body_artifact'] is None
+    message = str(captured['body'])
+    assert 'CCB ask request was stored as an artifact' not in message
     assert 'Required reply-only output:' in message
     assert 'ccb plan task-artifact' not in message
     assert 'plan task-artifact' not in message
@@ -2439,6 +2552,18 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
     _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
     submitted: list[object] = []
     targets_by_job: dict[str, str] = {}
+    cleared_targets: list[str] = []
+
+    def fake_clear_agent_context(_context, clear_command):
+        names = list(clear_command.agent_names)
+        cleared_targets.extend(names)
+        return {
+            'status': 'ok',
+            'results': [
+                {'agent': name, 'status': 'cleared', 'pane_id': f'%{len(cleared_targets)}', 'command': '/clear'}
+                for name in names
+            ],
+        }
 
     def fake_submit_ask(_context, ask_command):
         next_index = len(submitted) + 1
@@ -2498,6 +2623,7 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
         command,
         services=SimpleNamespace(
             submit_ask=fake_submit_ask,
+            clear_agent_context=fake_clear_agent_context,
             watch_ask_job=fake_watch_ask_job,
             loop_run_once=forbidden_loop_run_once,
             topology_dispatch=forbidden_topology_dispatch,
@@ -2524,6 +2650,7 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
     assert targets[1].startswith(f'loop-{payload["loop_id"]}-code_reviewer-')
     assert targets[2] == 'ccb_orchestrator'
     assert targets[3] == 'ccb_round_reviewer'
+    assert cleared_targets == targets
     assert all(command.sender == 'system' for command in submitted)
     assert all(command.callback is False for command in submitted)
     assert all(command.silence is False for command in submitted)
@@ -2556,6 +2683,18 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
     assert 'If the first non-empty line is not this field, the runner must block the round.' in round_reviewer_message
     assert 'A later `round result: pass` is ignored by the runner and blocks the round.' in round_reviewer_message
     assert 'validate final result against project-root evidence, not isolated worker workspace evidence' in round_reviewer_message
+    assert 'Supplied round evidence artifacts:' in round_reviewer_message
+    assert 'Worker reply content:' in round_reviewer_message
+    assert 'Reviewer reply content:' in round_reviewer_message
+    assert 'Orchestrator reply content:' in round_reviewer_message
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['worker']['freshness']['status'] == 'cleared'
+    assert round_json['reviewer']['freshness']['status'] == 'cleared'
+    assert round_json['orchestrator']['freshness']['status'] == 'cleared'
+    assert round_json['ccb_round_reviewer']['freshness']['status'] == 'cleared'
+    assert f'reply from loop-{payload["loop_id"]}-coder-1' in round_reviewer_message
+    assert f'reply from loop-{payload["loop_id"]}-code_reviewer-1' in round_reviewer_message
+    assert 'reply from ccb_orchestrator' in round_reviewer_message
     normalized_proposal = json.loads(Path(str(payload['topology']['proposal_path'])).read_text(encoding='utf-8'))
     desired = json.loads(Path(str(payload['topology']['desired_path'])).read_text(encoding='utf-8'))
     observed = json.loads(Path(str(payload['topology']['observed_path'])).read_text(encoding='utf-8'))
@@ -2570,9 +2709,117 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
     assert round_json['ccb_round_reviewer']['target'] == 'ccb_round_reviewer'
 
 
+def test_loop_runner_ask_first_round_reviewer_malformed_reply_gets_bounded_correction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'direct_execution_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/direct_execution_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+    task_ids_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        task_ids_by_job[job_id] = ask_command.task_id
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'direct_execution_note.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer' and str(task_ids_by_job[str(job_id)]).endswith('-round-reviewer'):
+            reply = '根据提供的证据，执行合约审计通过。\n'
+        elif target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'correction_of_job: job_4\n'
+                'verification performed: corrected first-line machine result for same evidence\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'ran_one_round'
+    assert payload['round_result'] == 'pass'
+    assert payload['round_result_source'] == 'round_reviewer_correction_reply'
+    assert payload['task_status'] == 'done'
+    assert payload['release']['released_count'] == 2
+    targets = [command.target for command in submitted]
+    assert len(targets) == 5
+    assert targets[3:] == ['ccb_round_reviewer', 'ccb_round_reviewer']
+    assert submitted[4].task_id.endswith('-round-reviewer-correction')
+    assert 'Previous reviewer job: job_4' in submitted[4].message
+    assert 'Previous first non-empty line: 根据提供的证据，执行合约审计通过。' in submitted[4].message
+    assert 'FINAL ANSWER FORMAT - parser enforced:' in submitted[4].message
+    assert 'If that evidence is insufficient, the first line must be exactly: round result: blocked' in submitted[4].message
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['ccb_round_reviewer']['purpose'] == 'ccb_round_reviewer_correction'
+    assert round_json['ccb_round_reviewer']['correction_source_job_id'] == 'job_4'
+    loop_dir = Path(str(payload['round']['round_json_path'])).parent
+    asks = [json.loads(line) for line in (loop_dir / 'asks.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert [ask['purpose'] for ask in asks][-2:] == [
+        'ccb_round_reviewer',
+        'ccb_round_reviewer_correction',
+    ]
+    events = [json.loads(line) for line in (loop_dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert any(event['kind'] == 'round_reviewer_result_correction_requested' for event in events)
+
+
+@pytest.mark.parametrize('first_terminal_status', ['failed', 'incomplete'])
 def test_loop_runner_ask_first_uses_completed_auto_retry_successor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    first_terminal_status: str,
 ) -> None:
     project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
     _write(project_root / 'lab_docs' / 'direct_execution_note.md', 'status: draft\n')
@@ -2640,7 +2887,7 @@ def test_loop_runner_ask_first_uses_completed_auto_retry_successor(
             return _watch_batch(
                 str(job_id),
                 target=target,
-                status='failed',
+                status=first_terminal_status,
                 reply='delivery failed before retry',
             )
         if str(job_id) == 'job_3_retry':
@@ -2821,6 +3068,13 @@ def test_loop_runner_direct_execution_promotes_root_file_allowed_by_contract(
             workspace = _seed_copy_workspace_binding(context, project_root, target)
             _write(workspace / 'slug_utils.py', 'def slugify(value):\n    return value.lower()\n')
             _write(workspace / 'tests' / 'test_slug_utils.py', 'from slug_utils import slugify\n')
+            _write(project_root / 'logs' / 'direct_execution.stderr', 'supervisor log after workspace seed\n')
+            _write(project_root / 'evidence' / 'frontdesk.job_id', 'job_frontdesk\n')
+            _write(project_root / 'command_log.tsv', 'timestamp\tcommand\n')
+            _write(
+                project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'task-direct' / 'README.md',
+                'script-owned task status after workspace seed\n',
+            )
         if target == 'ccb_round_reviewer':
             reply = (
                 'round result: pass\n'
@@ -2873,6 +3127,11 @@ def test_loop_runner_direct_execution_promotes_root_file_allowed_by_contract(
     round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['authority_update']['changed_files'] == ['slug_utils.py', 'tests/test_slug_utils.py']
     assert round_json['authority_update']['allowed_change_paths'] == ['slug_utils.py', 'tests/test_slug_utils.py']
+    assert round_json['authority_update']['ignored_control_deleted_files'] == [
+        'command_log.tsv',
+        'evidence/frontdesk.job_id',
+        'logs/direct_execution.stderr',
+    ]
     assert 'failure' not in round_json
 
 
@@ -3541,10 +3800,20 @@ def test_loop_runner_direct_execution_allows_extensionless_allowed_file_stem_bef
 
 def test_loop_runner_direct_execution_extensionless_scope_does_not_match_prefixes() -> None:
     assert loop_ask_first_module._path_allowed_by_scope('lab_code/calculator.py', ['lab_code/calculator'])
+    assert loop_ask_first_module._path_allowed_by_scope('finance_cli/storage.py', ['finance_cli/'])
+    assert loop_ask_first_module._path_allowed_by_scope('monthly_finance/cli.py', ['monthly_finance/**'])
+    assert loop_ask_first_module._path_allowed_by_scope('tests/test_cli.py', ['tests/**'])
+    assert loop_ask_first_module._path_allowed_by_scope('requirements-dev.txt', ['requirements*.txt'])
+    assert not loop_ask_first_module._path_allowed_by_scope('finance_cli/cli.py', ['finance_cli'])
+    assert loop_ask_first_module._declared_allowed_change_paths('Allowed Change Paths:\n- finance_cli/\n') == [
+        'finance_cli/'
+    ]
+    assert not loop_ask_first_module._path_allowed_by_scope('monthly_finance_extra/cli.py', ['monthly_finance/**'])
     assert not loop_ask_first_module._path_allowed_by_scope(
         'lab_code/calculator_extra.py',
         ['lab_code/calculator'],
     )
+    assert not loop_ask_first_module._path_allowed_by_scope('finance_cli_extra.py', ['finance_cli'])
     assert not loop_ask_first_module._path_allowed_by_scope(
         'lab_code/calculator/helpers.py',
         ['lab_code/calculator'],
@@ -3853,6 +4122,89 @@ def test_loop_runner_direct_execution_promotes_before_project_root_review(
     round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
     assert round_json['authority_update']['changed_files'] == ['lab_docs/l1_release_note.md']
+    assert round_json['authority_update']['verified_project_root'] is True
+
+
+def test_loop_runner_direct_execution_accepts_declared_file_already_in_project_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: risk_register.py\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+    reviewer_seen: list[str] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'risk_register.py', 'print("ok")\n')
+            _write(project_root / 'risk_register.py', 'print("ok")\n')
+            reply = 'status: done\nchanged_files: risk_register.py\n'
+        elif target.startswith('loop-') and '-code_reviewer-' in target:
+            reviewer_seen.append((project_root / 'risk_register.py').read_text(encoding='utf-8'))
+            reply = 'status: pass\nproject-root evidence: risk_register.py exists\n'
+        elif target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: project root contains risk_register.py\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == 'pass'
+    assert payload['task_status'] == 'done'
+    assert reviewer_seen == ['print("ok")\n']
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['authority_update']['source'] == 'isolated_workspace_declared_changes_already_project_root'
+    assert round_json['authority_update']['changed_files'] == ['risk_register.py']
     assert round_json['authority_update']['verified_project_root'] is True
 
 
@@ -5634,6 +5986,38 @@ def test_round_reviewer_message_highlights_converged_expected_round_result() -> 
     assert 'your first line must be exactly: round result: pass' in message
 
 
+def test_round_reviewer_message_includes_reply_artifacts_and_surfaces_missing_artifact(tmp_path: Path) -> None:
+    worker_artifact = tmp_path / 'worker-reply.md'
+    reviewer_artifact = tmp_path / 'reviewer-reply.md'
+    worker_artifact.write_text('worker says verification passed\n', encoding='utf-8')
+    reviewer_artifact.write_text('reviewer says status: pass\n', encoding='utf-8')
+    missing_orchestrator_artifact = tmp_path / 'missing-orchestrator-reply.md'
+
+    message = loop_ask_first_module._round_reviewer_message(
+        loop_id='lp-test',
+        task_id='task-pass',
+        task_text='# Execution Contract\n\nexpected_round_result_if_converged: pass\n',
+        artifact_refs={'task_packet': 'tasks/task/task_packet.md', 'execution_contract': 'tasks/task/execution_contract.md'},
+        worker={'job_id': 'job_worker', 'status': 'completed', 'artifact': str(worker_artifact)},
+        reviewer={'job_id': 'job_reviewer', 'status': 'completed', 'artifact': str(reviewer_artifact)},
+        rework={},
+        orchestrator={
+            'job_id': 'job_orchestrator',
+            'status': 'completed',
+            'artifact': str(missing_orchestrator_artifact),
+        },
+        authority_update=None,
+    )
+
+    assert 'Supplied round evidence artifacts:' in message
+    assert f'Worker reply artifact: {worker_artifact}' in message
+    assert 'worker says verification passed' in message
+    assert f'Reviewer reply artifact: {reviewer_artifact}' in message
+    assert 'reviewer says status: pass' in message
+    assert f'Orchestrator reply artifact: {missing_orchestrator_artifact}' in message
+    assert '<artifact read failed: FileNotFoundError:' in message
+
+
 def test_orchestrator_and_task_detailer_prompts_are_reply_only_authority() -> None:
     post_review_message = loop_ask_first_module._orchestrator_message(
         loop_id='lp-test',
@@ -5763,9 +6147,15 @@ def test_loop_runner_direct_execution_unknown_round_result_blocks_and_releases(
     assert payload['task_status'] == 'blocked'
     assert payload['release']['released_count'] == 2
     assert payload['release']['retained_count'] == 0
-    assert len(submitted) == 4
+    assert len(submitted) == 5
+    assert submitted[4].target == 'ccb_round_reviewer'
+    assert submitted[4].task_id.endswith('-round-reviewer-correction')
+    assert 'Unknown first-line value observed: mystery' in submitted[4].message
     assert (project_root / 'lab_docs' / 'unknown_round_note.md').read_text(encoding='utf-8') == 'status: draft\n'
     round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['ccb_round_reviewer']['purpose'] == 'ccb_round_reviewer_correction'
+    assert round_json['ccb_round_reviewer']['correction_source_job_id'] == 'job_4'
+    assert round_json['ccb_round_reviewer']['correction_source_round_result_source'] == 'unknown_round_result'
     assert round_json['failure']['source'] == 'unknown_round_result'
     assert round_json['failure']['reason'] == "unknown round result 'mystery'"
     assert round_json['failure']['unknown_round_result'] == 'mystery'
@@ -5788,9 +6178,20 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
     command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
     seen: list[str] = []
+    cleared: list[str] = []
+
+    def fake_clear_agent_context(_context, clear_command):
+        names = list(clear_command.agent_names)
+        cleared.extend(names)
+        return {
+            'status': 'ok',
+            'results': [{'agent': name, 'status': 'cleared', 'pane_id': '%1', 'command': '/clear'} for name in names],
+        }
 
     def fake_submit_before_route(_context, ask_command):
         seen.append(ask_command.target)
+        assert ask_command.inline_request is True
+        assert ask_command.artifact_request is False
         return AskSummary(
             project_id=context.project.project_id,
             submission_id=None,
@@ -5803,16 +6204,24 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
     payload = loop_runner_once(
         context,
         command,
-        services=SimpleNamespace(submit_ask=fake_submit_before_route, loop_run_once=forbidden_loop_run_once),
+        services=SimpleNamespace(
+            submit_ask=fake_submit_before_route,
+            clear_agent_context=fake_clear_agent_context,
+            loop_run_once=forbidden_loop_run_once,
+        ),
     )
     assert payload['action'] == 'activated_orchestrator'
     assert seen == ['orchestrator']
+    assert payload['freshness']['status'] == 'cleared'
+    assert cleared == ['orchestrator']
 
     _import_orchestration_notes(context, project_root, task_id='task-detail', route='needs_detail')
 
     def fake_submit_detailer(_context, ask_command):
         seen.append(ask_command.target)
         assert ask_command.target == 'task_detailer'
+        assert ask_command.inline_request is True
+        assert ask_command.artifact_request is False
         assert 'Artifact refs:' in ask_command.message
         return AskSummary(
             project_id=context.project.project_id,
@@ -5823,13 +6232,19 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
     payload = loop_runner_once(
         context,
         command,
-        services=SimpleNamespace(submit_ask=fake_submit_detailer, loop_run_once=forbidden_loop_run_once),
+        services=SimpleNamespace(
+            submit_ask=fake_submit_detailer,
+            clear_agent_context=fake_clear_agent_context,
+            loop_run_once=forbidden_loop_run_once,
+        ),
     )
     assert payload['loop_runner_status'] == 'ok'
     assert payload['action'] == 'activated_task_detailer'
     assert payload['reason'] == 'orchestrator_route_needs_detail'
     assert payload['next_owner'] == 'orchestrator'
     assert seen == ['orchestrator', 'task_detailer']
+    assert payload['freshness']['status'] == 'cleared'
+    assert cleared == ['orchestrator', 'task_detailer']
 
     for kind, filename in (
         ('detail_design', 'detail-design.md'),
@@ -5846,6 +6261,8 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
     def fake_submit_orchestrator_after_detail(_context, ask_command):
         seen.append(ask_command.target)
         assert ask_command.target == 'orchestrator'
+        assert ask_command.inline_request is True
+        assert ask_command.artifact_request is False
         return AskSummary(
             project_id=context.project.project_id,
             submission_id=None,
@@ -5855,11 +6272,151 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
     payload = loop_runner_once(
         context,
         command,
-        services=SimpleNamespace(submit_ask=fake_submit_orchestrator_after_detail, loop_run_once=forbidden_loop_run_once),
+        services=SimpleNamespace(
+            submit_ask=fake_submit_orchestrator_after_detail,
+            clear_agent_context=fake_clear_agent_context,
+            loop_run_once=forbidden_loop_run_once,
+        ),
     )
     assert payload['action'] == 'activated_orchestrator'
     assert payload['reason'] == 'orchestrator_route_needs_detail_detail_ready'
     assert seen == ['orchestrator', 'task_detailer', 'orchestrator']
+    assert payload['freshness']['status'] == 'cleared'
+    assert cleared == ['orchestrator', 'task_detailer', 'orchestrator']
+
+
+def test_loop_runner_detailer_prompt_preserves_detail_ready_stop_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        task_packet_text=(
+            '# Task: L3 needs-detail stop at detail_ready\n'
+            'Route: needs_detail\n'
+            'This validation case must preserve the needs_detail route and stop at detail_ready.\n'
+        ),
+        execution_contract_text=(
+            '# Execution Contract\n'
+            'Route: needs_detail\n'
+            'The controller-visible task outcome remains detail_ready.\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(
+        context,
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        route='needs_detail',
+        text='route: needs_detail\nscript-owned route authority must stop at detail_ready\n',
+    )
+    seen: dict[str, object] = {}
+
+    def fake_submit_detailer(_context, ask_command):
+        seen['target'] = ask_command.target
+        seen['message'] = ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('needs_detail task must not execute while collecting task details')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, loop_run_once=forbidden_loop_run_once),
+    )
+
+    assert payload['action'] == 'activated_task_detailer'
+    assert seen['target'] == 'task_detailer'
+    message = str(seen['message'])
+    assert 'Compact artifacts:' in message
+    assert 'This validation case must preserve the needs_detail route and stop at detail_ready.' in message
+    assert 'Detail-ready stop contract:' in message
+    assert 'controller-visible stop/status detail_ready' in message
+    assert 'use "detail readiness recommendation: detail_ready"' in message
+    assert 'Do not downgrade to needs_clarification' in message
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    contract = activation['detail_ready_stop_contract']
+    assert contract['status'] == 'detail_ready'
+    assert {item['kind'] for item in contract['evidence']} == {
+        'execution_contract',
+        'orchestration_notes',
+        'task_packet',
+    }
+
+
+def test_loop_runner_task_detailer_inline_prompt_stays_under_mailbox_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    long_middle = 'middle detail that should be compacted\n' * 160
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-long-detail',
+        task_packet_text=(
+            '# Task: Clarify external sync integration requirements\n'
+            'Route: needs_detail\n'
+            f'{long_middle}'
+            'Blockers:\n'
+            '- External system API protocol is not specified.\n'
+            '- Authentication scheme is not specified.\n'
+            '- Retry and idempotency semantics are not specified.\n'
+        ),
+        execution_contract_text=(
+            '# Execution Contract\n'
+            'Route: needs_detail\n'
+            f'{long_middle}'
+            'Verification tail: confirm mocks cover auth failure and retryable failure.\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(
+        context,
+        project_root,
+        task_id='task-long-detail',
+        route='needs_detail',
+        text=(
+            'route: needs_detail\n'
+            f'{long_middle}'
+            'orchestration tail: implementation is not authorized until missing API details are clarified.\n'
+        ),
+    )
+    seen: dict[str, object] = {}
+
+    def fake_submit_detailer(_context, ask_command):
+        seen['target'] = ask_command.target
+        seen['message'] = ask_command.message
+        assert ask_command.inline_request is True
+        assert ask_command.artifact_request is False
+        assert len(ask_command.message.encode('utf-8')) < 4096
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer),
+    )
+
+    assert payload['action'] == 'activated_task_detailer'
+    assert seen['target'] == 'task_detailer'
+    message = str(seen['message'])
+    assert 'Clarify external sync integration requirements' in message
+    assert 'External system API protocol is not specified.' in message
+    assert 'orchestration tail: implementation is not authorized' in message
+    assert "'truncated': True" in message
 
 
 def test_loop_runner_imports_task_detailer_reply_once_and_settles_detail_ready(
@@ -6025,6 +6582,576 @@ macro_adjustment_request: none
     design_path = project_root / shown['task']['artifacts']['detail_design']['path']
     assert '# Task Detail Design' in design_path.read_text(encoding='utf-8')
     assert 'Brief Update Summary' not in design_path.read_text(encoding='utf-8')
+
+
+def test_loop_runner_imports_task_detailer_artifact_heading_fenced_sections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='phase6b-l3-needs-detail')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='phase6b-l3-needs-detail', route='needs_detail')
+
+    def fake_submit_detailer(_context, ask_command):
+        assert ask_command.target == 'task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""Detail readiness recommendation: `detail_ready`
+
+## Artifact: `task-detail-design.md`
+
+```markdown
+# Task Detail Design
+
+The missing detail has been resolved without authorizing direct implementation.
+```
+
+## Artifact: `brief-update-summary.md`
+
+```markdown
+# Brief Update Summary
+
+The task is now detailed enough for planner follow-up.
+```
+
+## Artifact: `detail-packet.md`
+
+```markdown
+# Detail Packet
+
+detail_readiness_recommendation: `detail_ready`
+```
+""",
+    )
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+
+    assert second['action'] == 'imported_task_detailer_detail_authority'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l3-needs-detail'))
+    assert shown['task']['status'] == 'detail_ready'
+    design_path = project_root / shown['task']['artifacts']['detail_design']['path']
+    design = design_path.read_text(encoding='utf-8')
+    assert '# Task Detail Design' in design
+    assert 'Brief Update Summary' not in design
+
+
+def test_loop_runner_task_detailer_artifact_heading_needs_clarification_is_not_detail_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='external-sync-contract')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='external-sync-contract', route='needs_detail')
+
+    def fake_submit_detailer(_context, ask_command):
+        assert ask_command.target == 'task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""Detail readiness recommendation: `needs_clarification`
+
+## Artifact: `task-detail-design.md`
+
+```markdown
+# Task Detail Design
+
+External API, auth, data mapping, and sync policy are not specified.
+```
+
+## Artifact: `brief-update-summary.md`
+
+```markdown
+# Brief Update Summary
+
+Clarification is still required before implementation.
+```
+
+## Artifact: `detail-packet.md`
+
+```markdown
+# Detail Packet
+
+detail status: needs_clarification
+```
+""",
+    )
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+
+    assert second['action'] == 'imported_task_detailer_clarification_authority'
+    assert second['loop_runner_status'] == 'paused'
+    assert second['task_status'] == 'needs_clarification'
+    assert second['next_owner'] == 'task_detailer'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='external-sync-contract'))
+    assert shown['task']['status'] == 'needs_clarification'
+    assert shown['task']['owner'] == 'task_detailer'
+    assert shown['task']['next_owner'] == 'task_detailer'
+    assert shown['task']['artifacts']['detail_design']['actor']['job_id'] == 'job_task_detailer'
+    design_path = project_root / shown['task']['artifacts']['detail_design']['path']
+    assert 'External API, auth' in design_path.read_text(encoding='utf-8')
+
+
+def test_loop_runner_imports_task_detailer_detail_readiness_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='phase6b-l3-needs-detail')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='phase6b-l3-needs-detail', route='needs_detail')
+
+    def fake_submit_detailer(_context, ask_command):
+        assert ask_command.target == 'task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""## task-detail-design.md
+
+# L3 Provider Readiness Detail Design
+
+Task: `phase6b-l3-needs-detail`
+Recommendation: `detail_ready`
+
+## Resolved Scope
+
+Create only `lab_docs/l3_provider_readiness.md`.
+
+## brief-update-summary.md
+
+L3 is detail-ready. No macro adjustment is required.
+
+## detail-packet.md
+
+detail_readiness_recommendation: `detail_ready`
+macro_adjustment_request: none
+authorized_follow_on_route: `direct_execution`
+""",
+    )
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+
+    assert second['action'] == 'imported_task_detailer_detail_authority'
+    assert second['task_status'] == 'detail_ready'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l3-needs-detail'))
+    assert shown['task']['status'] == 'detail_ready'
+
+
+def test_loop_runner_imports_task_detailer_controller_expected_stop_detail_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        task_packet_text=(
+            '# Task: L3 deployment-readiness needs-detail stop\n'
+            'Route: needs_detail\n'
+            'Expected stop: detail_ready\n'
+            'No worker implementation is authorized for this validation case.\n'
+        ),
+        execution_contract_text=(
+            '# Execution Contract\n'
+            'Route: needs_detail\n'
+            'Readiness: needs_clarification\n'
+            'The controller should stop this case at detail_ready.\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(
+        context,
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        route='needs_detail',
+        text='route: needs_detail\nscript-owned route authority must stop at detail_ready\n',
+    )
+
+    def fake_submit_detailer(_context, ask_command):
+        assert ask_command.target == 'task_detailer'
+        assert 'Detail-ready stop contract' in ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""**task-detail-design.md**
+```markdown
+# Task Detail Design: phase6b-l3-needs-detail
+
+## Recommendation
+detail_readiness: needs_clarification
+controller_expected_stop: detail_ready
+
+## Design
+Do not authorize implementation for this task. Preserve the route as `needs_detail`.
+```
+
+**brief-update-summary.md**
+```markdown
+# Brief Update Summary
+
+This remains a needs-detail validation case with a controller-level detail_ready stop.
+```
+
+**detail-packet.md**
+```markdown
+# Detail Packet Manifest
+
+task_id: phase6b-l3-needs-detail
+route: needs_detail
+detail_readiness_recommendation: needs_clarification
+controller_expected_stop: detail_ready
+implementation_authorized: false
+allowed_paths: []
+```
+""",
+    )
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+
+    assert second['action'] == 'imported_task_detailer_detail_authority'
+    assert second['task_status'] == 'detail_ready'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l3-needs-detail'))
+    assert shown['task']['status'] == 'detail_ready'
+    assert shown['task']['next_owner'] == 'planner'
+
+
+def test_loop_runner_task_detailer_blocked_reply_does_not_reactivate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='phase6b-l3-needs-detail')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='phase6b-l3-needs-detail', route='needs_detail')
+    submitted: list[str] = []
+
+    def fake_submit_detailer(_context, ask_command):
+        submitted.append(ask_command.target)
+        assert ask_command.target == 'task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""## task-detail-design.md
+
+Design exists, but this activation has no explicit detail-ready stop contract.
+readiness: needs_clarification
+controller_expected_stop: detail_ready
+
+## brief-update-summary.md
+
+Summary exists.
+
+## detail-packet.md
+
+detail_readiness_recommendation: needs_clarification
+controller_expected_stop: detail_ready
+macro_adjustment_request: none
+""",
+    )
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert second['action'] == 'imported_task_detailer_clarification_authority'
+    assert second['loop_runner_status'] == 'paused'
+    assert second['task_status'] == 'needs_clarification'
+    assert second['next_owner'] == 'task_detailer'
+
+    def forbidden_submit(*_args, **_kwargs):
+        raise AssertionError('needs_clarification task_detailer output must not submit a duplicate task_detailer ask')
+
+    third = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=forbidden_submit, plan_task=plan_task),
+    )
+    assert third['action'] == 'paused'
+    assert third['reason'] == 'needs_clarification'
+    assert third['next_owner'] == 'task_detailer'
+    assert submitted == ['task_detailer']
+
+
+def test_loop_runner_task_detailer_terminal_blocker_imports_task_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='external-contract-detail')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='external-contract-detail', route='needs_detail')
+    submitted: list[str] = []
+
+    def fake_submit_detailer(_context, ask_command):
+        submitted.append(ask_command.target)
+        assert ask_command.target == 'task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""detail readiness recommendation: blocked
+
+**task-detail-design.md**
+
+The task cannot be refined into implementation until the approved external API contract exists.
+
+**brief-update-summary.md**
+
+The task remains blocked on missing external integration details.
+
+**detail-packet.md**
+
+detail status: blocked
+
+## Worker Handoff
+
+Do not dispatch implementation. Obtain approved API/auth/source evidence first.
+""",
+    )
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert second['action'] == 'imported_task_detailer_blocker_authority'
+    assert second['task_status'] == 'blocked'
+    assert second['next_owner'] == 'terminal'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='external-contract-detail'))
+    assert shown['task']['status'] == 'blocked'
+    assert shown['task']['next_owner'] == 'terminal'
+    artifacts = shown['task']['artifacts']
+    assert artifacts['blocker_evidence']['actor']['job_id'] == 'job_task_detailer'
+    assert artifacts['detail_design']['actor']['job_id'] == 'job_task_detailer'
+    assert artifacts['detail_summary']['actor']['job_id'] == 'job_task_detailer'
+    assert artifacts['detail_packet']['actor']['job_id'] == 'job_task_detailer'
+
+    def forbidden_submit(*_args, **_kwargs):
+        raise AssertionError('terminal task_detailer blocker must not submit a duplicate task_detailer ask')
+
+    third = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=forbidden_submit, plan_task=plan_task),
+    )
+    assert third['action'] in {'role_output_already_consumed', 'blocked'}
+    assert submitted == ['task_detailer']
+
+
+def test_loop_runner_skips_duplicate_task_detailer_output_after_detail_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='phase6b-l3-needs-detail')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='phase6b-l3-needs-detail', route='needs_detail')
+
+    def fake_submit_detailer(_context, ask_command):
+        assert ask_command.target == 'task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert first['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""**task-detail-design.md**
+
+Original detail design.
+
+**brief-update-summary.md**
+
+Original summary.
+
+**detail-packet.md**
+
+Readiness recommendation: `detail_ready`
+""",
+    )
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert second['action'] == 'imported_task_detailer_detail_authority'
+
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-duplicate-detailer.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_task_detailer_activation',
+            'activation_id': 'act-duplicate-detailer',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'task_id': 'phase6b-l3-needs-detail',
+            'task_status': 'ready_for_orchestration',
+            'action': 'activate_task_detailer',
+            'reason_for_activation': 'orchestrator_route_needs_detail',
+            'ask': {
+                'target': 'task_detailer',
+                'job_id': 'job_duplicate_task_detailer',
+                'status': 'accepted',
+            },
+        },
+    )
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_duplicate_task_detailer',
+        agent_name='task_detailer',
+        reply="""**task-detail-design.md**
+
+Duplicate detail design that must not replace authority.
+
+**brief-update-summary.md**
+
+Duplicate summary.
+
+**detail-packet.md**
+
+Readiness recommendation: `detail_ready`
+""",
+    )
+
+    def fake_submit_after_detail_ready(_context, ask_command):
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': f'job_{ask_command.target}', 'agent_name': ask_command.target, 'status': 'submitted'},),
+        )
+
+    third = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_after_detail_ready, plan_task=plan_task),
+    )
+
+    assert third['action'] != 'imported_task_detailer_detail_authority'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l3-needs-detail'))
+    assert shown['task']['artifacts']['detail_design']['actor']['job_id'] == 'job_task_detailer'
+    detail_design = project_root / shown['task']['artifacts']['detail_design']['path']
+    assert 'Original detail design' in detail_design.read_text(encoding='utf-8')
+    trace = (project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl').read_text(encoding='utf-8')
+    assert 'job_duplicate_task_detailer' not in trace
 
 
 def test_loop_runner_unscoped_needs_detail_route_preempts_prior_replan_task(
@@ -6497,6 +7624,7 @@ def test_loop_runner_once_activates_planner_for_draft_task(
         seen['sender'] = ask_command.sender
         seen['task_id'] = ask_command.task_id
         seen['artifact_request'] = ask_command.artifact_request
+        seen['inline_request'] = ask_command.inline_request
         seen['message'] = ask_command.message
         return AskSummary(
             project_id=context.project.project_id,
@@ -6507,10 +7635,17 @@ def test_loop_runner_once_activates_planner_for_draft_task(
     def forbidden_loop_run_once(*_args, **_kwargs):
         raise AssertionError('draft task must not start execution')
 
+    def forbidden_clear_agent_context(*_args, **_kwargs):
+        raise AssertionError('planner is a long-lived context role and must not be cleared before activation')
+
     payload = loop_runner_once(
         context,
         command,
-        services=SimpleNamespace(submit_ask=fake_submit_ask, loop_run_once=forbidden_loop_run_once),
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            clear_agent_context=forbidden_clear_agent_context,
+            loop_run_once=forbidden_loop_run_once,
+        ),
     )
 
     assert payload['loop_runner_status'] == 'ok'
@@ -6521,13 +7656,16 @@ def test_loop_runner_once_activates_planner_for_draft_task(
     assert payload['ask']['job_id'] == 'job_planner'
     assert seen['target'] == 'planner'
     assert seen['sender'] == 'system'
-    assert seen['artifact_request'] is True
+    assert seen['artifact_request'] is False
+    assert seen['inline_request'] is True
     assert 'Status: draft' in str(seen['message'])
     assert 'Optional machine import bundle' not in str(seen['message'])
     assert 'ccb.loop.planner_artifact_bundle/v1' not in str(seen['message'])
     activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
     assert activation['task_id'] == 'task-draft'
     assert activation['ask']['job_id'] == 'job_planner'
+    assert 'freshness' not in activation
+    assert 'freshness' not in payload
     assert activation['script_write_rules']
     script_write_rules = '\n'.join(str(rule) for rule in activation['script_write_rules'])
     assert 'Reply only; do not run ccb, ccb_test, artifact import commands, or wrapper commands.' in script_write_rules
@@ -6535,6 +7673,65 @@ def test_loop_runner_once_activates_planner_for_draft_task(
     assert 'ccb plan task-artifact' not in script_write_rules
     assert 'ccb plan task-status' not in script_write_rules
     assert 'Use ccb plan' not in script_write_rules
+
+
+def test_loop_runner_once_activates_plan_reviewer_without_immaculate_clear(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'task-review'
+    artifacts: dict[str, dict[str, object]] = {}
+    for kind, filename in (
+        ('requirements', 'requirements.md'),
+        ('acceptance', 'acceptance-criteria.md'),
+        ('verification', 'verification-contract.md'),
+        ('handoff', 'handoff.md'),
+    ):
+        path = task_root / filename
+        _write(path, f'{kind} text\n')
+        artifacts[kind] = {
+            'kind': kind,
+            'path': str(path.relative_to(project_root)),
+            'source_path': str(path.relative_to(project_root)),
+            'sha256': 'test',
+            'bytes': len(f'{kind} text\n'.encode('utf-8')),
+            'imported_at': '2026-06-27T00:00:00Z',
+        }
+    _add_plan_task_record(project_root, task_id='task-review', status='draft', artifacts=artifacts)
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    seen: dict[str, object] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        seen['target'] = ask_command.target
+        seen['sender'] = ask_command.sender
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_plan_reviewer', 'agent_name': 'plan_reviewer', 'status': 'submitted'},),
+        )
+
+    def forbidden_clear_agent_context(*_args, **_kwargs):
+        raise AssertionError('plan_reviewer activation must not clear task_detailer or unrelated agents')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            clear_agent_context=forbidden_clear_agent_context,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'activated_plan_reviewer'
+    assert payload['ask']['job_id'] == 'job_plan_reviewer'
+    assert seen == {'target': 'plan_reviewer', 'sender': 'system'}
+    assert 'freshness' not in payload
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['ask']['job_id'] == 'job_plan_reviewer'
+    assert 'freshness' not in activation
 
 
 def test_loop_runner_new_activation_metadata_ignores_legacy_artifact_inference(
@@ -6631,6 +7828,33 @@ Constraints:
 """
 
 
+def _complex_financial_report_frontdesk_intake() -> str:
+    return """**Intake Evidence**
+
+CCB_REQ_ID: `req_frontdesk_financial_report`
+
+Macro request: Turn this expense tracker into a fuller monthly financial report tool.
+
+Scope:
+- `expense_tracker.py`
+- `README.md`
+- `tests/test_expense_tracker.py`
+
+Required behavior:
+- Generate a report for a specified month.
+- Combine ordinary expenses and recurring monthly expenses.
+- Show budget comparison and category trend information.
+- Show over-budget alerts.
+- Export the report as JSON and CSV.
+- Add typical README usage examples.
+- Cover the main usage paths with tests.
+
+Constraints:
+- Planner and runner own task authority and execution.
+- Frontdesk must not implement or mutate CCB authority state.
+"""
+
+
 def _frontdesk_auto_runner_stub(calls: list[dict[str, str]]):
     def fake_start_auto_runner(_context, *, activation_id: str, wait_job_id: str):
         calls.append({'activation_id': activation_id, 'wait_job_id': wait_job_id})
@@ -6693,7 +7917,8 @@ def test_frontdesk_forward_planner_submits_silent_planner_activation(
     assert ask_command.sender == 'frontdesk'
     assert ask_command.silence is True
     assert ask_command.compact is True
-    assert ask_command.artifact_request is True
+    assert ask_command.artifact_request is False
+    assert ask_command.inline_request is True
     assert ask_command.task_id == 'act-frontdesk-req_frontdesk_direct'
     assert 'Frontdesk intake evidence:' in ask_command.message
     assert 'Planner contract: single_task' in ask_command.message
@@ -6710,6 +7935,63 @@ def test_frontdesk_forward_planner_submits_silent_planner_activation(
     assert activation['auto_runner']['wait_job_id'] == 'job_planner_from_frontdesk'
     assert activation['intake_sha256'] == hashlib.sha256(command.intake_text.encode('utf-8')).hexdigest()
     assert not (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'index.json').exists()
+
+
+def test_frontdesk_forward_planner_uses_task_set_contract_for_complex_project_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedFrontdeskCommand(
+        project=None,
+        action='forward-planner',
+        plan_slug='demo-plan',
+        request_id='req_frontdesk_financial_report',
+        intake_text=_complex_financial_report_frontdesk_intake(),
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[ParsedAskCommand] = []
+    auto_runner_calls: list[dict[str, str]] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_planner_financial_report', 'agent_name': 'planner', 'status': 'submitted'},),
+        )
+
+    payload = frontdesk_intake(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            start_auto_runner=_frontdesk_auto_runner_stub(auto_runner_calls),
+        ),
+    )
+
+    assert payload['frontdesk_intake_status'] == 'ok'
+    assert len(submitted) == 1
+    ask_command = submitted[0]
+    assert ask_command.target == 'planner'
+    assert ask_command.sender == 'frontdesk'
+    assert ask_command.silence is True
+    assert 'Planner contract: task_set' in ask_command.message
+    assert '**task-set.json**' in ask_command.message
+    assert '**task-packet.md**' not in ask_command.message
+    assert 'phase6b-' not in ask_command.message
+    assert 'one task object for each bounded task requested by frontdesk' in ask_command.message
+    assert 'execution_contract must declare Allowed Change Paths matching allowed_paths' in ask_command.message
+    assert 'Do not collapse this into a controller-owned validation task' in ask_command.message
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['planner_contract'] == 'task_set'
+    assert activation['expected_task_ids'] == []
+    assert activation['required_next_output'] == 'reply-only task-set.json with bounded planner tasks for supervisor-owned import'
+    assert any('Return exactly one fenced **task-set.json** section' in rule for rule in activation['script_write_rules'])
+    assert auto_runner_calls == [
+        {'activation_id': 'act-frontdesk-req_frontdesk_financial_report', 'wait_job_id': 'job_planner_financial_report'}
+    ]
 
 
 def test_frontdesk_forward_planner_uses_task_set_contract_for_route_mix(
@@ -6756,13 +8038,100 @@ def test_frontdesk_forward_planner_uses_task_set_contract_for_route_mix(
     assert '**task-set.json**' in ask_command.message
     assert '**task-packet.md**' not in ask_command.message
     assert 'Do not collapse this into a controller-owned validation task' in ask_command.message
+    assert 'Use exactly these task_id values, once each, and no other task_id values' in ask_command.message
+    assert 'Do not require git diff, git status, or any git-only scope check' in ask_command.message
+    assert 'Scope verification must be repo-independent' in ask_command.message
+    assert 'phase6b-l3-needs-detail' in ask_command.message
+    assert 'phase6b-l3-needs-detail-detail-ready' not in ask_command.message
     activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
     assert activation['planner_contract'] == 'task_set'
-    assert activation['required_next_output'] == 'reply-only task-set.json with bounded planner tasks for supervisor-owned import'
+    assert activation['required_next_output'] == 'reply-only task-set.json with exact bounded task IDs for supervisor-owned import'
+    assert activation['expected_task_ids'] == [
+        'phase6b-l1-doc-direct-execution',
+        'phase6b-l2-code-test-direct-execution',
+        'phase6b-l3-needs-detail',
+        'phase6b-l4-macro-adjustment-request',
+        'phase6b-l4-blocked-prerequisite',
+    ]
     assert any('Return exactly one fenced **task-set.json** section' in rule for rule in activation['script_write_rules'])
+    assert any('Use exactly these task_id values and no others' in rule for rule in activation['script_write_rules'])
+    assert any('Do not require git diff, git status, or any git-only scope check' in rule for rule in activation['script_write_rules'])
     assert auto_runner_calls == [
         {'activation_id': 'act-frontdesk-req_frontdesk_route_mix', 'wait_job_id': 'job_planner_route_mix'}
     ]
+
+
+def test_frontdesk_forward_planner_uses_exact_ids_for_reworded_l1_l4_route_mix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    intake_text = """**Intake Evidence**
+
+CCB_REQ_ID: `req_frontdesk_route_mix_reworded`
+
+Macro request: Start a fresh real-provider L1-L4 deployment-readiness route-mix validation.
+
+Scope:
+- Controller-owned route-mix validation workflow for the lab project.
+- Bounded L1-L4 task set prepared and routed by planner/orchestrator.
+
+Required behavior:
+- Include L1 document-only direct execution.
+- Include L2 code-and-test direct execution.
+- Include L3 needs-detail case stopping at `detail_ready`.
+- Include L4 macro-adjustment case stopping at `replan_required`.
+- Include L4 blocked-prerequisite case remaining blocked.
+
+Constraints:
+- Treat as controller-owned route-mix validation, not worker implementation.
+- Do not ask workers to run the retest harness, generate B7 reports, write evidence rows, clean up runtime, or modify plan authority files.
+"""
+    command = ParsedFrontdeskCommand(
+        project=None,
+        action='forward-planner',
+        plan_slug='demo-plan',
+        request_id='req_frontdesk_route_mix_reworded',
+        intake_text=intake_text,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[ParsedAskCommand] = []
+    auto_runner_calls: list[dict[str, str]] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_planner_route_mix_reworded', 'agent_name': 'planner', 'status': 'submitted'},),
+        )
+
+    payload = frontdesk_intake(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            start_auto_runner=_frontdesk_auto_runner_stub(auto_runner_calls),
+        ),
+    )
+
+    expected_task_ids = [
+        'phase6b-l1-doc-direct-execution',
+        'phase6b-l2-code-test-direct-execution',
+        'phase6b-l3-needs-detail',
+        'phase6b-l4-macro-adjustment-request',
+        'phase6b-l4-blocked-prerequisite',
+    ]
+    assert payload['frontdesk_intake_status'] == 'ok'
+    assert len(submitted) == 1
+    for task_id in expected_task_ids:
+        assert task_id in submitted[0].message
+    assert 'Do not append route/status suffixes' in submitted[0].message
+    assert 'Do not require git diff, git status, or any git-only scope check' in submitted[0].message
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['expected_task_ids'] == expected_task_ids
+    assert activation['required_next_output'] == 'reply-only task-set.json with exact bounded task IDs for supervisor-owned import'
 
 
 def test_frontdesk_forward_planner_live_auto_runner_lock_records_existing_runner_without_spawn(
@@ -7141,6 +8510,253 @@ def test_frontdesk_forward_planner_accepts_base64_input_without_stdin(
     ]
 
 
+def test_frontdesk_forward_planner_cli_proxies_to_mounted_daemon_without_local_runtime_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    intake_text = _valid_frontdesk_intake()
+    command = ParsedFrontdeskCommand(
+        project=None,
+        action='forward-planner',
+        plan_slug='demo-plan',
+        request_id='req_frontdesk_daemon_proxy',
+        intake_base64=base64.b64encode(intake_text.encode('utf-8')).decode('ascii'),
+        intake_text='',
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    socket_path = Path(context.paths.ccbd_socket_path)
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    socket_path.write_text('not-a-real-socket\n', encoding='utf-8')
+    client_calls: list[dict[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, path):
+            client_calls.append({'socket_path': str(path)})
+
+        def frontdesk_forward_planner(self, **payload):
+            client_calls.append({'payload': payload})
+            return {
+                'schema_version': 1,
+                'record_type': 'ccb_frontdesk_intake',
+                'frontdesk_intake_status': 'ok',
+                'project_id': context.project.project_id,
+                'project_root': str(project_root),
+                'action': 'forwarded_to_planner',
+                'request_id': payload['request_id'],
+                'activation_id': 'act-frontdesk-req_frontdesk_daemon_proxy',
+                'planner_job_id': 'job_planner_daemon_proxy',
+                'silence': True,
+            }
+
+    monkeypatch.setattr(frontdesk_intake_command_module, 'CcbdClient', FakeClient)
+
+    payload = frontdesk_intake_command(context, command, services=SimpleNamespace())
+
+    assert payload['frontdesk_intake_status'] == 'ok'
+    assert payload['planner_job_id'] == 'job_planner_daemon_proxy'
+    assert client_calls[0] == {'socket_path': str(socket_path)}
+    assert client_calls[1]['payload']['request_id'] == 'req_frontdesk_daemon_proxy'
+    assert client_calls[1]['payload']['intake_base64'] == command.intake_base64
+    assert not (
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-frontdesk-req_frontdesk_daemon_proxy.json'
+    ).exists()
+
+
+def test_frontdesk_forward_planner_daemon_handler_writes_activation_and_submits_planner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').mkdir(parents=True)
+    submitted: list[object] = []
+    auto_runner_calls: list[dict[str, str]] = []
+
+    class FakeDispatcher:
+        _layout = PathLayout(project_root)
+
+        def submit(self, envelope):
+            submitted.append(envelope)
+            return SubmitReceipt(
+                accepted_at='2026-07-09T00:00:00Z',
+                jobs=(
+                    AcceptedJobReceipt(
+                        job_id='job_planner_daemon_handler',
+                        agent_name='planner',
+                        status=JobStatus.QUEUED,
+                        accepted_at='2026-07-09T00:00:00Z',
+                    ),
+                ),
+            )
+
+    handler = build_frontdesk_forward_planner_handler(
+        FakeDispatcher(),
+        start_auto_runner=_frontdesk_auto_runner_stub(auto_runner_calls),
+    )
+    payload = handler(
+        {
+            'plan_slug': 'demo-plan',
+            'request_id': 'req_frontdesk_daemon_handler',
+            'intake_base64': base64.b64encode(_valid_frontdesk_intake().encode('utf-8')).decode('ascii'),
+            'json_output': True,
+        }
+    )
+
+    assert payload['frontdesk_intake_status'] == 'ok'
+    assert payload['action'] == 'forwarded_to_planner'
+    assert payload['planner_job_id'] == 'job_planner_daemon_handler'
+    assert auto_runner_calls == [
+        {'activation_id': 'act-frontdesk-req_frontdesk_daemon_handler', 'wait_job_id': 'job_planner_daemon_handler'}
+    ]
+    assert len(submitted) == 1
+    envelope = submitted[0]
+    assert envelope.to_agent == 'planner'
+    assert envelope.from_actor == 'frontdesk'
+    assert envelope.task_id == 'act-frontdesk-req_frontdesk_daemon_handler'
+    assert envelope.silence_on_success is True
+    assert envelope.route_options == {}
+    assert envelope.body_artifact is None
+    assert 'Frontdesk intake evidence:' in envelope.body
+    assert 'CCB ask request was stored as an artifact' not in envelope.body
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['status'] == 'planner_submitted'
+    assert activation['ask']['job_id'] == 'job_planner_daemon_handler'
+
+
+def test_frontdesk_session_observer_handoffs_latest_codex_intake_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').mkdir(parents=True)
+    session_jsonl = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / 'frontdesk'
+        / 'provider-state'
+        / 'codex'
+        / 'home'
+        / 'sessions'
+        / '2026'
+        / '07'
+        / '09'
+        / 'rollout.jsonl'
+    )
+    session_jsonl.parent.mkdir(parents=True)
+    intake_text = _valid_frontdesk_intake()
+    _write(
+        session_jsonl,
+        json.dumps(
+            {
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'task_complete',
+                    'turn_id': 'turn_frontdesk_observer_1',
+                    'last_agent_message': intake_text,
+                },
+            }
+        )
+        + '\n',
+    )
+    session_info = project_root / '.ccb' / '.codex-frontdesk-session'
+    _write_json(session_info, {'codex_session_path': str(session_jsonl)})
+    submitted: list[object] = []
+    auto_runner_calls: list[dict[str, str]] = []
+
+    class FakeRegistry:
+        def get(self, agent_name):
+            assert agent_name == 'frontdesk'
+            return SimpleNamespace(provider='codex', session_file=str(session_info))
+
+    class FakeDispatcher:
+        _layout = PathLayout(project_root)
+
+        def submit(self, envelope):
+            submitted.append(envelope)
+            return SubmitReceipt(
+                accepted_at='2026-07-09T00:00:00Z',
+                jobs=(
+                    AcceptedJobReceipt(
+                        job_id='job_planner_observed_frontdesk',
+                        agent_name='planner',
+                        status=JobStatus.QUEUED,
+                        accepted_at='2026-07-09T00:00:00Z',
+                    ),
+                ),
+            )
+
+    app = SimpleNamespace(
+        paths=PathLayout(project_root),
+        registry=FakeRegistry(),
+        dispatcher=FakeDispatcher(),
+        clock=lambda: '2026-07-09T00:00:00Z',
+        frontdesk_observer_start_auto_runner=_frontdesk_auto_runner_stub(auto_runner_calls),
+    )
+
+    first = observe_frontdesk_session(app)
+    second = observe_frontdesk_session(app)
+
+    assert first['status'] == 'ok'
+    assert first['turn_id'] == 'turn_frontdesk_observer_1'
+    assert first['frontdesk_intake']['frontdesk_intake_status'] == 'ok'
+    assert first['frontdesk_intake']['planner_job_id'] == 'job_planner_observed_frontdesk'
+    assert second is None
+    assert len(submitted) == 1
+    assert submitted[0].to_agent == 'planner'
+    assert submitted[0].from_actor == 'frontdesk'
+    assert submitted[0].silence_on_success is True
+    assert auto_runner_calls == [
+        {'activation_id': 'act-frontdesk-req_frontdesk_direct', 'wait_job_id': 'job_planner_observed_frontdesk'}
+    ]
+    state = json.loads(
+        (project_root / '.ccb' / 'runtime' / 'frontdesk-session-observer' / 'state.json').read_text(encoding='utf-8')
+    )
+    assert state['turn_id'] == 'turn_frontdesk_observer_1'
+    activation = json.loads(
+        (
+            project_root
+            / '.ccb'
+            / 'runtime'
+            / 'loops'
+            / 'activations'
+            / 'act-frontdesk-req_frontdesk_direct.json'
+        ).read_text(encoding='utf-8')
+    )
+    assert activation['ask']['job_id'] == 'job_planner_observed_frontdesk'
+
+    with session_jsonl.open('a', encoding='utf-8') as fh:
+        fh.write(
+            json.dumps(
+                {
+                    'type': 'event_msg',
+                    'payload': {
+                        'type': 'task_complete',
+                        'turn_id': 'turn_frontdesk_observer_delivery_notice',
+                        'last_agent_message': '',
+                    },
+                }
+            )
+            + '\n'
+        )
+
+    ignored_after_success = observe_frontdesk_session(app)
+
+    assert ignored_after_success['status'] == 'ok'
+    assert ignored_after_success['turn_id'] == 'turn_frontdesk_observer_1'
+    assert ignored_after_success['frontdesk_intake']['planner_job_id'] == 'job_planner_observed_frontdesk'
+    assert ignored_after_success['last_observed_turn_id'] == 'turn_frontdesk_observer_delivery_notice'
+    assert ignored_after_success['last_ignored']['turn_id'] == 'turn_frontdesk_observer_delivery_notice'
+    assert len(submitted) == 1
+    state = json.loads(
+        (project_root / '.ccb' / 'runtime' / 'frontdesk-session-observer' / 'state.json').read_text(encoding='utf-8')
+    )
+    assert state['status'] == 'ok'
+    assert state['frontdesk_intake']['planner_job_id'] == 'job_planner_observed_frontdesk'
+    assert state['last_ignored']['reason'] == 'frontdesk_reply_not_intake_evidence'
+
+
 def test_frontdesk_forward_planner_rejects_mixed_base64_and_stdin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7290,6 +8906,27 @@ Verification:
         project_root / artifacts['execution_contract']['path']
     ).read_text(encoding='utf-8')
 
+    replay_payload = loop_runner_once(
+        context,
+        ParsedLoopRunnerCommand(
+            project=None,
+            once=True,
+            plan_slug='demo-plan',
+            role_job_id='job_planner',
+            consume_role_output=True,
+            json_output=True,
+        ),
+        services=SimpleNamespace(submit_ask=fake_submit_ask, plan_task=plan_task),
+    )
+    assert replay_payload['action'] == 'role_output_already_consumed'
+    assert replay_payload['consumed_action'] == 'imported_planner_task_authority'
+    assert replay_payload['job_id'] == 'job_planner'
+    assert replay_payload['agent_name'] == 'planner'
+    assert replay_payload['task_id'] == task_id
+    assert replay_payload['task_status'] == 'ready_for_orchestration'
+    assert replay_payload['next_owner'] == 'orchestrator'
+    assert replay_payload['next_activation'] == 'orchestrator'
+
     payload = loop_runner_once(
         context,
         ParsedLoopRunnerCommand(project=None, once=True, json_output=True),
@@ -7407,6 +9044,8 @@ Constraints: Frontdesk must not mutate CCB authority; planner will create task a
     assert payload['action'] == 'frontdesk_handoff_already_started'
     assert payload['next_activation'] == 'stop_after_existing_frontdesk_handoff'
     assert payload['handoff']['plan_slug'] == 'frontdesk-intake'
+    assert payload['ask']['job_id'] == 'job_planner_from_frontdesk'
+    assert payload['planner_job_id'] == 'job_planner_from_frontdesk'
     assert payload['handoff_result']['planner_job_id'] == 'job_planner_from_frontdesk'
     assert not (project_root / 'docs' / 'plantree' / 'plans' / 'deploy-dynamic-unload-stress').exists()
     imports = [
@@ -7430,6 +9069,29 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
         json_output=True,
     )
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write(project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'README.md', '# Demo Plan\n')
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-create',
+            plan_slug='demo-plan',
+            title='Frontdesk route mix intake',
+            task_id='route-mix-intake',
+        ),
+    )
+    _write(
+        project_root / '.ccb' / 'agents' / 'frontdesk' / 'jobs.jsonl',
+        json.dumps(
+            {
+                'job_id': 'job_frontdesk_route_mix',
+                'agent_name': 'frontdesk',
+                'request': {'task_id': 'route-mix-intake'},
+                'status': 'accepted',
+            },
+            ensure_ascii=False,
+        )
+        + '\n',
+    )
     _write_json(
         project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-route-mix.json',
         {
@@ -7441,6 +9103,7 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
             'action': 'activate_planner_from_frontdesk',
             'plan_slug': 'demo-plan',
             'planner_contract': 'task_set',
+            'source_job': {'job_id': 'job_frontdesk_route_mix', 'agent_name': 'frontdesk'},
             'source_intake': {'preview': _route_mix_frontdesk_intake()[:400]},
             'ask': {
                 'target': 'planner',
@@ -7456,6 +9119,7 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
             'route': 'direct_execution',
             'readiness': 'ready',
             'task_packet': '# Task: L1 documentation direct execution\nRoute: direct_execution\n',
+            'execution_contract': '# Execution Contract\nRoute: direct_execution\n\nCreate the L1 documentation file.\n',
             'allowed_paths': ['docs/l1-smoke.md'],
             'verification': ['test -f docs/l1-smoke.md'],
             'blockers': [],
@@ -7518,6 +9182,8 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
     assert payload['planner_contract'] == 'task_set'
     assert payload['task_count'] == 5
     assert payload['task_ids'] == expected_task_ids
+    assert payload['source_task_settlement']['status'] == 'done'
+    assert payload['source_task_settlement']['task_id'] == 'route-mix-intake'
     for task_id in expected_task_ids:
         shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
         assert shown['task']['status'] == 'ready_for_orchestration'
@@ -7528,9 +9194,587 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
         assert set(artifacts) == {'execution_contract', 'task_packet'}
         assert artifacts['task_packet']['actor']['job_id'] == 'job_route_mix_planner'
         assert artifacts['execution_contract']['actor']['source'] == 'loop_runner_role_output_import'
+    l1_contract_path = project_root / plan_task(
+        context,
+        SimpleNamespace(action='task-show', task_id='phase6b-l1-doc-direct-execution'),
+    )['task']['artifacts']['execution_contract']['path']
+    l1_contract = l1_contract_path.read_text(encoding='utf-8')
+    assert 'Allowed Change Paths:' in l1_contract
+    assert '- docs/l1-smoke.md' in l1_contract
     trace = (project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl').read_text(encoding='utf-8')
     assert 'imported_planner_task_set_authority' in trace
     assert 'phase6b-l2-code-direct-execution' in trace
+    source = plan_task(context, SimpleNamespace(action='task-show', task_id='route-mix-intake'))
+    assert source['task']['status'] == 'done'
+    assert source['task']['next_owner'] == 'terminal'
+    assert source['task']['activation_reason'] == 'planner_task_set_decomposed_source_task'
+    completion = source['task']['artifacts']['completion']
+    assert completion['actor']['source'] == 'loop_runner_role_output_import'
+    completion_text = (project_root / completion['path']).read_text(encoding='utf-8')
+    assert 'child_task_count: 5' in completion_text
+    assert '- phase6b-l1-doc-direct-execution' in completion_text
+
+
+def test_loop_runner_imports_single_planner_task_settles_frontdesk_source_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_single_planner',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write(project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'README.md', '# Demo Plan\n')
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-create',
+            plan_slug='demo-plan',
+            title='Frontdesk sync intake',
+            task_id='sync-intake',
+        ),
+    )
+    _write(
+        project_root / '.ccb' / 'agents' / 'frontdesk' / 'jobs.jsonl',
+        json.dumps(
+            {
+                'job_id': 'job_frontdesk_single',
+                'agent_name': 'frontdesk',
+                'request': {'task_id': 'sync-intake'},
+                'status': 'accepted',
+            },
+            ensure_ascii=False,
+        )
+        + '\n',
+    )
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-single-planner.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-single-planner',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'single_task',
+            'source_job': {'job_id': 'job_frontdesk_single', 'agent_name': 'frontdesk'},
+            'source_task_id': 'sync-intake',
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_single_planner',
+                'status': 'accepted',
+            },
+        },
+    )
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_single_planner',
+        agent_name='planner',
+        reply=(
+            '**task-packet.md**\n'
+            '```markdown\n'
+            '# Task: Clarify external sync integration requirements\n'
+            'Route: needs_detail\n'
+            'Allowed paths:\n\n'
+            'Verification:\n'
+            '- Clarify external API contract.\n'
+            '```\n\n'
+            '**readiness.json**\n'
+            '```json\n'
+            '{"readiness":"needs_clarification","route":"needs_detail","blockers":["External API unknown"],'
+            '"allowed_paths":[],"verification":["Clarify external API contract."]}\n'
+            '```\n'
+        ),
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'imported_planner_task_authority'
+    assert payload['source_task_settlement']['status'] == 'done'
+    assert payload['source_task_settlement']['task_id'] == 'sync-intake'
+    child_task_id = payload['task_id']
+    assert child_task_id != 'sync-intake'
+    child = plan_task(context, SimpleNamespace(action='task-show', task_id=child_task_id))
+    assert child['task']['status'] == 'ready_for_orchestration'
+    source = plan_task(context, SimpleNamespace(action='task-show', task_id='sync-intake'))
+    assert source['task']['status'] == 'done'
+    assert source['task']['next_owner'] == 'terminal'
+    assert source['task']['activation_reason'] == 'planner_single_task_handoff_source_task'
+    completion = source['task']['artifacts']['completion']
+    assert completion['actor']['job_id'] == 'job_single_planner'
+    completion_text = (project_root / completion['path']).read_text(encoding='utf-8')
+    assert '# Single Task Handoff Complete' in completion_text
+    assert 'child_task_count: 1' in completion_text
+    assert f'- {child_task_id}' in completion_text
+
+
+def test_loop_runner_single_task_set_exposes_task_id_for_supervisor_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_single_task_set_planner',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-single-task-set.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-single-task-set',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_single_task_set_planner',
+                'status': 'accepted',
+            },
+        },
+    )
+    task = {
+        'task_id': 'local-risk-register-cli',
+        'title': 'Build local project risk register CLI',
+        'route': 'direct_execution',
+        'readiness': 'ready',
+        'task_packet': '# Task: Build local project risk register CLI\nRoute: direct_execution\n',
+        'execution_contract': (
+            '# Execution Contract\n'
+            'Route: direct_execution\n\n'
+            'Implement the CLI.\n\n'
+            'Verification:\n'
+            '- python -m unittest tests/test_risk_register_cli.py\n'
+        ),
+        'allowed_paths': ['scripts/risk_register.py', 'tests/test_risk_register_cli.py', 'README.md'],
+        'verification': ['python -m unittest tests/test_risk_register_cli.py'],
+        'blockers': [],
+    }
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_single_task_set_planner',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': [task]}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['action'] == 'imported_planner_task_set_authority'
+    assert payload['task_count'] == 1
+    assert payload['task_ids'] == ['local-risk-register-cli']
+    assert payload['task_id'] == 'local-risk-register-cli'
+    assert payload['task_status'] == 'ready_for_orchestration'
+    assert payload['next_owner'] == 'orchestrator'
+    assert payload['route'] == 'direct_execution'
+    assert payload['role_output_import']['task_id'] == 'local-risk-register-cli'
+    assert payload['role_output_import']['task_status'] == 'ready_for_orchestration'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='local-risk-register-cli'))
+    contract = (
+        project_root / shown['task']['artifacts']['execution_contract']['path']
+    ).read_text(encoding='utf-8')
+    assert 'python -m unittest discover -s tests -p test_risk_register_cli.py' in contract
+    assert 'python -m unittest tests/test_risk_register_cli.py' not in contract
+    assert '- scripts/risk_register.py' in contract
+    assert '- tests/test_risk_register_cli.py' in contract
+
+    replay = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert replay['action'] == 'role_output_already_consumed'
+    assert replay['consumed_action'] == 'imported_planner_task_set_authority'
+    assert replay['task_count'] == 1
+    assert replay['task_ids'] == ['local-risk-register-cli']
+    assert replay['task_id'] == 'local-risk-register-cli'
+    assert replay['task_status'] == 'ready_for_orchestration'
+    assert replay['next_owner'] == 'orchestrator'
+    assert replay['next_activation'] == 'orchestrator'
+
+
+def test_loop_runner_blocks_route_mix_task_set_with_drifted_task_ids_before_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_route_mix_planner_drifted_ids',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    expected_task_ids = [
+        'phase6b-l1-doc-direct-execution',
+        'phase6b-l2-code-test-direct-execution',
+        'phase6b-l3-needs-detail',
+        'phase6b-l4-macro-adjustment-request',
+        'phase6b-l4-blocked-prerequisite',
+    ]
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-route-mix.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-route-mix',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'expected_task_ids': expected_task_ids,
+            'source_intake': {'preview': _route_mix_frontdesk_intake()[:400]},
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_route_mix_planner_drifted_ids',
+                'status': 'accepted',
+            },
+        },
+    )
+    drifted_tasks = [
+        {
+            'task_id': 'phase6b-l1-doc-direct-execution',
+            'title': 'L1 documentation direct execution',
+            'route': 'direct_execution',
+            'readiness': 'ready',
+            'task_packet': '# Task: L1 documentation direct execution\nRoute: direct_execution\n',
+            'allowed_paths': ['docs/l1-smoke.md'],
+            'verification': ['test -f docs/l1-smoke.md'],
+            'blockers': [],
+        },
+        {
+            'task_id': 'phase6b-l2-code-test-direct-execution',
+            'title': 'L2 CLI direct execution',
+            'route': 'direct_execution',
+            'readiness': 'ready',
+            'task_packet': '# Task: L2 CLI direct execution\nRoute: direct_execution\n',
+            'allowed_paths': ['src/l2_cli.py', 'tests/test_l2_cli.py'],
+            'verification': ['python -m unittest discover -s tests'],
+            'blockers': [],
+        },
+        {
+            'task_id': 'phase6b-l3-needs-detail-detail-ready',
+            'title': 'L3 detail request',
+            'route': 'needs_detail',
+            'readiness': 'needs_clarification',
+            'task_packet': '# Task: L3 detail request\nRoute: needs_detail\n',
+            'allowed_paths': [],
+            'verification': ['Detail packet review confirms unresolved requirements are answered.'],
+            'blockers': ['The exact persistence format is not specified.'],
+        },
+        {
+            'task_id': 'phase6b-l4-macro-adjust-replan-required',
+            'title': 'L4 macro adjustment',
+            'route': 'macro_adjustment_request',
+            'readiness': 'not_ready',
+            'task_packet': '# Task: L4 macro adjustment\nRoute: macro_adjustment_request\n',
+            'allowed_paths': [],
+            'verification': ['Macro adjustment request is recorded for planner handling.'],
+            'blockers': ['Macro route needs replanning.'],
+        },
+        {
+            'task_id': 'phase6b-l4-blocked-prerequisite',
+            'title': 'L4 blocked external dependency',
+            'route': 'blocked',
+            'readiness': 'blocked',
+            'task_packet': '# Task: L4 blocked external dependency\nRoute: blocked\n',
+            'allowed_paths': [],
+            'verification': ['Blocker evidence identifies the missing external credential.'],
+            'blockers': ['Required external credential is unavailable.'],
+        },
+    ]
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_route_mix_planner_drifted_ids',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': drifted_tasks}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['loop_runner_status'] == 'blocked'
+    assert payload['action'] == 'role_output_import_blocked'
+    assert payload['reason'] == 'planner_task_set_unexpected_task_ids'
+    assert payload['evidence']['expected_task_ids'] == expected_task_ids
+    assert payload['evidence']['missing_task_ids'] == [
+        'phase6b-l3-needs-detail',
+        'phase6b-l4-macro-adjustment-request',
+    ]
+    assert payload['evidence']['unexpected_task_ids'] == [
+        'phase6b-l3-needs-detail-detail-ready',
+        'phase6b-l4-macro-adjust-replan-required',
+    ]
+    assert not (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').exists()
+    trace = (project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl').read_text(encoding='utf-8')
+    assert 'planner_task_set_unexpected_task_ids' in trace
+    assert 'phase6b-l3-needs-detail-detail-ready' in trace
+
+
+def test_loop_runner_blocks_route_mix_git_scope_contract_before_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_route_mix_planner_git_scope',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    expected_task_ids = [
+        'phase6b-l1-doc-direct-execution',
+        'phase6b-l2-code-test-direct-execution',
+        'phase6b-l3-needs-detail',
+        'phase6b-l4-macro-adjustment-request',
+        'phase6b-l4-blocked-prerequisite',
+    ]
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-route-mix-git-scope.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-route-mix-git-scope',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'expected_task_ids': expected_task_ids,
+            'source_intake': {'preview': _route_mix_frontdesk_intake()[:400]},
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_route_mix_planner_git_scope',
+                'status': 'accepted',
+            },
+        },
+    )
+    tasks = [
+        {
+            'task_id': 'phase6b-l1-doc-direct-execution',
+            'title': 'L1 documentation direct execution',
+            'route': 'direct_execution',
+            'readiness': 'ready',
+            'task_packet': '# Task: L1 documentation direct execution\nRoute: direct_execution\n',
+            'execution_contract': (
+                '# Execution Contract\n'
+                'Route: direct_execution\n'
+                'Allowed paths:\n'
+                '- lab_docs/phase6b_l1_doc_direct_execution.md\n'
+                'Verification:\n'
+                '- test -f lab_docs/phase6b_l1_doc_direct_execution.md\n'
+                '- git diff --name-only\n'
+            ),
+            'allowed_paths': ['lab_docs/phase6b_l1_doc_direct_execution.md'],
+            'verification': ['test -f lab_docs/phase6b_l1_doc_direct_execution.md', 'git diff --name-only'],
+            'blockers': [],
+        },
+        {
+            'task_id': 'phase6b-l2-code-test-direct-execution',
+            'title': 'L2 CLI direct execution',
+            'route': 'direct_execution',
+            'readiness': 'ready',
+            'task_packet': '# Task: L2 CLI direct execution\nRoute: direct_execution\n',
+            'allowed_paths': ['src/l2_cli.py', 'tests/test_l2_cli.py'],
+            'verification': ['python -m unittest discover -s tests'],
+            'blockers': [],
+        },
+        {
+            'task_id': 'phase6b-l3-needs-detail',
+            'title': 'L3 detail request',
+            'route': 'needs_detail',
+            'readiness': 'needs_clarification',
+            'task_packet': '# Task: L3 detail request\nRoute: needs_detail\n',
+            'allowed_paths': [],
+            'verification': ['Detail packet review confirms unresolved requirements are answered.'],
+            'blockers': ['The exact persistence format is not specified.'],
+        },
+        {
+            'task_id': 'phase6b-l4-macro-adjustment-request',
+            'title': 'L4 macro adjustment',
+            'route': 'macro_adjustment_request',
+            'readiness': 'not_ready',
+            'task_packet': '# Task: L4 macro adjustment\nRoute: macro_adjustment_request\n',
+            'allowed_paths': [],
+            'verification': ['Macro adjustment request is recorded for planner handling.'],
+            'blockers': ['Macro route needs replanning.'],
+        },
+        {
+            'task_id': 'phase6b-l4-blocked-prerequisite',
+            'title': 'L4 blocked external dependency',
+            'route': 'blocked',
+            'readiness': 'blocked',
+            'task_packet': '# Task: L4 blocked external dependency\nRoute: blocked\n',
+            'allowed_paths': [],
+            'verification': ['Blocker evidence identifies the missing external credential.'],
+            'blockers': ['Required external credential is unavailable.'],
+        },
+    ]
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_route_mix_planner_git_scope',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': tasks}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['loop_runner_status'] == 'blocked'
+    assert payload['action'] == 'role_output_import_blocked'
+    assert payload['reason'] == 'planner_task_set_git_scope_check_unsupported'
+    assert payload['evidence']['unsupported_scope_checks'] == [
+        {
+            'task_id': 'phase6b-l1-doc-direct-execution',
+            'route': 'direct_execution',
+            'fields': ['execution_contract', 'verification'],
+        }
+    ]
+    assert not (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').exists()
+
+
+def test_loop_runner_imports_route_mix_task_set_with_negative_git_scope_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_route_mix_planner_negative_git_scope',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    expected_task_ids = [
+        'phase6b-l1-doc-direct-execution',
+        'phase6b-l2-code-test-direct-execution',
+        'phase6b-l3-needs-detail',
+        'phase6b-l4-macro-adjustment-request',
+        'phase6b-l4-blocked-prerequisite',
+    ]
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-route-mix-negative-git-scope.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-route-mix-negative-git-scope',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'expected_task_ids': expected_task_ids,
+            'source_intake': {'preview': _route_mix_frontdesk_intake()[:400]},
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_route_mix_planner_negative_git_scope',
+                'status': 'accepted',
+            },
+        },
+    )
+    tasks = [
+        {
+            'task_id': 'phase6b-l1-doc-direct-execution',
+            'title': 'L1 documentation direct execution',
+            'route': 'direct_execution',
+            'readiness': 'ready',
+            'task_packet': '# Task: L1 documentation direct execution\nRoute: direct_execution\n',
+            'execution_contract': (
+                '# Execution Contract\n'
+                'Route: direct_execution\n'
+                'Worker may edit only lab_docs/phase6b_l1_doc_direct_execution.md.\n'
+                'Do not require git diff, git status, or any git-only scope check.\n'
+            ),
+            'allowed_paths': ['lab_docs/phase6b_l1_doc_direct_execution.md'],
+            'verification': ['test -f lab_docs/phase6b_l1_doc_direct_execution.md'],
+            'blockers': [],
+        },
+        {
+            'task_id': 'phase6b-l2-code-test-direct-execution',
+            'title': 'L2 CLI direct execution',
+            'route': 'direct_execution',
+            'readiness': 'ready',
+            'task_packet': '# Task: L2 CLI direct execution\nRoute: direct_execution\n',
+            'execution_contract': (
+                '# Execution Contract\n'
+                'Route: direct_execution\n'
+                'Verification is repo-independent and must use unittest, not git status.\n'
+            ),
+            'allowed_paths': ['src/l2_cli.py', 'tests/test_l2_cli.py'],
+            'verification': ['PYTHONPATH=. python -m unittest tests/test_l2_cli.py'],
+            'blockers': [],
+        },
+        {
+            'task_id': 'phase6b-l3-needs-detail',
+            'title': 'L3 detail request',
+            'route': 'needs_detail',
+            'readiness': 'needs_clarification',
+            'task_packet': '# Task: L3 detail request\nRoute: needs_detail\n',
+            'allowed_paths': [],
+            'verification': ['Detail packet review confirms unresolved requirements are answered.'],
+            'blockers': ['The exact persistence format is not specified.'],
+        },
+        {
+            'task_id': 'phase6b-l4-macro-adjustment-request',
+            'title': 'L4 macro adjustment',
+            'route': 'macro_adjustment_request',
+            'readiness': 'not_ready',
+            'task_packet': '# Task: L4 macro adjustment\nRoute: macro_adjustment_request\n',
+            'allowed_paths': [],
+            'verification': ['Macro adjustment request is recorded for planner handling.'],
+            'blockers': ['Macro route needs replanning.'],
+        },
+        {
+            'task_id': 'phase6b-l4-blocked-prerequisite',
+            'title': 'L4 blocked external dependency',
+            'route': 'blocked',
+            'readiness': 'blocked',
+            'task_packet': '# Task: L4 blocked external dependency\nRoute: blocked\n',
+            'allowed_paths': [],
+            'verification': ['Blocker evidence identifies the missing external credential.'],
+            'blockers': ['Required external credential is unavailable.'],
+        },
+    ]
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_route_mix_planner_negative_git_scope',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': tasks}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'imported_planner_task_set_authority'
+    assert payload['task_ids'] == expected_task_ids
+    for task_id in expected_task_ids:
+        shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+        assert shown['task']['authority_trace']['source'] == 'loop_runner_role_output_import'
+        assert shown['task']['status'] == 'ready_for_orchestration'
 
 
 def test_loop_runner_blocks_route_mix_planner_meta_task_only_reply_without_mutating_authority(
@@ -7665,6 +9909,7 @@ def test_loop_runner_consumes_post_detail_planner_activation_even_with_existing_
 # Task: Implement detail-ready work
 
 Route: direct_execution
+Validation: L3 needs_detail path reached detail_ready before implementation.
 Allowed paths:
 - lab_detail/work.py
 - tests/test_work.py
@@ -7708,6 +9953,138 @@ Verification:
     assert shown['task']['artifacts']['execution_contract']['actor']['job_id'] == 'job_post_detail_planner'
     trace = (project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl').read_text(encoding='utf-8')
     assert 'job_post_detail_planner' in trace
+
+
+def test_loop_runner_leaves_explicit_non_success_stop_contracts_settled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        task_packet_text=(
+            '# Task: L3 needs-detail stop at detail_ready\n'
+            'Route: needs_detail\n'
+            'This validation case must preserve the needs_detail route and stop at detail_ready.\n'
+        ),
+        execution_contract_text=(
+            '# Execution Contract\n'
+            'Route: needs_detail\n'
+            'The controller-visible task outcome remains detail_ready.\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='phase6b-l3-needs-detail', route='needs_detail')
+    for kind, filename in (
+        ('detail_design', 'detail-design.md'),
+        ('detail_summary', 'detail-summary.md'),
+        ('detail_packet', 'detail-packet.json'),
+    ):
+        source = project_root / 'drafts' / filename
+        _write(source, f'{kind}\n')
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-artifact',
+                task_id='phase6b-l3-needs-detail',
+                artifact_kind=kind,
+                file_path=str(source),
+            ),
+        )
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id='phase6b-l3-needs-detail',
+            status='detail_ready',
+            activation_reason='detail_ready_from_task_detailer',
+        ),
+    )
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-create',
+            plan_slug='demo-plan',
+            task_id='phase6b-l4-macro-adjustment-request',
+            title='L4 macro-adjustment stop at replan_required',
+        ),
+    )
+    for kind, filename, text in (
+        (
+            'task_packet',
+            'macro-task-packet.md',
+            '# Task: L4 macro-adjustment stop at replan_required\nRoute: macro_adjustment_request\n',
+        ),
+        (
+            'execution_contract',
+            'macro-execution-contract.md',
+            '# Execution Contract\nExpected controller-visible stop is replan_required.\n',
+        ),
+    ):
+        source = project_root / 'drafts' / filename
+        _write(source, text)
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-artifact',
+                task_id='phase6b-l4-macro-adjustment-request',
+                artifact_kind=kind,
+                file_path=str(source),
+            ),
+        )
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id='phase6b-l4-macro-adjustment-request',
+            status='ready_for_orchestration',
+            activation_reason='planner_task_set_imported',
+        ),
+    )
+    _import_orchestration_notes(
+        context,
+        project_root,
+        task_id='phase6b-l4-macro-adjustment-request',
+        route='macro_adjustment_request',
+    )
+    macro_source = project_root / 'drafts' / 'macro-adjustment-request.json'
+    _write(macro_source, '{"status_transition":"replan_required"}\n')
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id='phase6b-l4-macro-adjustment-request',
+            artifact_kind='macro_adjustment_request',
+            file_path=str(macro_source),
+        ),
+    )
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id='phase6b-l4-macro-adjustment-request',
+            status='replan_required',
+            activation_reason='orchestrator_route_macro_adjustment_request:script_owned_route',
+        ),
+    )
+
+    def forbidden_submit_ask(*_args, **_kwargs):
+        raise AssertionError('explicit stop-at-status tasks must not reactivate planner')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=forbidden_submit_ask, plan_task=plan_task),
+    )
+
+    assert payload['loop_runner_status'] == 'idle'
+    assert payload['reason'] == 'no_actionable_task'
+    detail = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l3-needs-detail'))
+    macro = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l4-macro-adjustment-request'))
+    assert detail['task']['status'] == 'detail_ready'
+    assert macro['task']['status'] == 'replan_required'
 
 
 def test_loop_runner_explicit_consume_uses_matching_activation_task(
@@ -8598,7 +10975,7 @@ def test_loop_runner_once_activates_planner_with_round_evidence_for_partial_task
 @pytest.mark.parametrize(
     ('status', 'expected_action', 'expected_runner_status', 'expected_owner'),
     (
-        ('needs_clarification', 'paused', 'paused', 'frontdesk'),
+        ('needs_clarification', 'paused', 'paused', 'task_detailer'),
         ('blocked', 'blocked', 'blocked', 'terminal'),
         ('done', 'terminal', 'terminal', 'terminal'),
     ),

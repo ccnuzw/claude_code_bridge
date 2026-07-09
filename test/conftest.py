@@ -23,7 +23,7 @@ def pytest_configure() -> None:
 def _write_provider_stub_launchers(bin_dir: Path) -> None:
     stub_path = (repo_root / "test" / "stubs" / "provider_stub.py").resolve()
     python_exe = sys.executable
-    providers = ("codex", "gemini", "claude", "opencode", "droid", "agy", "kimi", "deepcode")
+    providers = ("codex", "gemini", "claude", "opencode", "droid", "agy", "kimi", "deepcode", "grok")
     for provider in providers:
         posix_launcher = bin_dir / provider
         posix_launcher.write_text(

@@ -174,9 +174,9 @@ def test_namespace_patch_plan_add_tool_window_creates_sidebar_and_tool_pane(tmp_
         tmp_path / 'new-tool-window',
         BASE_CONFIG
         + """
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.files]
+command = "ccb-workbench files"
+label = "files"
 """,
     )
     plan = build_reload_dry_run_plan(
@@ -196,9 +196,9 @@ label = "neovim"
         'create_sidebar_pane',
         'create_tool_pane',
     ]
-    assert patch['steps'][0]['window'] == 'neovim'
-    assert patch['steps'][1]['slot_key'] == 'sidebar:neovim'
-    assert patch['steps'][2]['slot_key'] == 'tool:neovim'
+    assert patch['steps'][0]['window'] == 'files'
+    assert patch['steps'][1]['slot_key'] == 'sidebar:files'
+    assert patch['steps'][2]['slot_key'] == 'tool:files'
 
 
 def test_namespace_patch_plan_remove_tool_window_kills_tool_window(tmp_path: Path) -> None:
@@ -206,9 +206,9 @@ def test_namespace_patch_plan_remove_tool_window_kills_tool_window(tmp_path: Pat
         tmp_path / 'current-tool-remove',
         BASE_CONFIG
         + """
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.files]
+command = "ccb-workbench files"
+label = "files"
 """,
     )
     new = _load_config(tmp_path / 'new-tool-remove', BASE_CONFIG)
@@ -227,9 +227,9 @@ label = "neovim"
     assert patch['steps'] == [
         {
             'action': 'kill_tool_window',
-            'window': 'neovim',
+            'window': 'files',
             'role': 'tool',
-            'slot_key': 'tool:neovim',
+            'slot_key': 'tool:files',
             'managed_by': 'ccbd',
             'reason': 'managed tool window exists only in current published config',
         }

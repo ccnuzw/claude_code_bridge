@@ -15,7 +15,7 @@ default_name = "planner"
 purpose = "Turn macro user intent into execution-ready semantic task packets, candidate clarification questions, and readiness recommendations."
 responsibilities = [
   "Understand macro task intent and constraints",
-  "Read relevant plan-tree and source context",
+  "Use controller-provided plan-tree and source context",
   "Draft requirements, scope, acceptance criteria, verification contract, and risk notes",
   "Produce candidate questions for the clarification broker",
   "Recommend ready, needs_clarification, blocked, or not_ready"
@@ -35,13 +35,14 @@ memory = ["memory.md"]
 skills = ["skills/planner-task-packet"]
 
 [permissions]
-read_files = true
-write_files = true
+read_files = false
+write_files = false
 network = false
 secrets = "none"
 
 [adapters.ccb]
 display_name = "planner"
+command_surface = "adapters/ccb/command-surface.toml"
 
 [adapters.codex]
 display_name = "planner"

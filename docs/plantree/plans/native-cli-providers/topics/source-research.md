@@ -391,6 +391,52 @@ CCB direction:
 - Treat official `@z_ai/coding-helper` as setup tooling for users who want GLM
   Coding Plan in other providers, not as the CCB provider runtime.
 
+## Grok Build CLI
+
+Observed upstream/docs:
+
+- Official product page: `https://x.ai/cli`.
+- Official docs: `https://docs.x.ai/build/overview` and
+  `https://docs.x.ai/build/cli/headless-scripting`.
+- Package: `@xai-official/grok`.
+- Binary: `grok`.
+- npm metadata probe on 2026-07-09 returned `@xai-official/grok@0.2.93` with
+  bin `grok` and platform optional dependencies such as
+  `@xai-official/grok-linux-x64@0.2.93`.
+- The official Grok Build CLI is distributed as a platform binary, not as
+  reviewable application source. CCB should not rely on private binary internals
+  or reverse-engineered session logs.
+- Official docs define three modes: interactive TUI, headless scripting, and
+  ACP (`grok agent stdio`).
+- Headless mode uses `grok -p "prompt"` and supports `--cwd <PATH>`,
+  `--session-id <ID>`, `--resume`, `--continue`, `--model`,
+  `--output-format plain|json|streaming-json`, `--always-approve`,
+  `--no-alt-screen`, and `--no-auto-update`.
+- Docs say headless sessions are stored in `~/.grok/sessions`; user config
+  lives at `~/.grok/config.toml`.
+- Docs recommend `--no-auto-update` for headless or ACP automation to avoid
+  background update checks in scripts/CI.
+- ACP mode runs `grok agent stdio` over JSON-RPC. The official example shows
+  assistant text arriving as `session/update` chunks with
+  `update.sessionUpdate = agent_message_chunk` and `update.content.text`.
+  `session/prompt` returns completion metadata while text arrives separately.
+
+CCB direction:
+
+- Provider key `grok`; default command `grok`; override `GROK_START_CMD`.
+- Visible pane command: `HOME=<provider-state>/home grok --no-auto-update`.
+- Per-job subprocess execution:
+  `HOME=<provider-state>/home grok --no-auto-update -p <wrapped prompt>
+  --cwd <workdir> --output-format streaming-json --session-id <job_id>`.
+- Completion source is provider-native streaming-json/stdout through the shared
+  native CLI adapter. The Grok observer should parse JSON-RPC style
+  `session/update` `agent_message_chunk` events and fall back to generic
+  assistant/result envelopes when Grok emits simpler structured output.
+- Do not ask Grok to print `CCB_DONE`.
+- Do not auto-acquire Grok login, X subscription, or API keys. Users can
+  authenticate the managed Grok home through the visible pane or use inherited
+  environment such as `XAI_API_KEY` when supported by the CLI.
+
 ## Local Probe Evidence
 
 - Local Node: `v22.20.0`.
@@ -423,3 +469,6 @@ CCB direction:
   official installer scripts.
 - Installed version checks returned Qwen `0.18.0`, Copilot `1.0.61`, Cursor
   Agent `2026.06.12-19-59-36-f6aba9a`, Kiro `2.7.0`, and Crush `v0.76.0`.
+- `npm view @xai-official/grok name version description bin dist.tarball
+  optionalDependencies --json` returned package `0.2.93`, bin `grok`, and
+  platform optional dependency versions.

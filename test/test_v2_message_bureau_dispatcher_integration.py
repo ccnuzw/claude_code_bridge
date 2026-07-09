@@ -150,6 +150,26 @@ def _empty_provider_reply_decision() -> CompletionDecision:
     )
 
 
+def _retryable_delivery_incomplete_decision() -> CompletionDecision:
+    return CompletionDecision(
+        terminal=True,
+        status=CompletionStatus.INCOMPLETE,
+        reason='codex_session_file_missing',
+        confidence=CompletionConfidence.DEGRADED,
+        reply='',
+        anchor_seen=False,
+        reply_started=False,
+        reply_stable=False,
+        provider_turn_ref='turn-delivery-missing-session',
+        source_cursor=None,
+        finished_at='2026-03-30T00:00:10Z',
+        diagnostics={
+            'delivery_failure_kind': 'delivery_session_missing',
+            'delivery_retryable': True,
+        },
+    )
+
+
 class ActiveReplyDeliveryExecutionService:
     def __init__(self) -> None:
         self.started: list[str] = []
@@ -2520,6 +2540,48 @@ def test_dispatcher_auto_retries_empty_provider_replies_before_delivering_incomp
     ack = dispatcher.ack_reply('claude')
     assert ack['reply_terminal_status'] == 'incomplete'
     assert 'empty reply after 3 attempts' in ack['reply']
+
+
+def test_dispatcher_auto_retries_retryable_delivery_incomplete_before_delivering_reply(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-auto-retry-delivery-incomplete'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude', 'gemini')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:00Z')
+
+    receipt = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='claude',
+            body='retry delivery after missing session',
+            task_id='task-auto-retry-delivery-incomplete',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    )
+    message = MessageStore(layout).list_all()[-1]
+    job_id = receipt.jobs[0].job_id
+
+    dispatcher.tick()
+    dispatcher.complete(job_id, _retryable_delivery_incomplete_decision())
+
+    claude_inbox = dispatcher.inbox('claude')
+    assert claude_inbox['item_count'] == 0
+
+    attempts = {record.attempt_id: record for record in AttemptStore(layout).list_message(message.message_id)}
+    retry_attempt = next(attempt for attempt in attempts.values() if attempt.retry_index == 1)
+    retry_job = dispatcher.get(retry_attempt.job_id)
+
+    assert retry_attempt.attempt_state is AttemptState.PENDING
+    assert retry_job is not None
+    assert retry_job.request.body == 'retry delivery after missing session'
+    assert retry_job.provider_options.get('retry_delivery_mode') != 'continue'
+    assert retry_job.provider_options['retry_source_job_id'] == job_id
 
 
 def test_dispatcher_auto_retries_resumable_pane_failures_before_delivering_failed_reply(tmp_path: Path) -> None:

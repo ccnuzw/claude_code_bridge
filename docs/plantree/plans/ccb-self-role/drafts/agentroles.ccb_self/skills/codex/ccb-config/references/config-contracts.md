@@ -38,12 +38,8 @@ version = 2
 entry_window = "main"
 
 [windows]
-main = "main:codex"
+main = "main:codex, rich"
 ops = "agentroles.ccb_self:codex"
-
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
 ```
 
 Rules:

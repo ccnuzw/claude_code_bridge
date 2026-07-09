@@ -217,7 +217,7 @@ def _latest_refs(artifacts: object) -> dict[str, object]:
 def _next_owner_from_status(payload: dict[str, object]) -> str:
     artifacts = payload.get('artifacts') if isinstance(payload.get('artifacts'), dict) else {}
     if _USER_KIND in artifacts and _NORMALIZED_KIND not in artifacts:
-        return 'frontdesk'
+        return 'task_detailer'
     if _NORMALIZED_KIND in artifacts:
         return 'planner'
     if _CANDIDATE_KIND in artifacts:

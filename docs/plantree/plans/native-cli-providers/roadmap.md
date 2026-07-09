@@ -19,8 +19,8 @@ Date: 2026-06-13
   pytest release gate passed with `2613 passed, 2 skipped`.
 - Next target: review and release readiness for the next native CLI provider
   wave after source-runtime and real CLI version smoke passed for Qwen Code,
-  Cursor Agent, GitHub Copilot CLI, Charm Crush, Kiro CLI, and Pi. Talk1's
-  Crush visible-pane isolation blocker has been fixed in source.
+  Cursor Agent, GitHub Copilot CLI, Charm Crush, Kiro CLI, Pi, and Grok Build.
+  Talk1's Crush visible-pane isolation blocker has been fixed in source.
 
 ## Done
 
@@ -176,18 +176,18 @@ Date: 2026-06-13
   - Cursor Agent installed bundle under
     `home/.local/share/cursor-agent/versions/2026.06.12-19-59-36-f6aba9a`.
 - Landed the next-wave minimal built-in provider path in source:
-  - `qwen`, `cursor`, `copilot`, `crush`, `kiro`, and `pi` are optional provider ids
+  - `qwen`, `cursor`, `copilot`, `crush`, `grok`, `kiro`, and `pi` are optional provider ids
     with modern backend shape.
   - Shared native CLI subprocess support handles per-job command execution,
     stdout/stderr artifacts, structured-result parsing, stdout-on-exit
     completion, empty replies, nonzero exits, run timeouts with process
     termination, and tool/intermediate events.
-  - Qwen, Cursor, Copilot, and Pi use JSONL/stream-json result parsing; Crush
-    and Kiro use subprocess exit plus stdout.
+  - Qwen, Cursor, Copilot, Grok, and Pi use JSONL/stream-json result parsing;
+    Crush and Kiro use subprocess exit plus stdout.
   - Crush visible pane startup now passes `--data-dir <provider-state>/data`,
     matching the ask execution isolation boundary.
-  - Qwen, Cursor, Copilot, Crush, Kiro, and Pi provider-state contents now
-    classify as native CLI provider-owned session/cache or projected skill
+  - Qwen, Cursor, Copilot, Crush, Grok, Kiro, and Pi provider-state contents
+    now classify as native CLI provider-owned session/cache or projected skill
     evidence.
   - Focused source tests passed with `35 passed`.
 - Fixed control-plane environment propagation for provider start-command
@@ -257,6 +257,16 @@ Date: 2026-06-13
     CCB provider runtime.
   - Focused AGY/native provider verification passed with `34 passed`; isolated
     stub source-runtime smoke completed with `agy_transcript_response_done`.
+- Added Grok Build CLI provider support:
+  - `provider = "grok"` is registered as an optional native CLI provider.
+  - Startup uses managed provider-state `HOME`, visible `grok --no-auto-update`,
+    and `GROK_START_CMD` override.
+  - Per-job ask uses official headless execution:
+    `grok --no-auto-update -p <prompt> --cwd <workspace> --output-format
+    streaming-json --session-id <job>`.
+  - Completion detection parses Grok JSON/session-update chunks and also
+    accepts generic native CLI result envelopes; focused provider tests passed
+    with `72 passed`.
 
 ## In Progress
 

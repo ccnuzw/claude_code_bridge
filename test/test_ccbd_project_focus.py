@@ -52,7 +52,7 @@ def _config_with_tool_window() -> ProjectConfig:
             WindowSpec(name='main', order=0, layout_spec='agent1:codex', agent_names=('agent1',)),
             WindowSpec(name='ops', order=1, layout_spec='agent2:claude', agent_names=('agent2',)),
         ),
-        tool_windows=(ToolWindowSpec(name='neovim', order=0, command='ccb-nvim'),),
+        tool_windows=(ToolWindowSpec(name='files', order=0, command='ccb-workbench files'),),
         entry_window='main',
     )
 
@@ -213,14 +213,14 @@ def test_project_focus_tool_window_selects_window_without_agent_pane_lookup(tmp_
     backend = _FakeTmuxBackend()
     service = _service(tmp_path, backend, config=_config_with_tool_window())
 
-    result = service.focus_window(window='neovim')
+    result = service.focus_window(window='files')
 
     assert result['focused'] is True
     assert result['kind'] == 'window'
-    assert result['window'] == 'neovim'
+    assert result['window'] == 'files'
     assert result['agent'] is None
     assert backend.calls == [
-        ['select-window', '-t', 'ccb-test:neovim'],
+        ['select-window', '-t', 'ccb-test:files'],
         ['display-message', '-p', '-t', '%3', '#{session_name}'],
         ['display-message', '-p', '-t', '%4', '#{session_name}'],
         ['display-message', '-p', '-t', '%5', '#{session_name}'],

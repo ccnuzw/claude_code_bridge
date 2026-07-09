@@ -13,6 +13,19 @@ structured aggregation for round checking or replanning.
 It is not a daemon, not a permanent manager, and not the owner of runtime state.
 It proposes runtime topology; CCB scripts commit and reconcile topology.
 
+## Context Purity
+
+`orchestrator` is an immaculate (`无垢`) role. It is allowed to reason deeply
+inside one task triage or execution-round dispatch, but the next activation must
+start from durable task refs, loop refs, topology refs, and imported evidence,
+not from the prior orchestration conversation.
+
+This applies even when the orchestrator pane is visually resident in the
+foreground. Pane visibility is an observability affordance; it is not permission
+to retain semantic memory across tasks or rounds. The runtime should use a new
+provider session, a unique activation identity, or a proven clear/reset step for
+each orchestration activation and record enough evidence to audit freshness.
+
 ## Activation Model
 
 ```text

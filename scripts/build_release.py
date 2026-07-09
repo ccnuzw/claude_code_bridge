@@ -39,6 +39,12 @@ EXCLUDES = {
     ".pytest_cache",
     ".mypy_cache",
     ".venv",
+    ".dart_tool",
+    ".gradle",
+    ".idea",
+    "build",
+    "dist-mobile",
+    "node_modules",
     "target",
     # Maintainer-only utilities are versioned in git but must not ship in release tarballs.
     "dev_tools",

@@ -446,9 +446,10 @@ ccb update
 ccb uninstall
 ccb reinstall
 ccb roles ...
-ccb tools doctor neovim
-ccb tools install neovim
-ccb tools update neovim
+ccb update rich
+ccb tools doctor workbench --profile rich
+ccb tools install workbench --profile rich
+ccb tools launch workbench --profile rich
 ```
 
 Fault injection 属于高级诊断：
@@ -981,7 +982,7 @@ Roles 和 tools：
 
 - `lib/cli/roles_runtime/commands.py`
 - `lib/rolepacks/`
-- `lib/cli/tools_runtime/neovim.py`
+- `lib/cli/tools_runtime/workbench.py`
 
 契约与计划：
 

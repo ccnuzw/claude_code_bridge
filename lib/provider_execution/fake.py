@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 import json
+from pathlib import Path
 
 from ccbd.api_models import JobRecord
 from ccbd.system import parse_utc_timestamp
@@ -43,12 +44,11 @@ class FakeProviderAdapter:
         self._latency_seconds = latency_seconds
 
     def start(self, job: JobRecord, *, context, now: str) -> ProviderSubmission:
-        del context
         directive = parse_directive(job.request.task_id, default_latency_seconds=self._latency_seconds)
         events = tuple(normalize_script_event(raw) for raw in (directive.script or default_script(directive, mode=self._script_mode)))
         max_delay_ms = max((event.at_ms for event in events), default=0)
         ready_at = parse_utc_timestamp(now) + timedelta(milliseconds=max_delay_ms)
-        reply, attachments = _reply_for_body(job)
+        reply, attachments = _reply_for_body(job, context=context)
         return ProviderSubmission(
             job_id=job.job_id,
             agent_name=job.agent_name,
@@ -173,14 +173,14 @@ _normalize_script_event = normalize_script_event
 _parse_directive = parse_directive
 
 
-def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
+def _reply_for_body(job: JobRecord, *, context=None) -> tuple[str, list[dict[str, object]]]:
     agent_name = job.agent_name
     body = job.request.body
     marker = body.strip()
     effective_body = _effective_request_body(job)
     workflow_reply = _workflow_role_bundle_reply(agent_name=agent_name, body=effective_body)
     if workflow_reply is None:
-        workflow_reply = _workflow_execution_reply(agent_name=agent_name, body=effective_body)
+        workflow_reply = _workflow_execution_reply(job=job, context=context, agent_name=agent_name, body=effective_body)
     if workflow_reply is None:
         workflow_reply = _workflow_round_checker_reply(agent_name=agent_name, body=effective_body)
     if workflow_reply is not None:
@@ -368,19 +368,25 @@ def _workflow_role_bundle_reply(*, agent_name: str, body: str) -> str | None:
     return None
 
 
-def _workflow_execution_reply(*, agent_name: str, body: str) -> str | None:
+def _workflow_execution_reply(*, job: JobRecord, context, agent_name: str, body: str) -> str | None:
     if 'Role: worker' in body:
         status = 'done'
+        changed_files = _materialize_fake_worker_changes(job, context, body)
+        changed_files_text = ', '.join(changed_files) if changed_files else 'none'
         if 'Purpose: bounded_rework' in body:
             return (
                 f'status: {status}\n'
                 'work summary: addressed the bounded reviewer rejection evidence\n'
+                f'changed_files: {changed_files_text}\n'
+                'verification: fake provider deterministic rework verification passed\n'
                 'evidence refs: task_packet execution_contract reviewer_rejection\n'
                 'hidden degradation audit: no hidden fallback or scope shrink\n'
             )
         return (
             f'status: {status}\n'
             'work summary: fake provider deterministic execution completed\n'
+            f'changed_files: {changed_files_text}\n'
+            'verification: fake provider deterministic execution verification passed\n'
             'evidence refs: task_packet execution_contract\n'
             'hidden degradation audit: no hidden fallback or scope shrink\n'
         )
@@ -437,6 +443,62 @@ def _phase6_scenario(body: str) -> str:
         if line.startswith('phase6_scenario:'):
             return line.split(':', 1)[1].strip().lower()
     return ''
+
+
+def _materialize_fake_worker_changes(job: JobRecord, context, body: str) -> list[str]:
+    context_workspace_path = str(getattr(context, 'workspace_path', '') or '').strip()
+    workspace_path = str(job.workspace_path or context_workspace_path).strip()
+    if not workspace_path:
+        return []
+    changed: list[str] = []
+    workspace = Path(workspace_path)
+    for relative in _fake_allowed_change_paths(body):
+        path = workspace / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '# Fake Workflow Smoke Output\n\n'
+            f'- task_id: {job.request.task_id or ""}\n'
+            f'- agent: {job.agent_name}\n'
+            '- verification: deterministic fake worker wrote declared project-root evidence\n',
+            encoding='utf-8',
+        )
+        changed.append(relative.as_posix())
+    return changed
+
+
+def _fake_allowed_change_paths(body: str) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for raw_line in str(body or '').splitlines():
+        line = raw_line.strip().lstrip('-*').strip()
+        if not line.lower().startswith('allowed_change_paths:'):
+            continue
+        tail = line.split(':', 1)[1]
+        for raw_path in tail.replace(';', ',').split(','):
+            candidate = raw_path.strip().strip('`"\'').rstrip('.,')
+            if not candidate:
+                continue
+            relative = _safe_fake_relative_path(candidate)
+            if relative is None:
+                continue
+            key = relative.as_posix()
+            if key in seen:
+                continue
+            paths.append(relative)
+            seen.add(key)
+    return paths
+
+
+def _safe_fake_relative_path(value: str) -> Path | None:
+    path = Path(value)
+    if path.is_absolute():
+        return None
+    parts = path.parts
+    if not parts or any(part in {'', '.', '..'} for part in parts):
+        return None
+    if not path.suffix:
+        return None
+    return path
 
 
 def _loop_activation_task_id(body: str) -> str:

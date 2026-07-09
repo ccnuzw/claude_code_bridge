@@ -47,9 +47,9 @@ bottom_height = 20
 
 
 ADD_TOOL_WINDOW_CONFIG = BASE_CONFIG + """
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.files]
+command = "ccb-workbench files"
+label = "files"
 """
 
 
@@ -202,6 +202,8 @@ class _PatchFakeBackend:
             panes = list(record['panes']) if record is not None else []
             return SimpleNamespace(returncode=0, stdout='\n'.join(str(item) for item in panes), stderr='')
         if len(args) >= 4 and args[:3] == ['select-layout', '-E', '-t']:
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        if len(args) >= 3 and args[:2] == ['select-window', '-t']:
             return SimpleNamespace(returncode=0, stdout='', stderr='')
         if len(args) >= 5 and args[:3] == ['show-option', '-qv', '-t']:
             session_name = args[3]
@@ -1348,20 +1350,20 @@ def test_apply_add_tool_window_creates_tool_window_sidebar_and_tool_pane(
     )
 
     assert result.status == 'applied'
-    assert result.created_windows == ('neovim',)
+    assert result.created_windows == ('files',)
     assert result.created_panes == ('%3', '%4')
-    assert result.sidebar_panes == {'neovim': '%3'}
-    assert result.tool_panes == {'neovim': '%4'}
+    assert result.sidebar_panes == {'files': '%3'}
+    assert result.tool_panes == {'files': '%4'}
     assert result.agent_panes == {}
     assert backend.respawn_calls[-2][0] == '%3'
     assert backend.respawn_calls[-2][1].startswith('CCB_SIDEBAR_THEME_PROFILE=light ')
     assert '--theme' not in backend.respawn_calls[-2][1]
-    assert backend.respawn_calls[-1] == ('%4', 'ccb-nvim')
+    assert backend.respawn_calls[-1] == ('%4', 'ccb-workbench files')
     assert backend.pane_options['%3']['@ccb_role'] == 'sidebar'
-    assert backend.pane_options['%3']['@ccb_slot'] == 'sidebar:neovim'
+    assert backend.pane_options['%3']['@ccb_slot'] == 'sidebar:files'
     assert backend.pane_options['%4']['@ccb_role'] == 'tool'
-    assert backend.pane_options['%4']['@ccb_slot'] == 'tool:neovim'
-    assert backend.pane_options['%4']['@ccb_window'] == 'neovim'
+    assert backend.pane_options['%4']['@ccb_slot'] == 'tool:files'
+    assert backend.pane_options['%4']['@ccb_window'] == 'files'
     assert result.diagnostics['runtime_authority_written'] is False
 
 
@@ -1378,12 +1380,12 @@ def test_apply_remove_tool_window_kills_only_tool_window(
     backend.pane_counter = 2
     _seed_agent_pane(backend, '%1', project_id='proj-1', window='main', agent='agent1')
     _seed_agent_pane(backend, '%2', project_id='proj-1', window='main', agent='agent2')
-    tool_root = backend.add_window(layout.ccbd_tmux_session_name, 'neovim')
+    tool_root = backend.add_window(layout.ccbd_tmux_session_name, 'files')
     backend.pane_options[tool_root] = {
         '@ccb_project_id': 'proj-1',
         '@ccb_role': 'tool',
-        '@ccb_slot': 'tool:neovim',
-        '@ccb_window': 'neovim',
+        '@ccb_slot': 'tool:files',
+        '@ccb_window': 'files',
         '@ccb_managed_by': 'ccbd',
     }
     _store_namespace(layout, project_id='proj-1')
@@ -1399,12 +1401,12 @@ def test_apply_remove_tool_window_kills_only_tool_window(
     )
 
     assert result.status == 'applied'
-    assert result.removed_windows == ('neovim',)
+    assert result.removed_windows == ('files',)
     assert [
         call
         for call in backend.tmux_calls
-        if call == ('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:neovim')
-    ] == [('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:neovim')]
+        if call == ('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:files')
+    ] == [('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:files')]
     assert [record['name'] for record in backend.sessions[layout.ccbd_tmux_session_name]] == ['main']
     assert tool_root not in backend.pane_options
     assert backend.pane_options['%1']['@ccb_slot'] == 'agent1'
@@ -1423,7 +1425,7 @@ def test_apply_remove_tool_window_is_idempotent_when_window_already_missing(
         def _tmux_run(self, args: list[str], *, check=False, capture=False, input_bytes=None, timeout=None):
             if len(args) >= 3 and args[:2] == ['kill-window', '-t']:
                 self.tmux_calls.append(tuple(args))
-                return SimpleNamespace(returncode=1, stdout='', stderr="can't find window: neovim")
+                return SimpleNamespace(returncode=1, stdout='', stderr="can't find window: files")
             return super()._tmux_run(
                 args,
                 check=check,
@@ -1451,7 +1453,7 @@ def test_apply_remove_tool_window_is_idempotent_when_window_already_missing(
     )
 
     assert result.status == 'applied'
-    assert result.removed_windows == ('neovim',)
+    assert result.removed_windows == ('files',)
     assert result.preserved_before == {'agent1': '%1', 'agent2': '%2'}
     assert result.preserved_after == {'agent1': '%1', 'agent2': '%2'}
     assert backend.pane_options['%1']['@ccb_slot'] == 'agent1'
@@ -1510,6 +1512,56 @@ main = "agent1:codex"
     assert ('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:review') not in backend.tmux_calls
     assert [record['name'] for record in backend.sessions[layout.ccbd_tmux_session_name]] == ['main']
     assert review_pane not in backend.pane_options
+
+
+def test_apply_remove_agent_window_selects_workspace_before_killing_dynamic_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:codex"
+ccb-exec = "loop-coder:codex, loop-reviewer:codex"
+"""
+    new_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:codex"
+"""
+    current = _load_config(tmp_path / 'current-remove-dynamic-window', current_text)
+    new = _load_config(tmp_path / 'new-remove-dynamic-window', new_text)
+    layout = PathLayout(_project(tmp_path / 'repo-remove-dynamic-window', current_text))
+    backend = _PatchFakeBackend(socket_path=str(layout.ccbd_tmux_socket_path))
+    main_pane = backend.add_window(layout.ccbd_tmux_session_name, 'main')
+    exec_pane = backend.add_window(layout.ccbd_tmux_session_name, 'ccb-exec')
+    backend.sessions[layout.ccbd_tmux_session_name][1]['panes'].append('%3')
+    backend.pane_counter = 3
+    _seed_agent_pane(backend, main_pane, project_id='proj-1', window='main', agent='frontdesk')
+    _seed_agent_pane(backend, exec_pane, project_id='proj-1', window='ccb-exec', agent='loop-coder')
+    _seed_agent_pane(backend, '%3', project_id='proj-1', window='ccb-exec', agent='loop-reviewer')
+    _store_namespace(layout, project_id='proj-1', workspace_window_name='main', workspace_window_id='@1')
+    controller = ProjectNamespaceController(layout, 'proj-1', backend_factory=lambda socket_path=None: backend)
+    _forbid_recreate_paths(monkeypatch, allow_kill_window=True)
+    plan = build_reload_dry_run_plan(current, new, project_id='proj-1', current_namespace=controller.load())
+
+    result = controller.apply_reload_patch(
+        patch_plan=plan['namespace_patch_plan'],
+        old_topology=build_namespace_topology_plan(current),
+        new_topology=build_namespace_topology_plan(new),
+        timeout_s=0.0,
+    )
+
+    select_call = ('select-window', '-t', f'{layout.ccbd_tmux_session_name}:@1')
+    kill_call = ('kill-window', '-t', f'{layout.ccbd_tmux_session_name}:ccb-exec')
+    assert result.status == 'applied'
+    assert result.removed_windows == ('ccb-exec',)
+    assert select_call in backend.tmux_calls
+    assert kill_call in backend.tmux_calls
+    assert backend.tmux_calls.index(select_call) < backend.tmux_calls.index(kill_call)
+    assert [record['name'] for record in backend.sessions[layout.ccbd_tmux_session_name]] == ['main']
 
 
 def test_apply_append_add_agent_failure_does_not_publish_or_write_authority(tmp_path: Path, monkeypatch) -> None:

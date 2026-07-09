@@ -149,3 +149,59 @@ def test_handle_terminal_entry_emits_turn_aborted_payload() -> None:
     assert poll.items[0].payload["reason"] == "cancelled"
     assert poll.items[0].payload["status"] == "cancelled"
     assert poll.items[0].payload["error_message"] == "user cancelled"
+
+
+def test_handle_terminal_entry_does_not_promote_commentary_to_task_complete_reply() -> None:
+    poll = CodexPollState(
+        request_anchor="job_1",
+        next_seq=2,
+        anchor_seen=True,
+        bound_turn_id="turn-1",
+        bound_task_id="task-1",
+        reply_buffer="I'll inspect the artifact first.",
+        last_agent_message="",
+        last_final_answer="",
+        last_assistant_message="I'll inspect the artifact first.",
+        last_assistant_signature="sig-1",
+        session_path="/tmp/session.jsonl",
+    )
+
+    handle_terminal_entry(
+        _submission(),
+        poll,
+        {"payload_type": "task_complete", "last_agent_message": ""},
+        now="2026-04-06T00:01:00Z",
+    )
+
+    assert poll.reached_terminal is True
+    assert poll.items[0].kind is CompletionItemKind.TURN_BOUNDARY
+    assert poll.items[0].payload["last_agent_message"] == ""
+    assert poll.items[0].payload["empty_final_message"] is True
+
+
+def test_handle_terminal_entry_uses_final_answer_when_terminal_message_is_empty() -> None:
+    poll = CodexPollState(
+        request_anchor="job_1",
+        next_seq=2,
+        anchor_seen=True,
+        bound_turn_id="turn-1",
+        bound_task_id="task-1",
+        reply_buffer="I'll inspect the artifact first.\nroute: direct_execution",
+        last_agent_message="",
+        last_final_answer="route: direct_execution",
+        last_assistant_message="route: direct_execution",
+        last_assistant_signature="sig-2",
+        session_path="/tmp/session.jsonl",
+    )
+
+    handle_terminal_entry(
+        _submission(),
+        poll,
+        {"payload_type": "task_complete", "last_agent_message": ""},
+        now="2026-04-06T00:01:00Z",
+    )
+
+    assert poll.reached_terminal is True
+    assert poll.items[0].kind is CompletionItemKind.TURN_BOUNDARY
+    assert poll.items[0].payload["last_agent_message"] == "route: direct_execution"
+    assert "empty_final_message" not in poll.items[0].payload

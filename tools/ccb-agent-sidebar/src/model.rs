@@ -394,10 +394,10 @@ mod tests {
         let payload = r#"{
           "view": {
             "project": {"display_name": "repo"},
-            "namespace": {"epoch": 3, "active_window": "neovim", "sidebar": {"view": {}}},
+            "namespace": {"epoch": 3, "active_window": "files", "sidebar": {"view": {}}},
             "windows": [
               {"name": "main", "kind": "agents", "active": false, "agents": ["agent1"]},
-              {"name": "neovim", "label": "neovim", "kind": "tool", "active": true, "agents": []}
+              {"name": "files", "label": "files", "kind": "tool", "active": true, "agents": []}
             ],
             "agents": [{"name": "agent1", "provider": "codex", "window": "main", "activity_state": "idle"}],
             "comms": []
@@ -412,7 +412,7 @@ mod tests {
             vec![
                 RowTarget::Window("main".into()),
                 RowTarget::Agent("agent1".into()),
-                RowTarget::Window("neovim".into()),
+                RowTarget::Window("files".into()),
             ]
         );
         assert_eq!(response.view.windows[1].kind, "tool");

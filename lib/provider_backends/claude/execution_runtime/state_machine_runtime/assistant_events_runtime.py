@@ -170,7 +170,9 @@ def maybe_append_assistant_end_turn_boundary(
         return
     if is_subagent or not poll.anchor_seen or not poll.request_anchor:
         return
-    if assistant_stop_reason(event) != "end_turn":
+    stop_reason = assistant_stop_reason(event)
+    inferred_text_turn = stop_reason == "" and assistant_has_final_text_without_tool_use(event)
+    if stop_reason != "end_turn" and not inferred_text_turn:
         return
     reply = poll.reply_buffer if has_visible_text(poll.reply_buffer) else cleaned
     if not has_visible_text(reply):
@@ -187,13 +189,76 @@ def maybe_append_assistant_end_turn_boundary(
             payload=turn_boundary_payload(
                 poll=poll,
                 reply=reply,
-                reason="assistant_end_turn",
-                stop_reason="end_turn",
+                reason="assistant_text_message" if inferred_text_turn else "assistant_end_turn",
+                stop_reason=stop_reason or None,
             ),
         )
     )
     poll.next_seq += 1
     poll.reached_turn_boundary = True
+
+
+def assistant_has_final_text_without_tool_use(event: dict[str, object]) -> bool:
+    content = assistant_message_content(event)
+    if content is None:
+        return False
+    return content_has_text(content) and not content_has_type(content, "tool_use")
+
+
+def assistant_message_content(event: dict[str, object]) -> object | None:
+    entry = event.get("entry")
+    if not isinstance(entry, dict):
+        return None
+    message = entry.get("message")
+    if isinstance(message, dict):
+        role = str(message.get("role") or entry.get("type") or "").strip().lower()
+        if role == "assistant":
+            return message.get("content")
+    payload = entry.get("payload")
+    if isinstance(payload, dict):
+        payload_type = str(payload.get("type") or "").strip().lower()
+        payload_role = str(payload.get("role") or "").strip().lower()
+        if payload_type == "message" and payload_role == "assistant":
+            return payload.get("content")
+    entry_type = str(entry.get("type") or "").strip().lower()
+    if entry_type == "assistant":
+        return entry.get("content")
+    return None
+
+
+def content_has_text(content: object) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        if isinstance(item, str) and item.strip():
+            return True
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").strip().lower()
+        if item_type in {"thinking", "thinking_delta"}:
+            continue
+        text = item.get("text")
+        if not text and item_type == "text":
+            text = item.get("content")
+        if isinstance(text, str) and text.strip():
+            return True
+    return False
+
+
+def content_has_type(content: object, expected: str) -> bool:
+    expected_type = expected.strip().lower()
+    if not expected_type:
+        return False
+    if isinstance(content, dict):
+        return str(content.get("type") or "").strip().lower() == expected_type
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        if isinstance(item, dict) and str(item.get("type") or "").strip().lower() == expected_type:
+            return True
+    return False
 
 
 def turn_boundary_payload(

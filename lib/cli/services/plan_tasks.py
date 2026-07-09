@@ -45,7 +45,7 @@ _ORCHESTRATION_READY_REQUIRED = frozenset({'task_packet', 'execution_contract'})
 _READY_REQUIRED = frozenset({'requirements', 'acceptance', 'verification', 'handoff', 'review'})
 _PLAN_REVIEW_REQUIRED = frozenset({'requirements', 'acceptance', 'verification', 'handoff'})
 _TERMINAL_STATUSES = frozenset({'done', 'blocked'})
-_VALID_NEXT_OWNERS = frozenset({'planner', 'orchestrator', 'frontdesk', 'terminal'})
+_VALID_NEXT_OWNERS = frozenset({'planner', 'orchestrator', 'task_detailer', 'frontdesk', 'terminal'})
 _VALID_ORCHESTRATOR_ROUTES = frozenset(
     {'direct_execution', 'needs_detail', 'macro_adjustment_request', 'blocked', 'partial_completion'}
 )
@@ -92,16 +92,18 @@ _MAINLINE_STATUSES = frozenset(
 _LEGACY_STATUSES = frozenset({'needs_clarification', 'detail_ready', 'ready'})
 _VALID_STATUSES = _MAINLINE_STATUSES | _LEGACY_STATUSES
 _STATUS_EDGES = {
-    'draft': {'draft', 'needs_clarification', 'detail_ready', 'ready', 'ready_for_orchestration'},
+    'draft': {'draft', 'needs_clarification', 'detail_ready', 'ready', 'ready_for_orchestration', 'done'},
     'needs_clarification': {'needs_clarification', 'draft'},
     'detail_ready': {'detail_ready', 'ready', 'ready_for_orchestration'},
     'ready': {'ready', 'running'},
     'ready_for_orchestration': {
         'ready_for_orchestration',
+        'needs_clarification',
         'detail_ready',
         'running',
         'replan_required',
         'blocked',
+        'done',
     },
     'running': {'running', 'partial', 'replan_required', 'done', 'blocked'},
     'partial': {'partial', 'replan_required', 'done'},
@@ -426,7 +428,9 @@ def _has_round_evidence(record: dict[str, object], *, result: str) -> bool:
 
 
 def _owner_for_status(status: str) -> str:
-    if status in {'draft', 'needs_clarification', 'replan_required'}:
+    if status == 'needs_clarification':
+        return 'task_detailer'
+    if status in {'draft', 'replan_required'}:
         return 'planner'
     if status == 'detail_ready':
         return 'plan_reviewer'
@@ -443,7 +447,7 @@ def _default_next_owner_for_status(status: str) -> str:
     if status in {'ready_for_orchestration', 'ready', 'running'}:
         return 'orchestrator'
     if status == 'needs_clarification':
-        return 'frontdesk'
+        return 'task_detailer'
     return 'terminal'
 
 
@@ -507,6 +511,20 @@ def _payload(context, *, action: str, record: dict[str, object]) -> dict[str, ob
     }
 
 
+_STATUS_STOP_PATTERNS = {
+    'detail_ready': (
+        r'\bstop(?:s|ped|ping)?\s+(?:at|as|on)\s+`?detail_ready`?\b',
+        r'\bcontroller-visible\s+task\s+outcome\s+remains\s+`?detail_ready`?\b',
+        r'\bexpected\s+controller-visible\s+(?:task\s+)?(?:outcome|status|stop)\s+is\s+`?detail_ready`?\b',
+    ),
+    'replan_required': (
+        r'\bstop(?:s|ped|ping)?\s+(?:at|as|on)\s+`?replan_required`?\b',
+        r'\bcontroller-visible\s+task\s+outcome\s+remains\s+`?replan_required`?\b',
+        r'\bexpected\s+controller-visible\s+(?:task\s+)?(?:outcome|status|stop)\s+is\s+`?replan_required`?\b',
+    ),
+}
+
+
 def find_first_ready_task(context) -> dict[str, object] | None:
     plantree_root = Path(context.project.project_root) / 'docs' / 'plantree' / 'plans'
     if not plantree_root.is_dir():
@@ -518,7 +536,7 @@ def find_first_ready_task(context) -> dict[str, object] | None:
             if not isinstance(record, dict):
                 continue
             _validate_task_record(record)
-            action = _runner_action_for_record(record)
+            action = _runner_action_for_record(record, project_root=context.project.project_root)
             if (
                 action is not None
                 and action['action'] == 'execute'
@@ -550,7 +568,7 @@ def find_first_actionable_task(context, *, task_id: str | None = None) -> dict[s
             _validate_task_record(record)
             if requested_task_id and str(record.get('task_id') or '') != requested_task_id:
                 continue
-            action = _runner_action_for_record(record)
+            action = _runner_action_for_record(record, project_root=context.project.project_root)
             if action is None:
                 continue
             candidates.append({
@@ -589,13 +607,21 @@ def _runner_candidate_priority(item: dict[str, object], *, priority: dict[str, i
     return priority.get(action, 99), bound_execution
 
 
-def _runner_action_for_record(record: dict[str, object]) -> dict[str, str] | None:
+def _runner_action_for_record(
+    record: dict[str, object],
+    *,
+    project_root: Path | None = None,
+) -> dict[str, str] | None:
     if _has_activation_metadata(record):
-        return _activation_runner_action_for_record(record)
+        return _activation_runner_action_for_record(record, project_root=project_root)
     return _legacy_runner_action_for_record(record)
 
 
-def _activation_runner_action_for_record(record: dict[str, object]) -> dict[str, str] | None:
+def _activation_runner_action_for_record(
+    record: dict[str, object],
+    *,
+    project_root: Path | None = None,
+) -> dict[str, str] | None:
     current_loop = str(record.get('current_loop') or '').strip()
     status = str(record.get('status') or 'draft').strip().lower()
     next_owner = _validated_record_next_owner(record, status=status)
@@ -649,10 +675,17 @@ def _activation_runner_action_for_record(record: dict[str, object]) -> dict[str,
             'reason': 'running_task_bound_to_loop',
             'next_owner': 'orchestrator',
         }
+    if (
+        status in {'detail_ready', 'replan_required'}
+        and next_owner == 'planner'
+        and not current_loop
+        and _task_declares_status_stop(record, status=status, project_root=project_root)
+    ):
+        return None
     if status in {'draft', 'partial', 'replan_required', 'detail_ready'} and next_owner == 'planner' and not current_loop:
         return {'action': 'activate_planner', 'reason': f'{status}_task', 'next_owner': 'planner'}
-    if status == 'needs_clarification' and next_owner == 'frontdesk':
-        return {'action': 'paused', 'reason': 'needs_clarification', 'next_owner': 'frontdesk'}
+    if status == 'needs_clarification' and next_owner == 'task_detailer':
+        return {'action': 'paused', 'reason': 'needs_clarification', 'next_owner': 'task_detailer'}
     if next_owner == 'frontdesk':
         return {'action': 'paused', 'reason': f'{status}_task', 'next_owner': 'frontdesk'}
     return None
@@ -674,7 +707,7 @@ def _legacy_runner_action_for_record(record: dict[str, object]) -> dict[str, str
     if status in {'partial', 'replan_required'} and not current_loop:
         return {'action': 'activate_planner', 'reason': f'{status}_task', 'next_owner': 'planner'}
     if status == 'needs_clarification':
-        return {'action': 'paused', 'reason': 'needs_clarification', 'next_owner': 'frontdesk'}
+        return {'action': 'paused', 'reason': 'needs_clarification', 'next_owner': 'task_detailer'}
     if status == 'blocked':
         return {'action': 'blocked', 'reason': 'blocked_task', 'next_owner': 'terminal'}
     if status in {'done', 'cancelled'}:
@@ -732,6 +765,44 @@ def _orchestrator_route_for_record(record: dict[str, object]) -> str:
 def _detail_packet_ready(record: dict[str, object]) -> bool:
     artifacts = set((record.get('artifacts') or {}).keys()) if isinstance(record.get('artifacts'), dict) else set()
     return _DETAIL_READY_REQUIRED <= artifacts
+
+
+def _task_declares_status_stop(
+    record: dict[str, object],
+    *,
+    status: str,
+    project_root: Path | None,
+) -> bool:
+    patterns = _STATUS_STOP_PATTERNS.get(status)
+    if not patterns:
+        return False
+    text = _task_stop_contract_text(record, project_root=project_root).lower()
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _task_stop_contract_text(record: dict[str, object], *, project_root: Path | None) -> str:
+    sections = [
+        str(record.get('title') or ''),
+        str(record.get('activation_reason') or ''),
+    ]
+    if project_root is None:
+        return '\n'.join(sections)
+    artifacts = record.get('artifacts') if isinstance(record.get('artifacts'), dict) else {}
+    for kind in ('task_packet', 'execution_contract', 'orchestration_notes'):
+        artifact = artifacts.get(kind) if isinstance(artifacts, dict) else None
+        relative = str(artifact.get('path') or '').strip() if isinstance(artifact, dict) else ''
+        if not relative:
+            continue
+        path = project_root / relative
+        try:
+            resolved = path.resolve(strict=True)
+            root = project_root.resolve()
+        except FileNotFoundError:
+            continue
+        if resolved != root and root not in resolved.parents:
+            continue
+        sections.append(resolved.read_text(encoding='utf-8')[:12000])
+    return '\n'.join(sections)
 
 
 def task_execution_text(context, task_id: object) -> str:

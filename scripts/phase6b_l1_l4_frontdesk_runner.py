@@ -38,6 +38,10 @@ RESIDENT_ASK_TARGETS = RESIDENT_AGENT_TARGETS
 READY_RESIDENT_AGENT_STATES = frozenset({"idle"})
 RESIDENT_PS_ATTEMPTS = 3
 RESIDENT_PS_RETRY_DELAY_SECONDS = 0.5
+AUTO_RUNNER_QUIET_ATTEMPTS = 1200
+AUTO_RUNNER_QUIET_RETRY_DELAY_SECONDS = 1.0
+PLANNER_TASK_SET_WAIT_ATTEMPTS = 1200
+PLANNER_TASK_SET_WAIT_RETRY_DELAY_SECONDS = 1.0
 TERMINAL_JOB_STATUSES = frozenset(
     {"blocked", "canceled", "cancelled", "completed", "failed", "incomplete"}
 )
@@ -648,6 +652,7 @@ def write_fixtures(manifest: dict[str, Any]) -> None:
     (project / "lab_docs").mkdir(parents=True, exist_ok=True)
     (project / "lab_code").mkdir(parents=True, exist_ok=True)
     (project / "tests").mkdir(parents=True, exist_ok=True)
+    (project / "tests" / "__init__.py").write_text("", encoding="utf-8")
     (project / "supervisor_imports").mkdir(parents=True, exist_ok=True)
 
 
@@ -1115,6 +1120,62 @@ def planner_task_set_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def planner_task_set_handoff_state(manifest: dict[str, Any]) -> dict[str, Any]:
+    evidence = dict(planner_task_set_evidence(manifest))
+    project = Path(str(manifest["project"]))
+    frontdesk_job_id = _first_text(evidence.get("frontdesk_job_id"), _frontdesk_job_id_from_entry_log(manifest))
+    if frontdesk_job_id:
+        evidence["frontdesk_job_id"] = frontdesk_job_id
+        status = latest_job_status(project, "frontdesk", frontdesk_job_id)
+        if status:
+            evidence["frontdesk_job_status"] = status
+    planner_job_id = _first_text(evidence.get("planner_job_id"))
+    if planner_job_id:
+        status = latest_job_status(project, "planner", planner_job_id)
+        if status:
+            evidence["planner_job_status"] = status
+    return evidence
+
+
+def wait_for_planner_task_set_handoff(manifest: dict[str, Any], *, before: str) -> dict[str, Any]:
+    last_state: dict[str, Any] = {}
+    for _attempt in range(PLANNER_TASK_SET_WAIT_ATTEMPTS):
+        state = planner_task_set_handoff_state(manifest)
+        last_state = state
+        if state.get("fenced_task_set_present"):
+            return state
+        planner_status = str(state.get("planner_job_status") or "").strip().lower()
+        if state.get("planner_job_id") and planner_status in TERMINAL_JOB_STATUSES:
+            return state
+        time.sleep(PLANNER_TASK_SET_WAIT_RETRY_DELAY_SECONDS)
+    checkpoint = Path(str(manifest["root"])) / "pending-checkpoints" / (
+        f"{manifest['label']}__planner_task_set_handoff_pending_before_{before}.json"
+    )
+    payload = {
+        "schema_version": 1,
+        "record_type": "ccb_phase6b_l1_l4_planner_task_set_checkpoint",
+        "classification": "runner_resume_and_evidence_integrity",
+        "status": "checkpoint",
+        "reason": "frontdesk_planner_handoff_pending",
+        "claimable": False,
+        "root": manifest["root"],
+        "project": manifest["project"],
+        "label": manifest["label"],
+        "before": before,
+        "handoff_state": last_state,
+        "blocked_actions": ["manual start-task"],
+    }
+    _write_json(checkpoint, payload)
+    raise HarnessBlocker(
+        classification="runner_resume_and_evidence_integrity",
+        reason="frontdesk_planner_handoff_pending",
+        message=(
+            "frontdesk/planner handoff did not reach task-set evidence before "
+            f"{before}; checkpoint={checkpoint}"
+        ),
+    )
+
+
 def assert_planner_task_set_present(manifest: dict[str, Any]) -> dict[str, Any]:
     evidence = planner_task_set_evidence(manifest)
     if evidence.get("planner_job_id") and evidence.get("fenced_task_set_present"):
@@ -1428,6 +1489,70 @@ def assert_no_pending_authority(manifest: dict[str, Any], task_id: str | None = 
     )
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def auto_runner_lock_state(manifest: dict[str, Any]) -> dict[str, object]:
+    path = Path(str(manifest["project"])) / ".ccb" / "runtime" / "loops" / "auto-runner.lock"
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return {"status": "absent", "path": str(path), "reason": "lock_absent"}
+    first_line = raw.splitlines()[0].strip() if raw else ""
+    try:
+        pid = int(first_line)
+    except ValueError:
+        return {"status": "stale", "path": str(path), "reason": "invalid_pid", "raw": raw}
+    if _pid_alive(pid):
+        return {"status": "live", "path": str(path), "reason": "pid_alive", "pid": pid}
+    return {"status": "stale", "path": str(path), "reason": "pid_not_running", "pid": pid}
+
+
+def wait_for_auto_runner_quiet(manifest: dict[str, Any], *, before: str) -> None:
+    last_state: dict[str, object] = {}
+    for _attempt in range(AUTO_RUNNER_QUIET_ATTEMPTS):
+        state = auto_runner_lock_state(manifest)
+        last_state = state
+        if state.get("status") != "live":
+            return
+        time.sleep(AUTO_RUNNER_QUIET_RETRY_DELAY_SECONDS)
+    checkpoint = Path(str(manifest["root"])) / "pending-checkpoints" / (
+        f"{manifest['label']}__auto_runner_active_before_{before}.json"
+    )
+    payload = {
+        "schema_version": 1,
+        "record_type": "ccb_phase6b_l1_l4_auto_runner_checkpoint",
+        "classification": "runner_resume_and_evidence_integrity",
+        "status": "checkpoint",
+        "reason": "frontdesk_auto_runner_still_active",
+        "claimable": False,
+        "root": manifest["root"],
+        "project": manifest["project"],
+        "label": manifest["label"],
+        "before": before,
+        "auto_runner_lock": last_state,
+        "blocked_actions": ["manual start-task", "manual continue-route"],
+    }
+    _write_json(checkpoint, payload)
+    raise HarnessBlocker(
+        classification="runner_resume_and_evidence_integrity",
+        reason="frontdesk_auto_runner_still_active",
+        message=(
+            "frontdesk-spawned auto-runner is still active before manual "
+            f"{before}; checkpoint={checkpoint}"
+        ),
+    )
+
+
 def latest_job_status(project: Path, target: str, job_id: str) -> str | None:
     jobs_path = project / ".ccb" / "agents" / target / "jobs.jsonl"
     status: str | None = None
@@ -1659,9 +1784,15 @@ def mark_task_ready_for_orchestration(manifest: dict[str, Any], task_id: str) ->
 
 
 def start_task(manifest: dict[str, Any], task_id: str) -> None:
+    wait_for_planner_task_set_handoff(manifest, before=f"start_task_{task_id}")
     assert_planner_task_set_present(manifest)
     validate_sequence_task_set_only(manifest)
     task_id = resolve_sequence_task_id(manifest, task_id)
+    if task_record_exists(manifest, task_id):
+        payload = observe_task_record(manifest, task_id, f"{task_id}__task_observe_existing")
+        if task_record_is_already_started(payload):
+            return
+    wait_for_auto_runner_quiet(manifest, before=f"start_task_{task_id}")
     payload = ensure_task_record(manifest, task_id)
     if task_record_is_already_started(payload):
         return
@@ -1732,6 +1863,7 @@ def run_direct_execution_round(manifest: dict[str, Any], task_id: str) -> None:
 
 
 def continue_route(manifest: dict[str, Any], task_id: str, expected_route: str) -> None:
+    wait_for_auto_runner_quiet(manifest, before=f"continue_route_{task_id}")
     task_id = resolve_sequence_task_id(manifest, task_id)
     import_supervisor_route(manifest, task_id, expected_route)
     if expected_route == "direct_execution":
@@ -1819,29 +1951,35 @@ def continue_route(manifest: dict[str, Any], task_id: str, expected_route: str) 
 
 def continue_detail(manifest: dict[str, Any], task_id: str) -> None:
     task_id = resolve_sequence_task_id(manifest, task_id)
-    for kind, name in (
-        ("detail_design", "detail_design.md"),
-        ("detail_summary", "detail_summary.md"),
-        ("detail_packet", "detail_packet.manifest.json"),
-    ):
-        path = require_supervisor_file(manifest, task_id, name)
-        run_logged(
-            manifest,
-            f"{task_id}__import_{kind}",
-            ccb_project_args(
+    payload = observe_task_record(manifest, task_id, f"{task_id}__detail_observe_existing")
+    existing_detail = all(
+        task_record_has_artifact(payload, kind)
+        for kind in ("detail_design", "detail_summary", "detail_packet")
+    )
+    if not existing_detail:
+        for kind, name in (
+            ("detail_design", "detail_design.md"),
+            ("detail_summary", "detail_summary.md"),
+            ("detail_packet", "detail_packet.manifest.json"),
+        ):
+            path = require_supervisor_file(manifest, task_id, name)
+            run_logged(
                 manifest,
-                "plan",
-                "task-artifact",
-                "--task",
-                task_id,
-                "--kind",
-                kind,
-                "--file",
-                str(path),
-                "--json",
-            ),
-        )
-    require_supervisor_file(manifest, task_id, "steps/step-001.md")
+                f"{task_id}__import_{kind}",
+                ccb_project_args(
+                    manifest,
+                    "plan",
+                    "task-artifact",
+                    "--task",
+                    task_id,
+                    "--kind",
+                    kind,
+                    "--file",
+                    str(path),
+                    "--json",
+                ),
+            )
+        require_supervisor_file(manifest, task_id, "steps/step-001.md")
     run_logged(
         manifest,
         f"{task_id}__status_detail_ready",
@@ -1934,6 +2072,61 @@ def _task_status(manifest: dict[str, Any], task_id: str) -> dict[str, Any]:
     }
 
 
+def _task_artifacts(manifest: dict[str, Any], task_id: str) -> dict[str, Any]:
+    project = Path(str(manifest["project"]))
+    index_record = _task_index_record(project, task_id)
+    if not isinstance(index_record, dict):
+        return {}
+    artifacts = index_record.get("artifacts")
+    return artifacts if isinstance(artifacts, dict) else {}
+
+
+def _artifact_actor_source(record: object) -> str:
+    if not isinstance(record, dict):
+        return ""
+    actor = record.get("actor")
+    if not isinstance(actor, dict):
+        return ""
+    return str(actor.get("source") or "").strip()
+
+
+def _script_owned_artifact(record: object) -> bool:
+    return _artifact_actor_source(record) in {
+        "loop_runner",
+        "loop_runner/script-owned",
+        "loop_runner_role_output_import",
+    }
+
+
+def _task_route_evidence(manifest: dict[str, Any], task_id: str) -> dict[str, Any]:
+    artifacts = _task_artifacts(manifest, task_id)
+    notes = artifacts.get("orchestration_notes")
+    if isinstance(notes, dict):
+        route = _first_text(notes.get("orchestrator_route"), notes.get("route"))
+        if route:
+            return {
+                "observed_route": route,
+                "route_source": "task_index_orchestration_notes",
+                "route_artifact_path": _first_text(notes.get("path"), notes.get("artifact_path")),
+                "script_owned_route_imports": _script_owned_artifact(notes),
+            }
+    route_path = task_root(manifest, task_id) / "route.txt"
+    route = _read_text(route_path).strip()
+    if route:
+        return {
+            "observed_route": route,
+            "route_source": "supervisor_route_file",
+            "route_artifact_path": str(route_path),
+            "script_owned_route_imports": False,
+        }
+    return {
+        "observed_route": "missing",
+        "route_source": "missing",
+        "route_artifact_path": None,
+        "script_owned_route_imports": False,
+    }
+
+
 def _round_evidence(manifest: dict[str, Any], task_id: str) -> dict[str, Any]:
     project = Path(str(manifest["project"]))
     round_json_path, round_json = _round_json_for(project, task_id)
@@ -1960,6 +2153,72 @@ def _round_evidence(manifest: dict[str, Any], task_id: str) -> dict[str, Any]:
     }
 
 
+def _status_result_evidence(
+    case: dict[str, object],
+    status: dict[str, Any],
+    round_evidence: dict[str, Any],
+    artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    expected_route = str(case["expected_route"])
+    if expected_route == "direct_execution" or round_evidence["round_result"] != "missing":
+        summary = artifacts.get("round_summary") or artifacts.get("round_pass")
+        return {
+            "round_result": round_evidence["round_result"],
+            "round_result_source": round_evidence["round_result_source"],
+            "script_owned_round_imports": _script_owned_artifact(summary),
+        }
+    result_artifact_kind = {
+        "needs_detail": "detail_packet",
+        "macro_adjustment_request": "macro_adjustment_request",
+        "blocked": "blocker_evidence",
+    }.get(expected_route)
+    result_artifact = artifacts.get(result_artifact_kind) if result_artifact_kind else None
+    return {
+        "round_result": status["final_status"],
+        "round_result_source": "task_status",
+        "script_owned_round_imports": _script_owned_artifact(result_artifact),
+    }
+
+
+def _cleanup_evidence(
+    case: dict[str, object],
+    round_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if case["expected_route"] != "direct_execution":
+        return {
+            "cleanup_result": "not_applicable",
+            "runtime_residue": False,
+            "dynamic_unload_ok": True,
+            "release_released_count": None,
+            "release_retained_count": None,
+            "observed_dynamic_agents": None,
+        }
+    release = round_json.get("release") if isinstance(round_json, dict) else {}
+    if not isinstance(release, dict):
+        release = {}
+    observed = round_json.get("observed_topology") if isinstance(round_json, dict) else {}
+    if not isinstance(observed, dict):
+        observed = {}
+    agents = observed.get("agents")
+    observed_agents = agents if isinstance(agents, list) else []
+    released_count = release.get("released_count")
+    retained_count = release.get("retained_count")
+    unload_ok = (
+        isinstance(released_count, int)
+        and released_count >= len(DYNAMIC_LOOP_PROFILES)
+        and retained_count == 0
+        and len(observed_agents) == 0
+    )
+    return {
+        "cleanup_result": "clean" if unload_ok else "release_incomplete",
+        "runtime_residue": not unload_ok,
+        "dynamic_unload_ok": unload_ok,
+        "release_released_count": released_count,
+        "release_retained_count": retained_count,
+        "observed_dynamic_agents": len(observed_agents),
+    }
+
+
 def write_b7_report(manifest: dict[str, Any]) -> None:
     assert_no_pending_authority(manifest)
     planner_evidence = planner_task_set_evidence(manifest)
@@ -1975,16 +2234,27 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
     for case in TASKS:
         canonical_task_id = str(case["task_id"])
         task_id = aliases.get(canonical_task_id, canonical_task_id)
-        route_text = _read_text(task_root(manifest, task_id) / "route.txt").strip() or "missing"
+        route_evidence = _task_route_evidence(manifest, task_id)
+        route_text = str(route_evidence["observed_route"])
         status = _task_status(manifest, task_id)
         round_evidence = _round_evidence(manifest, task_id)
+        round_json_path, round_json = _round_json_for(project, task_id)
+        artifacts = _task_artifacts(manifest, task_id)
+        result_evidence = _status_result_evidence(case, status, round_evidence, artifacts)
+        cleanup_evidence = _cleanup_evidence(case, round_json)
         errors = []
         if route_text != case["expected_route"]:
             errors.append(f"route mismatch: {route_text}")
         if status["final_status"] != case["expected_final_status"]:
             errors.append(f"status mismatch: {status['final_status']}")
-        if round_evidence["round_result"] != case["expected_round_result"]:
-            errors.append(f"round/result mismatch: {round_evidence['round_result']}")
+        if result_evidence["round_result"] != case["expected_round_result"]:
+            errors.append(f"round/result mismatch: {result_evidence['round_result']}")
+        if not route_evidence["script_owned_route_imports"]:
+            errors.append("route import is not script-owned")
+        if not result_evidence["script_owned_round_imports"]:
+            errors.append("result import is not script-owned")
+        if cleanup_evidence["runtime_residue"]:
+            errors.append("runtime residue after round release")
         classification = "test_design_failure" if errors else str(case["expected_classification"])
         row = {
             "label": manifest["label"],
@@ -1994,6 +2264,10 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
             "task_id_alias_used": task_id != canonical_task_id,
             "expected_route": case["expected_route"],
             "observed_route": route_text,
+            "route_decision_correct": route_text == case["expected_route"],
+            "route_source": route_evidence["route_source"],
+            "route_artifact_path": route_evidence["route_artifact_path"],
+            "script_owned_route_imports": route_evidence["script_owned_route_imports"],
             "expected_final_status": case["expected_final_status"],
             "final_status": status["final_status"],
             "next_owner": status["next_owner"],
@@ -2003,8 +2277,11 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
             "round_summary_observed": round_evidence["round_summary_observed"],
             "round_summary_path": round_evidence["round_summary_path"],
             "round_json_path": round_evidence["round_json_path"],
-            "round_result": round_evidence["round_result"],
-            "round_result_source": round_evidence["round_result_source"],
+            "round_result": result_evidence["round_result"],
+            "round_result_source": result_evidence["round_result_source"],
+            "script_owned_round_imports": result_evidence["script_owned_round_imports"],
+            "provider_reply_authority_parsing_absent": True,
+            **cleanup_evidence,
             "unexpected_plan_tasks": unexpected,
             "planner_job_id": planner_evidence.get("planner_job_id"),
             "frontdesk_job_id": planner_evidence.get("frontdesk_job_id"),

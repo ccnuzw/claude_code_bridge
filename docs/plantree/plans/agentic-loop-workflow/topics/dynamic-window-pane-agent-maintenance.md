@@ -15,8 +15,10 @@ and panes are presentation and process containers, not workflow truth.
 
 Agent lifecycle policy is specified separately in
 [dynamic-agent-lifecycle-and-skills.md](dynamic-agent-lifecycle-and-skills.md).
-This document describes where panes go; it does not decide whether an agent
-should be hidden, parked, retained, or unloaded.
+This document describes where panes go; it does not decide durable authority.
+For the current V1 workflow surface, the default presentation policy is visible
+window placement rather than hidden background agents. Lifecycle still decides
+when an agent is released, retained busy, or unloaded after evidence import.
 
 ## Design Principle
 
@@ -215,6 +217,12 @@ Profiles outside that built-in set must provide explicit `window_name` or
 roles as old worker/checker compatibility.
 
 The pane limit is a readability constraint, not a workflow authority rule.
+
+Current V1 default: do not hide workflow roles merely to reduce pane count.
+Instead, keep active roles visible in the correct logical window and page
+execution workgroups across `ccb-exec`, `ccb-exec-2`, and later windows. Hidden
+or parked placement remains a lower-level lifecycle capability for explicit
+operator action or later product modes, not the default agentic-loop layout.
 
 ## Read-Only Placement Resolution
 
@@ -508,9 +516,9 @@ Suggested command examples:
 
 ```bash
 ccb agent add ccb_task_detailer:codex --role agentroles.ccb_task_detailer --window ccb-user --json
-ccb agent add ccb_round_reviewer:codex --role agentroles.ccb_round_reviewer --window ccb-plan --hidden --json
-ccb agent add coder1:codex --profile coder --window ccb-exec --hidden --json
-ccb agent add code_reviewer1:codex --profile code_reviewer --window ccb-exec --hidden --json
+ccb agent add ccb_round_reviewer:codex --role agentroles.ccb_round_reviewer --window ccb-plan --json
+ccb agent add coder1:codex --profile coder --window ccb-exec --json
+ccb agent add code_reviewer1:codex --profile code_reviewer --window ccb-exec --json
 ```
 
 ### Append-Only First, Reflow Later
@@ -925,7 +933,7 @@ profiles = ["coder", "code_reviewer"]
 
 [ui.windows.runtime]
 class = "runtime"
-hidden_by_default = true
+focus_by_default = false
 max_panes = 6
 ```
 
@@ -948,6 +956,19 @@ layout a second workflow system:
 6. Retain busy agents and release idle agents through runtime state, not raw
    tmux kills.
 7. Provide a read-only `ccb layout status --json` or equivalent diagnostic.
+
+V1 acceptance for this layout requires source tests that prove:
+
+- `ccb_frontdesk` and any active `ccb_task_detailer` land in `ccb-user`.
+- `ccb_planner`, `ccb_orchestrator`, and active `ccb_round_reviewer` land in
+  `ccb-plan`.
+- `coder` and `code_reviewer` land in `ccb-exec` pages in desired order, with
+  at most six panes per window.
+- The seventh active execution agent creates `ccb-exec-2`.
+- Releasing or parking enough execution agents compacts survivors back into
+  the earliest `ccb-exec` page and removes empty overflow pages.
+- Automatically assigned workflow roles remain `present`/visible by default;
+  hidden/parked states must be explicit.
 
 ## Fixed Pane Growth Order
 

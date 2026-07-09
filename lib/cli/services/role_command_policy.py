@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -91,7 +92,11 @@ def ensure_role_command_policy_supported(*, spec) -> RoleCommandPolicy | None:
         return None
     provider = str(getattr(spec, 'provider', '') or '').strip().lower()
     supported = policy.supported_providers or tuple(sorted(_SUPPORTED_HARD_ENFORCEMENT_PROVIDERS))
-    if role_command_policy_requires_enforcement(policy) and provider not in supported:
+    if (
+        role_command_policy_requires_enforcement(policy)
+        and provider not in supported
+        and not _allows_source_test_fake_provider(provider)
+    ):
         raise RuntimeError(
             'role command surface requires hard provider enforcement: '
             f'role={policy.role_id} provider={provider or "unknown"} supported_providers={",".join(supported)}'
@@ -103,6 +108,10 @@ def role_command_policy_requires_enforcement(policy: RoleCommandPolicy | None) -
     if policy is None:
         return False
     return policy.mode == 'deny_all_except' and policy.enforcement == 'required'
+
+
+def _allows_source_test_fake_provider(provider: str) -> bool:
+    return provider == 'fake' and os.environ.get('CCB_TEST_ENTRYPOINT') == '1'
 
 
 def role_command_policy_disables_inherited_assets(policy: RoleCommandPolicy | None) -> bool:

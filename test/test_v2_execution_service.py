@@ -2519,6 +2519,59 @@ def test_execution_service_codex_delivery_missing_session_file_degrades_after_no
     assert update.decision.diagnostics['no_reply_reason'] == 'completion_detection_gap'
 
 
+def test_execution_service_codex_runtime_not_ready_does_not_send_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from provider_execution import codex as codex_adapter_module
+    from provider_backends.codex.execution_runtime import start as codex_start_module
+
+    fixed_req_id = '20260318-000000-000-1-not-ready'
+    work_dir = tmp_path / 'repo'
+    work_dir_str = str(work_dir)
+    sent: list[tuple[str, str]] = []
+
+    class FakeBackend:
+        def send_text_to_pane(self, pane_id: str, text: str) -> None:
+            sent.append((pane_id, text))
+
+        def is_tmux_pane_alive(self, pane_id: str) -> bool:
+            return pane_id == '%38'
+
+    class FakeSession:
+        data = {'terminal': 'tmux'}
+        codex_session_path = ''
+        codex_session_id = ''
+        work_dir = work_dir_str
+
+        def ensure_pane(self):
+            return True, '%38'
+
+    monkeypatch.setattr(codex_adapter_module, 'load_project_session', lambda work_dir, instance=None: FakeSession())
+    monkeypatch.setattr(codex_adapter_module, 'get_backend_for_session', lambda data: FakeBackend())
+    monkeypatch.setattr(codex_start_module, 'wait_for_runtime_ready', lambda backend, pane_id: False)
+
+    service = ExecutionService(build_default_execution_registry(), clock=lambda: '2026-03-18T00:00:00Z')
+    job = _anchored_job_for_provider('codex', fixed_req_id, body='prompt')
+    service.start(job, runtime_context=_runtime_context(work_dir))
+
+    assert sent == []
+    updates = service.poll()
+
+    assert sent == []
+    assert len(updates) == 1
+    update = updates[0]
+    assert [item.kind for item in update.items] == [CompletionItemKind.ERROR]
+    assert update.items[0].payload['reason'] == 'runtime_unavailable'
+    assert update.items[0].payload['error'] == 'codex_runtime_not_ready'
+    assert update.decision is not None
+    assert update.decision.status is CompletionStatus.FAILED
+    assert update.decision.reason == 'runtime_unavailable'
+    assert update.decision.diagnostics['error_type'] == 'codex_runtime_not_ready'
+    assert update.decision.diagnostics['delivery_failure_kind'] == 'runtime_not_ready'
+    assert update.decision.diagnostics['delivery_retryable'] is True
+
+
 def test_execution_service_gemini_adapter_fails_without_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from provider_execution import gemini as gemini_adapter_module
 
@@ -2554,6 +2607,40 @@ class _NoResumeAdapter:
     def poll(self, submission: ProviderSubmission, *, now: str):
         del submission, now
         return None
+
+
+class _ResumableNoProgressAdapter:
+    provider = 'resume-no-progress'
+
+    def start(self, job: JobRecord, *, context, now: str) -> ProviderSubmission:
+        del context
+        return ProviderSubmission(
+            job_id=job.job_id,
+            agent_name=job.agent_name,
+            provider=self.provider,
+            accepted_at=now,
+            ready_at=now,
+            source_kind=CompletionSourceKind.PROTOCOL_EVENT_STREAM,
+            reply='partial commentary',
+            runtime_state={
+                'mode': 'active',
+                'request_anchor': job.job_id,
+                'anchor_seen': True,
+                'no_wrap': False,
+                'reply_buffer': 'partial commentary',
+            },
+        )
+
+    def poll(self, submission: ProviderSubmission, *, now: str):
+        del submission, now
+        return None
+
+    def resume(self, job, submission: ProviderSubmission, *, context, persisted_state, now: str):
+        del job, context, persisted_state, now
+        return submission
+
+    def export_runtime_state(self, submission: ProviderSubmission) -> dict[str, object]:
+        return dict(submission.runtime_state)
 
 
 class _ReliabilityTimeoutAdapter:
@@ -2882,6 +2969,46 @@ def test_execution_service_restore_recovers_terminal_pending_decision(tmp_path: 
     assert len(replayed) == 1
     assert replayed[0].decision is not None
     assert replayed[0].decision.reply == 'FAKE[agent1] terminal pending'
+
+
+def test_execution_service_restore_abandons_restarted_runtime_without_pending_replay(tmp_path: Path) -> None:
+    layout = PathLayout(tmp_path / 'repo-restarted-runtime-no-pending')
+    state_store = ExecutionStateStore(layout)
+    registry = ProviderExecutionRegistry([_ResumableNoProgressAdapter()])
+    service = ExecutionService(
+        registry,
+        clock=lambda: '2026-03-18T00:00:00Z',
+        state_store=state_store,
+    )
+    job = _job_for_provider('resume-no-progress', job_id='job_no_pending', body='continue me')
+    service.start(job, runtime_context=_runtime_context(tmp_path))
+
+    persisted = state_store.load(job.job_id)
+    assert persisted is not None
+    assert persisted.pending_items == ()
+    assert persisted.pending_decision is None
+    assert persisted.resume_capable is True
+
+    restarted_context = ProviderRuntimeContext(
+        agent_name='agent1',
+        workspace_path=str(tmp_path),
+        backend_type='pane-backed',
+        runtime_ref='codex:agent1:restored',
+        session_ref='session:agent1',
+        runtime_pid=456,
+        runtime_health='restored',
+    )
+    restarted = ExecutionService(
+        registry,
+        clock=lambda: '2026-03-18T00:00:01Z',
+        state_store=state_store,
+    )
+    restored = restarted.restore(job, runtime_context=restarted_context)
+
+    assert restored.restored is False
+    assert restored.status == 'abandoned'
+    assert restored.reason == 'provider_runtime_restarted_without_pending_replay'
+    assert state_store.load(job.job_id) is None
 
 
 def test_execution_service_restore_abandons_non_resumable_submission(tmp_path: Path) -> None:

@@ -42,6 +42,46 @@ recoverable workflow loops.
   fake-provider program-matrix scope, and Phase 6B is accepted for initial
   real-provider single-round capability with production/default enablement
   still out of scope.
+- [history/phase1-6-deployment-readiness-p1-dynamic-lifecycle-20260708.md](history/phase1-6-deployment-readiness-p1-dynamic-lifecycle-20260708.md):
+  P1 post-acceptance deployment-readiness evidence for real-project dynamic
+  release, busy-retain, UI/sidebar visibility, and observer timeout behavior;
+  not the final deployment-readiness report.
+- [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
+  P2 post-acceptance deployment-readiness evidence for real-project
+  frontdesk macro-intake pressure across direct, detail, macro-adjustment, and
+  blocked route shapes; not the final deployment-readiness report.
+- [history/phase1-6-deployment-readiness-p3-module-audit-20260708.md](history/phase1-6-deployment-readiness-p3-module-audit-20260708.md):
+  P3 six-module deployment-readiness audit across Plan/Task Document,
+  Orchestration, Mount Topology, Ask Collaboration, Dynamic Lifecycle, and
+  Evidence/Reporting; result is `PASS_WITH_LIMITS`, not production/default
+  enablement.
+- [history/phase1-6-deployment-readiness-report-20260708.md](history/phase1-6-deployment-readiness-report-20260708.md):
+  final deployment-readiness report, now including the post-fix fullflow
+  retest at
+  `/home/bfly/yunwei/test_ccb2/deploy-fullflow-talk2-selfrun-20260708202901`,
+  P5 source packaging gate status, and the post-gate automatic frontdesk stress
+  retest at
+  `/home/bfly/yunwei/test_ccb2/deploy-stress-talk2-selfrun-20260708205921`;
+  repeatability retest at
+  `/home/bfly/yunwei/test_ccb2/deploy-repeatability-talk2-202607082126`; and
+  real npm latest install smoke at
+  `/home/bfly/yunwei/test_ccb2/p5-real-npm-install-talk2-20260708212535`;
+  current-source preview release/install smoke at
+  `/home/bfly/yunwei/test_ccb2/p5-current-source-release-talk2-202607082205`;
+  installed-preview workflow closure smoke at
+  `/home/bfly/yunwei/test_ccb2/p5-installed-preview-smoke-talk2-202607082220`;
+  current source tree is ready for package-owner staging/release decisions,
+  while production/default enablement remains blocked.
+- [history/phase1-6-deployment-readiness-p5-packaging-gate-20260708.md](history/phase1-6-deployment-readiness-p5-packaging-gate-20260708.md):
+  P5 source packaging gate; source-wrapper smoke, source tests, npm dry-run,
+  project/local-prefix install smoke, global-prefix skip-download install
+  smoke, public npm latest install smoke, current-source preview release/install
+  smoke, installed-preview workflow closure smoke, and post-gate real-provider
+  automatic frontdesk stress/repeatability passes after fixing deterministic
+  fake-provider command-surface,
+  workspace-promotion, manual-checkpoint/auto-runner idempotence, and release
+  copy generated-output blockers. Release publication and production/default
+  enablement remain separate package-owner decisions.
 - [topics/phase1-6-active-supervision-board-20260704.md](topics/phase1-6-active-supervision-board-20260704.md):
   active `talk2` supervision lanes, current Phase 6B gates, and callback
   handling rules for the Phase 1-6 acceptance goal.
@@ -49,6 +89,25 @@ recoverable workflow loops.
   active post-acceptance deployment-readiness lane covering real-provider
   frontdesk entry, L1-L4 regression, dynamic lifecycle cleanup, UI/sidebar
   visibility, and observer behavior beyond the bounded Phase 6B claim.
+- [topics/phase1-6-deployment-readiness-acceptance-gate-20260708.md](topics/phase1-6-deployment-readiness-acceptance-gate-20260708.md):
+  strict checklist for direct `talk2` real-project validation after the
+  2026-07-08 ownership change; keeps rejection rules for script-only passes,
+  false dynamic unload, authority drift, frontdesk direct implementation, and
+  missing visible opened-project evidence.
+- [topics/phase1-6-p1-dynamic-lifecycle-runbook-20260708.md](topics/phase1-6-p1-dynamic-lifecycle-runbook-20260708.md):
+  next direct validation runbook for P1 dynamic lifecycle, busy-retain,
+  UI/sidebar, resident survival, observer timeout evidence, B7 row shape, and
+  stop conditions.
+- [topics/config-v3-dynamic-workflow.md](topics/config-v3-dynamic-workflow.md):
+  follow-up design lane for keeping `version = 2` static CCB config intact
+  while adding opt-in `version = 3` dynamic workflow config with required
+  workflow roles, provider/model settings, rolepack checks, validation rules,
+  migration direction, and source/runtime acceptance criteria.
+- [topics/config-v2-static-control-panel.md](topics/config-v2-static-control-panel.md):
+  companion design topic for a `version = 2` static layout control panel that
+  edits `[windows]` through a visual split builder, exposes agent overlays only
+  as folded details, and keeps validate/dry-run/apply behind the same config
+  authority boundary.
 - [topics/phase6b-real-provider-claim-coverage-matrix.md](topics/phase6b-real-provider-claim-coverage-matrix.md):
   Phase 6B real-provider claim requirements mapped to current evidence,
   final aggregation state, and remaining non-production boundaries.
@@ -239,8 +298,9 @@ recoverable workflow loops.
   planning target for dynamic agent release, 6->1 pane compaction, overflow
   window removal, busy-agent retain behavior, and live-agent safety gates.
 - [topics/context-purity.md](topics/context-purity.md): context-purity
-  principle, short-lived execution context policy, and role boundaries that
-  keep `frontdesk` and long-lived planning roles free of fast-changing noise.
+  principle, immaculate (`无垢`) activation contract, short-lived execution
+  context policy, and role boundaries that keep `frontdesk` and long-lived
+  planning roles free of fast-changing noise.
 - [topics/clarification-flow.md](topics/clarification-flow.md): staged
   clarification flow where planner emits macro candidate questions, broker
   filters them, `frontdesk` displays curated question references, and
@@ -323,6 +383,10 @@ recoverable workflow loops.
   decision to narrow topology to runtime mount state while keeping ordinary
   agent collaboration on `ask` and importing only stable outcomes through
   script-owned task/round artifacts.
+- [decisions/021-immaculate-role-context-lifecycle.md](decisions/021-immaculate-role-context-lifecycle.md):
+  decision that `orchestrator`, `task_detailer`, workers, reviewers, and round
+  reviewers are immaculate (`无垢`) activation-scoped roles, while only
+  `frontdesk` and `planner` retain compact long-lived conversation context.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and
@@ -361,22 +425,25 @@ In scope:
   macro task publication, roadmap/evidence hygiene, and readiness
   recommendations without carrying implementation detail.
 - A task detailer role that is resident and visible in the V1 `ccb-user`
-  topology, but is semantically activated only when orchestrator triage
-  requires detailed execution refinement; it turns macro task refs into
-  task-scoped detail docs and a detail packet, then returns normal outputs to
-  orchestrator and macro drift back to planner.
+  topology, but is semantically immaculate and activated with fresh context only
+  when orchestrator triage requires detailed execution refinement; it turns
+  macro task refs into task-scoped detail docs and a detail packet, then
+  returns normal outputs to orchestrator and macro drift back to planner.
 - A deterministic loop runner that reads short-term workflow state and starts
   or advances execution loops without relying on one agent's conversation
   memory.
 - An orchestrator role that decomposes a ready execution task into bounded
   work items, selects required execution agents, proposes mount topology for
   CCB scripts to validate/commit/reconcile, and coordinates normal
-  worker/reviewer/detailer collaboration through `ask`.
+  worker/reviewer/detailer collaboration through `ask`; its pane may be
+  resident for observability, but each task or round activation must be fresh.
 - A dynamic agent lifecycle layer where the V1 default visible baseline is
   four panes, `ccb_frontdesk + ccb_task_detailer` in `ccb-user` and
   `ccb_planner + ccb_orchestrator` in `ccb-plan`, while execution and
   round-review roles can be loaded and released after idle/evidence gates
-  through topology or lifecycle reconciliation.
+  through topology or lifecycle reconciliation. Visible baseline membership is
+  not a context-retention grant: `task_detailer` and `orchestrator` still follow
+  immaculate fresh-activation rules.
 - Dynamic execution nodes, each defaulting to a flat `worker + checker`
   structure. More complex node-internal teams are deferred until the work item
   cannot be safely split by orchestrator.

@@ -37,13 +37,14 @@ def append_task_complete_item(
     terminal_text = str(entry.get("last_agent_message") or "").strip()
     if terminal_text:
         poll.last_agent_message = clean_codex_reply_text(terminal_text, poll.request_anchor).strip()
+    payload = task_complete_payload(poll, terminal_text_present=bool(terminal_text))
     poll.items.append(
         build_item(
             submission,
             kind=CompletionItemKind.TURN_BOUNDARY,
             timestamp=now,
             seq=poll.next_seq,
-            payload=task_complete_payload(poll),
+            payload=payload,
         )
     )
     poll.next_seq += 1
@@ -72,11 +73,14 @@ def append_turn_aborted_item(
     poll.reached_terminal = True
 
 
-def task_complete_payload(poll: CodexPollState) -> dict[str, object]:
+def task_complete_payload(poll: CodexPollState, *, terminal_text_present: bool) -> dict[str, object]:
+    reply = selected_task_complete_reply(poll, terminal_text_present=terminal_text_present)
     payload: dict[str, object] = {
         "reason": "task_complete",
-        "last_agent_message": selected_reply(poll),
+        "last_agent_message": reply,
     }
+    if not reply and not terminal_text_present:
+        payload["empty_final_message"] = True
     add_binding_payload(payload, poll)
     return payload
 
@@ -101,6 +105,12 @@ def selected_reply(poll: CodexPollState) -> str:
         last_assistant_message=poll.last_assistant_message,
         reply_buffer=poll.reply_buffer,
     )
+
+
+def selected_task_complete_reply(poll: CodexPollState, *, terminal_text_present: bool) -> str:
+    if terminal_text_present:
+        return str(poll.last_agent_message or "").strip()
+    return str(poll.last_final_answer or "").strip()
 
 
 def add_binding_payload(payload: dict[str, object], poll: CodexPollState) -> None:

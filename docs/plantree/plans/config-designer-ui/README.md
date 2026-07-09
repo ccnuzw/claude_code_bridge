@@ -43,8 +43,8 @@ In scope:
 - Clean `ccb-config` skill guidance so it edits config only.
 - Present configurable fields as a clear menu/list grouped by user level.
 - Generate and validate `version = 2` windows topology by default.
-- Include the managed Neovim tool window by default in generated windows
-  topology, with opt-out by removing `[tool_windows.neovim]`.
+- Include the supported rich files surface by default in generated windows
+  topology through the `rich` layout alias, with opt-out by removing that alias.
 - Add a local browser config editor launched by a CLI command.
 - Add a sidebar icon that launches the same config editor.
 

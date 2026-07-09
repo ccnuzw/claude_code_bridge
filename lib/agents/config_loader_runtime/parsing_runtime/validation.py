@@ -39,9 +39,12 @@ def validate_project_config(
     source_path: Path | None = None,
     project_root: Path | None = None,
 ) -> ProjectConfig:
+    resolved_project_root = (
+        Path(project_root).expanduser().resolve() if project_root is not None else _project_root_from_source_path(source_path)
+    )
     document = _expand_role_id_shorthand(
         document,
-        project_root=Path(project_root).expanduser().resolve() if project_root is not None else _project_root_from_source_path(source_path),
+        project_root=resolved_project_root,
     )
     _validate_document_shape(document)
     windows = parse_topology_windows(document.get('windows'))
@@ -58,7 +61,7 @@ def validate_project_config(
     sidebar = parse_sidebar(document.get('ui'))
     sidebar_view = parse_sidebar_view(document.get('ui'))
     maintenance_heartbeat = _parse_maintenance_heartbeat(document)
-    loop_capacity = parse_loop_capacity(document.get('loop'))
+    loop_capacity = parse_loop_capacity(document.get('loop'), project_root=resolved_project_root)
     entry_window = _parse_entry_window(document)
     _validate_legacy_and_windows_fields(document, windows=windows, tool_windows=tool_windows)
     return _build_project_config(

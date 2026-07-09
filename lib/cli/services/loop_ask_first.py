@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import filecmp
+import fnmatch
 from io import StringIO
 import json
 from pathlib import Path
@@ -13,10 +14,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from agents.config_loader import load_project_config
-from cli.models import ParsedAskCommand
+from cli.models import ParsedAskCommand, ParsedClearCommand
 from storage.atomic import atomic_write_json, atomic_write_text
 
 from .ask import submit_ask, watch_ask_job
+from .clear import clear_agent_context
 from .loop_topology import loop_topology
 from .plan_tasks import plan_task, task_execution_text
 from .watch_fallback import load_persisted_terminal_watch_payload
@@ -26,11 +28,13 @@ REVIEWER_PROFILE = 'code_reviewer'
 ORCHESTRATOR_TARGET = 'ccb_orchestrator'
 ROUND_REVIEWER_TARGET = 'ccb_round_reviewer'
 ROUND_REVIEWER_FIELD = 'ccb_round_reviewer'
+ROUND_REVIEWER_CORRECTION_PURPOSE = 'ccb_round_reviewer_correction'
 LEGACY_ROUND_CHECKER_FIELD = 'round_checker'
 RUNNER_ASK_SENDER = 'system'
 ORCHESTRATOR_ROLE_ID = 'agentroles.ccb_orchestrator'
 ROUND_REVIEWER_ROLE_ID = 'agentroles.ccb_round_reviewer'
 MAX_PROMOTED_WORKSPACE_FILES = 50
+ROUND_REVIEWER_EVIDENCE_SNIPPET_LIMIT = 4000
 TEST_COMMAND_PREFIXES = (
     'test_command:',
     'test command:',
@@ -42,6 +46,10 @@ ALLOWED_CHANGE_PATH_PREFIXES = (
     'allowed change paths:',
     'allowed_change_path:',
     'allowed change path:',
+    'changed_files:',
+    'changed files:',
+)
+WORKER_CHANGED_FILE_PREFIXES = (
     'changed_files:',
     'changed files:',
 )
@@ -216,6 +224,7 @@ def run_ask_first_execution_round(context, command, services=None) -> dict[str, 
                 round_result='pass',
                 worker_agent=worker_agent,
                 task_text=task_text,
+                worker=worker,
             )
             if authority_failure is not None:
                 return _write_round_payload(
@@ -331,6 +340,7 @@ def run_ask_first_execution_round(context, command, services=None) -> dict[str, 
                     round_result='pass',
                     worker_agent=worker_agent,
                     task_text=task_text,
+                    worker=worker_rework,
                     allow_noop_verified=authority_update is not None,
                 )
                 if authority_failure is not None:
@@ -452,6 +462,51 @@ def run_ask_first_execution_round(context, command, services=None) -> dict[str, 
         round_reviewer_pending = _round_pending(round_reviewer)
         if round_reviewer_pending is not None:
             return pending_payload(round_reviewer_pending)
+        provisional_result, provisional_source, provisional_failure = _round_result(
+            {'loop_run_status': 'ok', ROUND_REVIEWER_FIELD: round_reviewer}
+        )
+        if provisional_source in {'missing_round_reviewer_result', 'unknown_round_result'}:
+            _append_event(
+                loop_dir,
+                loop_id=loop_id,
+                kind='round_reviewer_result_correction_requested',
+                payload={
+                    'task_id': task_id,
+                    'source': provisional_source,
+                    'job_id': round_reviewer.get('job_id'),
+                    'target': round_reviewer.get('target'),
+                    'unknown_round_result': (
+                        provisional_failure.get('unknown_round_result')
+                        if isinstance(provisional_failure, dict)
+                        else None
+                    ),
+                },
+            )
+            corrected_round_reviewer = _submit_and_watch(
+                context,
+                deps,
+                loop_dir=loop_dir,
+                loop_id=loop_id,
+                target=round_reviewer_agent,
+                sender='system',
+                purpose=ROUND_REVIEWER_CORRECTION_PURPOSE,
+                task_id=f'{loop_id}-round-reviewer-correction',
+                message=_round_reviewer_correction_message(
+                    task_id=task_id,
+                    original=round_reviewer,
+                    result_source=provisional_source,
+                    failure=provisional_failure,
+                ),
+                timeout=timeout,
+                defer_observation=bool(resume_progress['consumed_persisted_terminal']),
+            )
+            corrected_pending = _round_pending(corrected_round_reviewer)
+            if corrected_pending is not None:
+                return pending_payload(corrected_pending)
+            corrected_round_reviewer['correction_source_job_id'] = round_reviewer.get('job_id')
+            corrected_round_reviewer['correction_source_artifact'] = round_reviewer.get('artifact')
+            corrected_round_reviewer['correction_source_round_result_source'] = provisional_source
+            round_reviewer = corrected_round_reviewer
     except Exception as exc:
         failure = _ask_failure_record(exc, default_stage=stage)
         _restore_authority_update(context, authority_update, failure, reason='ask_failure_after_promotion')
@@ -587,6 +642,7 @@ def _deps(services):
     return SimpleNamespace(
         loop_topology=getattr(services, 'loop_topology', loop_topology),
         plan_task=getattr(services, 'plan_task', plan_task),
+        clear_agent_context=getattr(services, 'clear_agent_context', clear_agent_context),
         submit_ask=getattr(services, 'submit_ask', submit_ask),
         watch_ask_job=getattr(services, 'watch_ask_job', watch_ask_job),
         load_persisted_terminal_watch_payload=getattr(
@@ -1062,6 +1118,7 @@ def _write_submission_intent(
     ask_task_id: str,
     job_id: str | None = None,
     status: str = 'submitting',
+    freshness: dict[str, object] | None = None,
 ) -> dict[str, object]:
     path = _submission_intent_path(loop_dir)
     existing = _load_submission_intent(path)
@@ -1092,6 +1149,8 @@ def _write_submission_intent(
     if job_id:
         payload['job_id'] = job_id
         payload['accepted_at'] = now
+    if freshness is not None:
+        payload['freshness'] = freshness
     atomic_write_json(path, payload)
     return payload
 
@@ -1177,7 +1236,88 @@ def _submission_unknown_result(
         'pending_source': 'ask_submission_unknown',
         'observation_error': reason,
         'intent_path': str(_submission_intent_path(loop_dir)),
+        'freshness': intent.get('freshness'),
     }
+
+
+def _prepare_immaculate_activation(
+    context,
+    deps,
+    *,
+    loop_dir: Path,
+    loop_id: str,
+    target: str,
+    purpose: str,
+    stage: str,
+    ask_task_id: str,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        'schema_version': 1,
+        'record_type': 'ccb_immaculate_activation_freshness',
+        'loop_id': loop_id,
+        'target': target,
+        'purpose': purpose,
+        'stage': stage,
+        'ask_task_id': ask_task_id,
+        'required': True,
+        'freshness_mechanism': 'provider_native_clear_before_ask',
+        'created_at': _utc_now(),
+    }
+    try:
+        summary = deps.clear_agent_context(
+            context,
+            ParsedClearCommand(project=None, agent_names=(target,)),
+        )
+    except Exception as exc:
+        payload.update(
+            {
+                'status': 'unavailable',
+                'reason_detail': str(exc)[:300],
+            }
+        )
+    else:
+        payload['clear_summary'] = _compact_clear_summary(summary)
+        payload['status'] = _clear_status_for_target(summary, target)
+    _append_event(
+        loop_dir,
+        loop_id=loop_id,
+        kind='immaculate_activation_freshness',
+        payload=payload,
+    )
+    return payload
+
+
+def _compact_clear_summary(summary: object) -> dict[str, object]:
+    if not isinstance(summary, dict):
+        return {'status': 'unknown', 'raw_type': type(summary).__name__}
+    compact: dict[str, object] = {'status': summary.get('status')}
+    results = summary.get('results')
+    if isinstance(results, list):
+        compact['results'] = [
+            {
+                key: item.get(key)
+                for key in ('agent', 'status', 'reason', 'pane_id', 'command')
+                if isinstance(item, dict) and item.get(key) is not None
+            }
+            for item in results
+            if isinstance(item, dict)
+        ]
+    return compact
+
+
+def _clear_status_for_target(summary: object, target: str) -> str:
+    if not isinstance(summary, dict):
+        return 'unknown'
+    results = summary.get('results')
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get('agent') or '').strip() == target:
+                status = str(item.get('status') or '').strip()
+                return status or 'unknown'
+    status = str(summary.get('status') or '').strip()
+    return status or 'unknown'
 
 
 def _accepted_submission_persistence_unknown_result(
@@ -1263,7 +1403,7 @@ def _submit_and_watch(
     if intent is not None:
         intent_job_id = str(intent.get('job_id') or '').strip()
         if intent_job_id:
-            return _watch_or_recover_job(
+            result = _watch_or_recover_job(
                 context,
                 deps,
                 loop_dir=loop_dir,
@@ -1277,6 +1417,9 @@ def _submit_and_watch(
                 timeout=timeout,
                 allow_live_watch=False,
             )
+            if isinstance(intent.get('freshness'), dict):
+                result['freshness'] = dict(intent['freshness'])
+            return result
         return _submission_unknown_result(
             loop_dir,
             loop_id=loop_id,
@@ -1286,6 +1429,16 @@ def _submit_and_watch(
             stage=stage,
             intent=intent,
         )
+    freshness = _prepare_immaculate_activation(
+        context,
+        deps,
+        loop_dir=loop_dir,
+        loop_id=loop_id,
+        target=target,
+        purpose=purpose,
+        stage=stage,
+        ask_task_id=task_id,
+    )
     _write_submission_intent(
         loop_dir,
         loop_id=loop_id,
@@ -1294,6 +1447,7 @@ def _submit_and_watch(
         purpose=purpose,
         stage=stage,
         ask_task_id=task_id,
+        freshness=freshness,
     )
     try:
         summary = deps.submit_ask(
@@ -1321,6 +1475,7 @@ def _submit_and_watch(
             ask_task_id=task_id,
             job_id=job_id,
             status='accepted',
+            freshness=freshness,
         )
     except Exception as exc:
         return _accepted_submission_persistence_unknown_result(
@@ -1342,6 +1497,7 @@ def _submit_and_watch(
             sender=RUNNER_ASK_SENDER,
             purpose=purpose,
             job_id=job_id,
+            freshness=freshness,
         )
     except Exception as exc:
         return _accepted_submission_persistence_unknown_result(
@@ -1371,6 +1527,7 @@ def _submit_and_watch(
             'watch_source': 'not_started',
             'watch_observation': 'deferred_after_persisted_recovery',
             'observation_error': reason,
+            'freshness': freshness,
         }
         _append_event(
             loop_dir,
@@ -1386,7 +1543,7 @@ def _submit_and_watch(
             },
         )
         return result
-    return _watch_or_recover_job(
+    result = _watch_or_recover_job(
         context,
         deps,
         loop_dir=loop_dir,
@@ -1400,6 +1557,8 @@ def _submit_and_watch(
         timeout=timeout,
         allow_live_watch=not defer_observation,
     )
+    result['freshness'] = freshness
+    return result
 
 
 def _watch_or_recover_job(
@@ -1566,7 +1725,8 @@ def _ask_result_from_retry_aware_payload(
     retry_lineage: tuple[str, ...] = (),
 ) -> dict[str, object]:
     status = str(_payload_value(payload, 'status') or '').strip()
-    if status != 'failed':
+    retryable_terminal_status = status in {'failed', 'incomplete'}
+    if not retryable_terminal_status:
         result = _ask_result_from_watch_payload(
             loop_dir,
             loop_id=loop_id,
@@ -1944,6 +2104,14 @@ def _round_reviewer_message(
     rework_lines = _rework_evidence_lines(rework)
     authority_lines = _authority_update_evidence_lines(authority_update)
     expected_result_lines = _expected_round_result_lines(task_text)
+    evidence_lines = ''.join(
+        _round_reviewer_reply_evidence(label, evidence)
+        for label, evidence in (
+            ('Worker', worker),
+            ('Reviewer', reviewer),
+            ('Orchestrator', orchestrator),
+        )
+    )
     return (
         'FINAL ANSWER FORMAT - parser enforced:\n'
         '- Do not describe what you are about to do.\n'
@@ -1968,6 +2136,8 @@ def _round_reviewer_message(
         f'Orchestrator job: {orchestrator.get("job_id")} status={orchestrator.get("status")}\n\n'
         f'{rework_lines}'
         f'{authority_lines}'
+        'Supplied round evidence artifacts:\n'
+        f'{evidence_lines}'
         'Task packet and execution contract evidence:\n'
         f'{task_text}\n\n'
         'Repeat the machine output protocol:\n'
@@ -1981,6 +2151,62 @@ def _round_reviewer_message(
         '- hidden fallback/scope shrink/fake success audit\n'
         '- evidence refs\n'
         '- recommended next owner'
+    )
+
+
+def _round_reviewer_reply_evidence(label: str, evidence: dict[str, object]) -> str:
+    artifact = str(evidence.get('artifact') or '').strip()
+    lines = [
+        f'{label} reply artifact: {artifact or "<missing>"}',
+    ]
+    if artifact:
+        try:
+            text = Path(artifact).read_text(encoding='utf-8').strip()
+        except OSError as exc:
+            text = f'<artifact read failed: {exc.__class__.__name__}: {exc}>'
+        truncated = len(text) > ROUND_REVIEWER_EVIDENCE_SNIPPET_LIMIT
+        snippet = text[:ROUND_REVIEWER_EVIDENCE_SNIPPET_LIMIT] if text else '<empty>'
+        suffix = ' (truncated)' if truncated else ''
+        lines.extend([
+            f'{label} reply content{suffix}:',
+            '```text',
+            snippet,
+            '```',
+        ])
+    lines.append('')
+    return '\n'.join(lines) + '\n'
+
+
+def _round_reviewer_correction_message(
+    *,
+    task_id: str,
+    original: dict[str, object],
+    result_source: str,
+    failure: dict[str, object] | None,
+) -> str:
+    unknown = ''
+    if isinstance(failure, dict) and failure.get('unknown_round_result'):
+        unknown = f"Unknown first-line value observed: {failure.get('unknown_round_result')}\n"
+    first_line = _first_non_empty_reply_line(str(original.get('reply') or '')) or '<missing>'
+    return (
+        'Your previous ccb_round_reviewer reply could not be imported by the runner.\n'
+        f'Task: {task_id}\n'
+        f"Previous reviewer job: {original.get('job_id')}\n"
+        f"Previous reply artifact: {original.get('artifact')}\n"
+        f'Import failure: {result_source}\n'
+        f'Previous first non-empty line: {first_line}\n'
+        f'{unknown}'
+        '\n'
+        'Return a corrected machine-readable result for the same evidence.\n'
+        'Do not run tests, tools, shell commands, CCB commands, or workflow wrappers.\n'
+        'Do not infer from this correction request alone; use the evidence you already reviewed.\n'
+        'If that evidence is insufficient, the first line must be exactly: round result: blocked\n'
+        '\n'
+        'FINAL ANSWER FORMAT - parser enforced:\n'
+        '- The first non-empty line MUST be exactly one standalone machine field:\n'
+        '  round result: <pass|partial|replan_required|blocked>\n'
+        '- No preamble, heading, Markdown fence, bullet, quote, or backticks before that line.\n'
+        '- A later machine line after prose is invalid and will still block the round.\n'
     )
 
 
@@ -2194,7 +2420,13 @@ def _round_summary_text(
 def _round_result(payload: dict[str, object]) -> tuple[str, str, dict[str, object] | None]:
     declared, unknown, source_field = _declared_round_result(payload)
     if declared is not None:
-        source = 'round_checker_reply' if source_field == LEGACY_ROUND_CHECKER_FIELD else 'round_reviewer_reply'
+        reviewer = payload.get(ROUND_REVIEWER_FIELD) if isinstance(payload.get(ROUND_REVIEWER_FIELD), dict) else {}
+        if source_field == LEGACY_ROUND_CHECKER_FIELD:
+            source = 'round_checker_reply'
+        elif str(reviewer.get('purpose') or '') == ROUND_REVIEWER_CORRECTION_PURPOSE:
+            source = 'round_reviewer_correction_reply'
+        else:
+            source = 'round_reviewer_reply'
         return declared, source, None
     if unknown:
         return (
@@ -2339,6 +2571,7 @@ def _promote_project_root_authority(
     round_result: str,
     worker_agent: str,
     task_text: str,
+    worker: dict[str, object] | None = None,
     allow_noop_verified: bool = False,
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     if round_result != 'pass':
@@ -2414,8 +2647,20 @@ def _promote_project_root_authority(
     project_root = Path(context.project.project_root)
     if _same_resolved_path(workspace_path, project_root):
         return None, None
+    allowed_change_paths = _declared_allowed_change_paths(task_text)
     changed_files = _changed_workspace_files(workspace_path, project_root)
     deleted_files = _deleted_workspace_files(workspace_path, project_root, workspace_mode=workspace_mode)
+    ignored_control_changed_files: list[str] = []
+    ignored_control_deleted_files: list[str] = []
+    if workspace_mode == 'copy':
+        changed_files, ignored_control_changed_files = _ignore_copy_workspace_control_drift(
+            changed_files,
+            allowed_change_paths,
+        )
+        deleted_files, ignored_control_deleted_files = _ignore_copy_workspace_control_drift(
+            deleted_files,
+            allowed_change_paths,
+        )
     if len(changed_files) > MAX_PROMOTED_WORKSPACE_FILES:
         reason = (
             f'worker workspace changed more than {MAX_PROMOTED_WORKSPACE_FILES} files; '
@@ -2433,6 +2678,8 @@ def _promote_project_root_authority(
             'workspace_binding': str(binding_path),
             'changed_files': changed_files[:MAX_PROMOTED_WORKSPACE_FILES],
             'changed_file_count': len(changed_files),
+            'ignored_control_changed_files': ignored_control_changed_files,
+            'ignored_control_deleted_files': ignored_control_deleted_files,
         }
     if deleted_files:
         reason = (
@@ -2451,8 +2698,33 @@ def _promote_project_root_authority(
             'workspace_binding': str(binding_path),
             'changed_files': changed_files,
             'deleted_files': deleted_files,
+            'ignored_control_changed_files': ignored_control_changed_files,
+            'ignored_control_deleted_files': ignored_control_deleted_files,
         }
     if not changed_files:
+        already_applied = _already_applied_declared_workspace_files(
+            workspace_path,
+            project_root,
+            allowed_change_paths,
+            worker,
+        )
+        if already_applied:
+            return {
+                'source': 'isolated_workspace_declared_changes_already_project_root',
+                'stage': 'round_authority',
+                'operation': 'verify_worker_declared_files_match_project_root',
+                'worker_agent': worker_agent,
+                'workspace_mode': workspace_mode or None,
+                'workspace_path': str(workspace_path),
+                'project_root': str(project_root),
+                'workspace_binding': str(binding_path),
+                'changed_files': already_applied,
+                'allowed_change_paths': allowed_change_paths,
+                'ignored_control_changed_files': ignored_control_changed_files,
+                'ignored_control_deleted_files': ignored_control_deleted_files,
+                'verified_project_root': True,
+                '_project_root_rollback': {},
+            }, None
         if allow_noop_verified:
             return {
                 'source': 'isolated_workspace_changes_already_promoted',
@@ -2464,7 +2736,9 @@ def _promote_project_root_authority(
                 'project_root': str(project_root),
                 'workspace_binding': str(binding_path),
                 'changed_files': [],
-                'allowed_change_paths': _declared_allowed_change_paths(task_text),
+                'allowed_change_paths': allowed_change_paths,
+                'ignored_control_changed_files': ignored_control_changed_files,
+                'ignored_control_deleted_files': ignored_control_deleted_files,
                 'verified_project_root': True,
                 '_project_root_rollback': {},
             }, None
@@ -2483,8 +2757,9 @@ def _promote_project_root_authority(
             'project_root': str(project_root),
             'workspace_binding': str(binding_path),
             'changed_files': [],
+            'ignored_control_changed_files': ignored_control_changed_files,
+            'ignored_control_deleted_files': ignored_control_deleted_files,
         }
-    allowed_change_paths = _declared_allowed_change_paths(task_text)
     if not allowed_change_paths:
         reason = (
             'worker workspace has project-root deltas, but task packet/execution contract did not declare '
@@ -2502,6 +2777,8 @@ def _promote_project_root_authority(
             'workspace_binding': str(binding_path),
             'changed_files': changed_files,
             'allowed_change_paths': [],
+            'ignored_control_changed_files': ignored_control_changed_files,
+            'ignored_control_deleted_files': ignored_control_deleted_files,
         }
     out_of_scope = [
         changed_file
@@ -2523,6 +2800,8 @@ def _promote_project_root_authority(
             'changed_files': changed_files,
             'allowed_change_paths': allowed_change_paths,
             'out_of_scope_files': out_of_scope,
+            'ignored_control_changed_files': ignored_control_changed_files,
+            'ignored_control_deleted_files': ignored_control_deleted_files,
         }
     rollback = _capture_project_files(project_root, changed_files)
     try:
@@ -2538,6 +2817,8 @@ def _promote_project_root_authority(
                 'project_root': str(project_root),
                 'workspace_binding': str(binding_path),
                 'changed_files': changed_files,
+                'ignored_control_changed_files': ignored_control_changed_files,
+                'ignored_control_deleted_files': ignored_control_deleted_files,
             }
         )
         return None, failure
@@ -2558,6 +2839,8 @@ def _promote_project_root_authority(
             'project_root': str(project_root),
             'workspace_binding': str(binding_path),
             'changed_files': unapplied,
+            'ignored_control_changed_files': ignored_control_changed_files,
+            'ignored_control_deleted_files': ignored_control_deleted_files,
         }
     return {
         'source': 'isolated_workspace_changes_promoted',
@@ -2570,6 +2853,8 @@ def _promote_project_root_authority(
         'workspace_binding': str(binding_path),
         'changed_files': changed_files,
         'allowed_change_paths': allowed_change_paths,
+        'ignored_control_changed_files': ignored_control_changed_files,
+        'ignored_control_deleted_files': ignored_control_deleted_files,
         'verified_project_root': True,
         '_project_root_rollback': rollback,
     }, None
@@ -2793,7 +3078,10 @@ def _declared_allowed_change_paths(task_text: str) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for path in declared:
+        directory_scope = path.strip().strip('`"\'').endswith(('/', '\\'))
         relative = _safe_relative_path(path).as_posix()
+        if directory_scope:
+            relative = relative.rstrip('/') + '/'
         if relative in seen:
             continue
         normalized.append(relative)
@@ -2832,11 +3120,96 @@ def _path_allowed_by_scope(changed_file: str, allowed_change_paths: list[str]) -
         scope_path = Path(scope)
         if changed == scope:
             return True
+        if _scope_has_glob(scope) and fnmatch.fnmatchcase(changed, scope):
+            return True
         if changed_path.suffix and not scope_path.suffix and changed_path.with_suffix('').as_posix() == scope:
             return True
         if allowed.endswith('/') and changed.startswith(scope.rstrip('/') + '/'):
             return True
     return False
+
+
+def _ignore_copy_workspace_control_drift(
+    paths: list[str],
+    allowed_change_paths: list[str],
+) -> tuple[list[str], list[str]]:
+    kept: list[str] = []
+    ignored: list[str] = []
+    for path in paths:
+        if _path_allowed_by_scope(path, allowed_change_paths):
+            kept.append(path)
+            continue
+        try:
+            relative = _safe_relative_path(path)
+        except ValueError:
+            kept.append(path)
+            continue
+        if _copy_workspace_control_drift_relative(relative):
+            ignored.append(relative.as_posix())
+            continue
+        kept.append(path)
+    return kept, ignored
+
+
+def _already_applied_declared_workspace_files(
+    workspace_path: Path,
+    project_root: Path,
+    allowed_change_paths: list[str],
+    worker: dict[str, object] | None,
+) -> list[str]:
+    declared = _declared_worker_changed_files(worker)
+    if not declared or not allowed_change_paths:
+        return []
+    verified: list[str] = []
+    for changed_file in declared:
+        try:
+            relative = _safe_relative_path(changed_file)
+        except ValueError:
+            return []
+        normalized = relative.as_posix()
+        if not _path_allowed_by_scope(normalized, allowed_change_paths):
+            return []
+        source = workspace_path / relative
+        destination = project_root / relative
+        if not source.is_file() or not destination.is_file():
+            return []
+        if not filecmp.cmp(source, destination, shallow=False):
+            return []
+        verified.append(normalized)
+    return _unique_paths(verified)
+
+
+def _declared_worker_changed_files(worker: dict[str, object] | None) -> list[str]:
+    if not isinstance(worker, dict):
+        return []
+    reply = str(worker.get('reply') or '')
+    declared: list[str] = []
+    for raw_line in reply.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        line = stripped.lstrip('-*').strip()
+        lower = line.lower()
+        for prefix in WORKER_CHANGED_FILE_PREFIXES:
+            if lower.startswith(prefix):
+                declared.extend(_split_declared_paths(line.split(':', 1)[1]))
+                break
+    return _unique_paths(declared)
+
+
+def _copy_workspace_control_drift_relative(relative: Path) -> bool:
+    parts = relative.parts
+    if not parts:
+        return False
+    if parts[0] in {'logs', 'evidence'}:
+        return True
+    if relative.as_posix() == 'command_log.tsv':
+        return True
+    return len(parts) >= 3 and parts[:3] == ('docs', 'plantree', 'plans')
+
+
+def _scope_has_glob(scope: str) -> bool:
+    return any(marker in scope for marker in ('*', '?', '['))
 
 
 def _capture_project_files(project_root: Path, changed_files: list[str]) -> dict[str, bytes | None]:
@@ -3238,6 +3611,7 @@ def _append_ask(
     sender: str,
     purpose: str,
     job_id: str,
+    freshness: dict[str, object] | None = None,
 ) -> dict[str, object]:
     record = {
         'schema_version': 1,
@@ -3251,6 +3625,8 @@ def _append_ask(
         'job_id': job_id,
         'status': 'submitted',
     }
+    if freshness is not None:
+        record['freshness'] = freshness
     _append_jsonl(loop_dir / 'asks.jsonl', record)
     return record
 

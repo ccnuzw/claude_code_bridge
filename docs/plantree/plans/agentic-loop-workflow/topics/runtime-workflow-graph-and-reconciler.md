@@ -63,9 +63,9 @@ window names when a desired agent does not provide an explicit `window_name` or
 
 | Logical Window | Default Window | Profiles | Lifecycle Default |
 | :--- | :--- | :--- | :--- |
-| Window 1: user interaction | `ccb-user` | `ccb_frontdesk`, `ccb_task_detailer` | Long-lived/on-demand; hide or park before unload. |
-| Window 2: planning and orchestration | `ccb-plan` | `ccb_planner`, `ccb_orchestrator`, `ccb_round_reviewer` | Long-lived or semi-resident; hide or park before unload. |
-| Window 3+: execution workgroups | `ccb-exec`, `ccb-exec-2`, ... | `coder`, `code_reviewer` | Short-lived; unload only after idle/evidence gates. |
+| Window 1: user interaction | `ccb-user` | `ccb_frontdesk`, `ccb_task_detailer` | Visible; resident or on-demand, but context rules stay role-specific. |
+| Window 2: planning and orchestration | `ccb-plan` | `ccb_planner`, `ccb_orchestrator`, `ccb_round_reviewer` | Visible; planner may retain compact context, immaculate roles clear per activation. |
+| Window 3+: execution workgroups | `ccb-exec`, `ccb-exec-2`, ... | `coder`, `code_reviewer` | Visible while active; unload only after idle/evidence gates. |
 
 `ccb_round_reviewer` belongs in Window 2 because it reviews whole-round
 evidence and feeds planner/orchestrator decisions for the next loop. It is
@@ -77,6 +77,14 @@ recommended `coder + code_reviewer` work unit, one execution window holds up to
 three work units. The seventh execution agent starts `ccb-exec-2`; after
 release or park removes active execution agents, later agents are moved back
 into the first available execution window during reconcile.
+
+The current V1 product direction deliberately avoids hidden default placement
+for workflow roles. Visibility is controlled by deterministic windows rather
+than backgrounding the agent: `ccb-user` holds the user-facing boundary and
+task-local detail surface, `ccb-plan` holds planning/orchestration/round
+review, and `ccb-exec*` pages hold execution workgroups. Context freshness is
+still enforced separately by the immaculate-role contract; visible residency is
+not permission to reuse old conversation state.
 
 ## Runtime Files
 

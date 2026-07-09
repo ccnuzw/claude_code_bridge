@@ -16,6 +16,7 @@ class ParsedAskCommand:
     silence: bool = False
     callback: bool = False
     artifact_request: bool = False
+    inline_request: bool = False
     artifact_reply: bool = False
     kind: str = 'ask'
 

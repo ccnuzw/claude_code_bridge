@@ -186,6 +186,32 @@ def test_plan_parser_supports_v1_task_commands() -> None:
     )
 
 
+def test_plan_task_ready_for_orchestration_can_pause_for_clarification(tmp_path: Path) -> None:
+    project_root = _project_with_plan(tmp_path)
+    _make_ready_task(project_root, task_id='external-sync-contract')
+
+    code, payload, _out, err = _run_phase2(
+        [
+            'plan',
+            'task-status',
+            '--task',
+            'external-sync-contract',
+            '--status',
+            'needs_clarification',
+            '--activation-reason',
+            'needs_clarification_from_task_detailer',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+
+    assert code == 0, err
+    assert payload['task']['status'] == 'needs_clarification'
+    assert payload['task']['owner'] == 'task_detailer'
+    assert payload['task']['next_owner'] == 'task_detailer'
+    assert payload['task']['activation_reason'] == 'needs_clarification_from_task_detailer'
+
+
 def test_plan_task_packet_flow_enforces_review_before_ready(tmp_path: Path) -> None:
     project_root = _project_with_plan(tmp_path)
     drafts = project_root / 'drafts'

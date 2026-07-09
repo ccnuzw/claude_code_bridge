@@ -33,6 +33,7 @@ from provider_backends.claude.launcher_runtime.home import (
 from provider_backends.codex import launcher as codex_launcher
 from provider_backends.droid import launcher as droid_launcher
 from provider_backends.gemini import launcher as gemini_launcher
+from provider_backends.grok import home as grok_home
 from provider_backends.mimo import launcher as mimo_launcher
 from provider_backends.opencode import launcher as opencode_launcher
 from provider_backends.agy import launcher as agy_launcher
@@ -56,6 +57,7 @@ def _spec(
     role: str | None = None,
     startup_args: tuple[str, ...] = (),
     provider_command_template: str | None = None,
+    restore_default: RestoreMode = RestoreMode.AUTO,
 ) -> AgentSpec:
     return AgentSpec(
         name=name,
@@ -65,7 +67,7 @@ def _spec(
         workspace_mode=WorkspaceMode.GIT_WORKTREE,
         workspace_root=None,
         runtime_mode=RuntimeMode.PANE_BACKED,
-        restore_default=RestoreMode.AUTO,
+        restore_default=restore_default,
         permission_default=PermissionMode.MANUAL,
         queue_policy=QueuePolicy.SERIAL_PER_AGENT,
         provider_command_template=provider_command_template,
@@ -110,6 +112,11 @@ def _write_provider_profile(runtime_dir: Path, profile: ResolvedProviderProfile)
         json.dumps(profile.to_record(), ensure_ascii=False, indent=2),
         encoding='utf-8',
     )
+
+
+@pytest.fixture(autouse=True)
+def _modern_claude_cli_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(claude_launcher, 'claude_cli_supports_flag', lambda cmd_parts, flag: True)
 
 
 def _project_memory_path(project_root: Path) -> Path:
@@ -1725,6 +1732,7 @@ def test_provider_start_parts_respect_env_override(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv('CURSOR_START_CMD', '/tmp/stub-cursor --profile test')
     monkeypatch.setenv('COPILOT_START_CMD', '/tmp/stub-copilot --profile test')
     monkeypatch.setenv('CRUSH_START_CMD', '/tmp/stub-crush --profile test')
+    monkeypatch.setenv('GROK_START_CMD', '/tmp/stub-grok --profile test')
     monkeypatch.setenv('KIRO_START_CMD', '/tmp/stub-kiro --profile test')
     monkeypatch.setenv('PI_START_CMD', '/tmp/stub-pi --profile test')
     monkeypatch.setenv('ZAI_START_CMD', '/tmp/stub-zai --profile test')
@@ -1737,6 +1745,7 @@ def test_provider_start_parts_respect_env_override(monkeypatch: pytest.MonkeyPat
     assert runtime_launch._provider_start_parts('cursor') == ['/tmp/stub-cursor', '--profile', 'test']
     assert runtime_launch._provider_start_parts('copilot') == ['/tmp/stub-copilot', '--profile', 'test']
     assert runtime_launch._provider_start_parts('crush') == ['/tmp/stub-crush', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('grok') == ['/tmp/stub-grok', '--profile', 'test']
     assert runtime_launch._provider_start_parts('kiro') == ['/tmp/stub-kiro', '--profile', 'test']
     assert runtime_launch._provider_start_parts('pi') == ['/tmp/stub-pi', '--profile', 'test']
     assert runtime_launch._provider_start_parts('zai') == ['/tmp/stub-zai', '--profile', 'test']
@@ -1758,6 +1767,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     monkeypatch.delenv('CURSOR_START_CMD', raising=False)
     monkeypatch.delenv('COPILOT_START_CMD', raising=False)
     monkeypatch.delenv('CRUSH_START_CMD', raising=False)
+    monkeypatch.delenv('GROK_START_CMD', raising=False)
     monkeypatch.delenv('KIRO_START_CMD', raising=False)
     monkeypatch.delenv('PI_START_CMD', raising=False)
     monkeypatch.delenv('ZAI_START_CMD', raising=False)
@@ -1772,6 +1782,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     assert runtime_launch._provider_start_parts('cursor') == ['agent']
     assert runtime_launch._provider_start_parts('copilot') == ['copilot']
     assert runtime_launch._provider_start_parts('crush') == ['crush']
+    assert runtime_launch._provider_start_parts('grok') == ['grok']
     assert runtime_launch._provider_start_parts('kiro') == ['kiro-cli']
     assert runtime_launch._provider_start_parts('pi') == ['pi']
     assert runtime_launch._provider_start_parts('zai') == ['zai']
@@ -1784,6 +1795,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
         ('cursor', 'agent', 'HOME'),
         ('copilot', 'copilot', 'COPILOT_HOME'),
         ('crush', 'crush', None),
+        ('grok', 'grok', 'HOME'),
         ('kiro', 'kiro-cli', 'HOME'),
         ('pi', 'pi', None),
         ('zai', 'zai', 'HOME'),
@@ -1834,6 +1846,8 @@ def test_native_cli_launcher_builds_provider_state_payload(
     visible_parts = shlex.split(visible_cmd)
     if provider == 'crush':
         assert visible_parts == [default_executable, '--data-dir', str(state_dir / 'data'), '--demo']
+    elif provider == 'grok':
+        assert visible_parts == [default_executable, '--no-auto-update', '--cwd', str(plan.workspace_path), '--demo']
     elif provider == 'pi':
         assert f'PI_CODING_AGENT_DIR={shlex.quote(str(state_dir / "home"))}' in start_cmd
         assert f'PI_CODING_AGENT_SESSION_DIR={shlex.quote(str(state_dir / "sessions"))}' in start_cmd
@@ -1855,6 +1869,37 @@ def test_native_cli_launcher_builds_provider_state_payload(
         ]
     else:
         assert visible_parts == [default_executable, '--demo']
+
+
+def test_grok_launcher_projects_system_login_into_managed_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / 'source-home'
+    source_grok = source_home / '.grok'
+    source_grok.mkdir(parents=True)
+    (source_grok / 'auth.json').write_text('{"token":"system-login"}\n', encoding='utf-8')
+    (source_grok / 'config.toml').write_text('model = "grok-test"\n', encoding='utf-8')
+    monkeypatch.setattr(grok_home, 'current_provider_source_home', lambda: source_home)
+
+    project_root = tmp_path / 'repo-grok-login-projection'
+    (project_root / '.ccb').mkdir(parents=True)
+    agent_name = 'grok1'
+    command = ParsedStartCommand(project=None, agent_names=(agent_name,), restore=True, auto_permission=False)
+    ctx = _context(project_root, command)
+    spec = _spec(agent_name, provider='grok')
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    plan.workspace_path.mkdir(parents=True, exist_ok=True)
+    runtime_dir = ctx.paths.agent_provider_runtime_dir(agent_name, 'grok')
+    launcher = build_default_runtime_launcher_map(include_optional=True)['grok']
+
+    prepared = launcher.prepare_launch_context(ctx, spec, plan, runtime_dir, {})
+    start_cmd = launcher.build_start_cmd(command, spec, runtime_dir, 'sess-grok', prepared_state=prepared)
+
+    managed_home = ctx.paths.agent_provider_state_dir(agent_name, 'grok') / 'home'
+    assert (managed_home / '.grok' / 'auth.json').read_text(encoding='utf-8') == '{"token":"system-login"}\n'
+    assert (managed_home / '.grok' / 'config.toml').read_text(encoding='utf-8') == 'model = "grok-test"\n'
+    assert f'HOME={shlex.quote(str(managed_home))}' in start_cmd
 
 
 def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypatch, tmp_path: Path) -> None:
@@ -2338,6 +2383,47 @@ def test_claude_launcher_build_start_cmd_uses_overlay_and_drops_dead_local_user_
     )
 
 
+def test_claude_launcher_omits_unsupported_cli_flags(monkeypatch, tmp_path: Path) -> None:
+    runtime_dir = tmp_path / 'runtime-unsupported-claude-flags'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    spec = _spec('reviewer', provider='claude')
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=True, auto_permission=True)
+
+    monkeypatch.setattr(claude_launcher, 'is_root_user', lambda: False)
+    monkeypatch.setattr(claude_launcher, 'claude_cli_supports_flag', lambda cmd_parts, flag: False)
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(run_cwd=runtime_dir, has_history=True),
+    )
+
+    start_cmd = claude_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'claude-sess-unsupported-flags',
+        prepared_state=_claude_prepared_state(runtime_dir),
+    )
+
+    assert '--setting-sources' not in start_cmd
+    assert '--settings' not in start_cmd
+    assert '--permission-mode' not in start_cmd
+    assert '--dangerously-skip-permissions' in start_cmd
+    home_token = next(part for part in shlex.split(start_cmd) if part.startswith('HOME='))
+    claude_home = Path(home_token.split('=', 1)[1].rstrip(';'))
+    home_settings = json.loads((claude_home / '.claude' / 'settings.json').read_text(encoding='utf-8'))
+    assert home_settings['skipDangerousModePermissionPrompt'] is True
+    assert home_settings['allowedTools'] == []
+    home_trust = json.loads((claude_home / '.claude.json').read_text(encoding='utf-8'))
+    project_key = str(runtime_dir.resolve())
+    assert home_trust['bypassPermissionsModeAccepted'] is True
+    assert home_trust[project_key]['hasTrustDialogAccepted'] is True
+    assert home_trust[project_key]['allowedTools'] == []
+    assert home_trust['projects'][project_key]['hasTrustDialogAccepted'] is True
+    assert home_trust['projects'][project_key]['allowedTools'] == []
+    assert start_cmd.endswith('claude --dangerously-skip-permissions --continue')
+
+
 def test_claude_launcher_provider_command_template_wraps_command_after_env_prefix(
     monkeypatch,
     tmp_path: Path,
@@ -2618,6 +2704,75 @@ def test_opencode_workspace_preparation_writes_memory_config(tmp_path: Path, mon
     assert 'shared ask memory' in bundle_text
     assert 'project opencode memory' not in bundle_text
     assert (project_root / '.ccb' / 'runtime' / 'skills' / 'builder' / 'opencode' / 'ask.md').is_file()
+
+
+def test_opencode_start_cmd_respects_explicit_session_without_auto_continue(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-opencode-explicit-session'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'opencode'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('OPENCODE_START_CMD', 'opencode')
+    spec = _spec('reviewer', provider='opencode', startup_args=('--session', 'ses_reviewer'))
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=True, auto_permission=False)
+    prepared = _prepare_opencode_workspace_for_test(spec, runtime_dir)
+
+    cmd = opencode_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'opencode-sess-explicit-session',
+        prepared_state=prepared,
+    )
+
+    assert cmd.endswith('opencode --session ses_reviewer')
+    assert ' --continue ' not in f' {cmd} '
+
+
+def test_opencode_start_cmd_respects_restore_fresh_without_auto_continue(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-opencode-fresh'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'opencode'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('OPENCODE_START_CMD', 'opencode')
+    spec = _spec('reviewer', provider='opencode', restore_default=RestoreMode.FRESH)
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=True, auto_permission=False)
+    prepared = _prepare_opencode_workspace_for_test(spec, runtime_dir)
+
+    cmd = opencode_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'opencode-sess-fresh',
+        prepared_state=prepared,
+    )
+
+    assert cmd.endswith('opencode')
+    assert ' --continue ' not in f' {cmd} '
+
+
+def test_opencode_start_cmd_respects_new_context_without_auto_continue(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-opencode-new-context'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'opencode'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('OPENCODE_START_CMD', 'opencode')
+    spec = _spec('reviewer', provider='opencode')
+    command = ParsedStartCommand(
+        project=None,
+        agent_names=('reviewer',),
+        restore=False,
+        auto_permission=False,
+        reset_context=True,
+    )
+    prepared = _prepare_opencode_workspace_for_test(spec, runtime_dir)
+
+    cmd = opencode_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'opencode-sess-new-context',
+        prepared_state=prepared,
+    )
+
+    assert cmd.endswith('opencode')
+    assert ' --continue ' not in f' {cmd} '
 
 
 def test_opencode_workspace_preparation_records_memory_projection_once(tmp_path: Path, monkeypatch) -> None:
@@ -3276,13 +3431,62 @@ def test_claude_launcher_build_start_cmd_uses_isolated_profile_api_env(monkeypat
     )
 
     assert 'unset ANTHROPIC_AUTH_TOKEN' in start_cmd
+    assert 'unset ANTHROPIC_API_KEY' in start_cmd
     assert f'ANTHROPIC_AUTH_TOKEN={shlex.quote("profile-token")}' in start_cmd
+    assert f'ANTHROPIC_API_KEY={shlex.quote("profile-token")}' in start_cmd
     assert 'https://example.invalid/claude' not in start_cmd
     settings_payload = json.loads((runtime_dir / 'claude-settings.json').read_text(encoding='utf-8'))
     assert settings_payload['skipDangerousModePermissionPrompt'] is True
     assert json.loads(_claude_settings_arg(start_cmd)) == settings_payload
     assert f'--settings {shlex.quote(json.dumps(settings_payload, ensure_ascii=False))}' in start_cmd
     assert '--permission-mode bypassPermissions' in start_cmd
+
+
+def test_claude_launcher_build_start_cmd_exports_inherited_user_settings_auth_env(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'claude'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    home_dir = tmp_path / 'home'
+    claude_dir = home_dir / '.claude'
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / 'settings.json').write_text(
+        json.dumps(
+            {
+                'env': {
+                    'ANTHROPIC_AUTH_TOKEN': 'settings-token',
+                    'ANTHROPIC_BASE_URL': 'https://claude.example.test',
+                },
+                'model': 'opus',
+            },
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    spec = _spec('reviewer', provider='claude')
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=False, auto_permission=True)
+
+    monkeypatch.setattr('provider_backends.claude.launcher.Path.home', lambda: home_dir)
+    monkeypatch.setattr('provider_backends.claude.launcher_runtime.home.Path.home', lambda: home_dir)
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(run_cwd=project_root, has_history=False),
+    )
+
+    start_cmd = claude_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'claude-sess-inherited-settings-auth',
+        prepared_state=_claude_prepared_state(runtime_dir),
+    )
+
+    assert f'ANTHROPIC_AUTH_TOKEN={shlex.quote("settings-token")}' in start_cmd
+    assert f'ANTHROPIC_API_KEY={shlex.quote("settings-token")}' in start_cmd
+    assert f'ANTHROPIC_BASE_URL={shlex.quote("https://claude.example.test")}' in start_cmd
 
 
 def test_claude_launcher_build_start_cmd_uses_agent_settings_overlay_when_present(monkeypatch, tmp_path: Path) -> None:
@@ -3609,6 +3813,7 @@ def test_claude_launcher_build_start_cmd_preserves_managed_auth_when_system_home
 
     payload = json.loads(managed_settings.read_text(encoding='utf-8'))
     assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == 'managed-token'
+    assert payload['env']['ANTHROPIC_API_KEY'] == 'managed-token'
     assert payload['env']['ANTHROPIC_BASE_URL'] == 'https://claude.example.test'
     assert payload['theme'] == 'light'
     assert payload['hooks']['Stop'][0]['hooks'][0]['command'] == 'echo hook'

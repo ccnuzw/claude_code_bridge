@@ -19,6 +19,7 @@ PROVIDER_SESSION_FILENAMES = {
     'cursor': '.cursor-session',
     'copilot': '.copilot-session',
     'crush': '.crush-session',
+    'grok': '.grok-session',
     'kiro': '.kiro-session',
     'pi': '.pi-session',
     'zai': '.zai-session',

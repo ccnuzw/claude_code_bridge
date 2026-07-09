@@ -686,6 +686,52 @@ def test_submit_ask_spills_large_body_before_daemon_submit(monkeypatch: pytest.M
     assert 'CCB reply guidance:' in artifact_text
 
 
+def test_submit_ask_inline_request_keeps_large_body_in_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-ask-inline-large-body'
+    project_root.mkdir()
+    context = _build_context(project_root)
+    captured: dict[str, object] = {}
+    large_message = 'alpha-' + ('x' * 5000) + '-omega'
+
+    class _FakeClient:
+        def submit(self, envelope) -> dict:
+            captured['body'] = envelope.body
+            captured['body_artifact'] = envelope.body_artifact
+            return {
+                'job_id': 'job_1',
+                'agent_name': 'agent2',
+                'target_name': 'agent2',
+                'status': 'accepted',
+            }
+
+    monkeypatch.setattr(
+        ask_service,
+        'load_project_config',
+        lambda project_root: SimpleNamespace(config=SimpleNamespace(agents={'agent1': {}, 'agent2': {}})),
+    )
+    monkeypatch.setattr(ask_service, 'resolve_ask_sender', lambda context, sender: 'agent1')
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FakeClient()),
+    )
+
+    summary = ask_service.submit_ask(
+        context,
+        ParsedAskCommand(project=None, target='agent2', sender=None, message=large_message, inline_request=True),
+    )
+
+    assert summary.jobs[0]['job_id'] == 'job_1'
+    body = str(captured['body'])
+    assert body.startswith('alpha-')
+    assert 'omega' in body
+    assert 'CCB reply guidance:' in body
+    assert captured['body_artifact'] is None
+
+
 def test_submit_ask_forces_small_body_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-ask-forced-body-artifact'
     project_root.mkdir()

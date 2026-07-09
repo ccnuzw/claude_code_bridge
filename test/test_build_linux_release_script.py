@@ -40,6 +40,12 @@ def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:
     (repo_root / "dev_tools" / "skills").mkdir(parents=True)
     (repo_root / "tools" / "ccb-agent-sidebar" / "target" / "debug").mkdir(parents=True)
     (repo_root / "tools" / "ccb-rs-helper" / "target" / "debug").mkdir(parents=True)
+    (repo_root / "mobile" / "app" / ".dart_tool" / "flutter_build").mkdir(parents=True)
+    (repo_root / "mobile" / "app" / ".gradle" / "caches").mkdir(parents=True)
+    (repo_root / "mobile" / "app" / ".idea" / "libraries").mkdir(parents=True)
+    (repo_root / "mobile" / "app" / "build" / "app" / "outputs").mkdir(parents=True)
+    (repo_root / "mobile" / "app" / "node_modules" / "pkg").mkdir(parents=True)
+    (repo_root / "dist-mobile").mkdir(parents=True)
     (repo_root / "inherit_skills" / "codex_skills" / "ask").mkdir(parents=True)
     (repo_root / "inherit_skills" / "claude_skills" / "ask").mkdir(parents=True)
     (repo_root / "useful_tools" / "codex_skills" / "plan-tree").mkdir(parents=True)
@@ -64,6 +70,27 @@ def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:
         "build output\n",
         encoding="utf-8",
     )
+    (repo_root / "mobile" / "app" / ".dart_tool" / "flutter_build" / "app.dill").write_text(
+        "flutter build cache\n",
+        encoding="utf-8",
+    )
+    (repo_root / "mobile" / "app" / ".gradle" / "caches" / "state.bin").write_text(
+        "gradle cache\n",
+        encoding="utf-8",
+    )
+    (repo_root / "mobile" / "app" / ".idea" / "libraries" / "workspace.xml").write_text(
+        "ide metadata\n",
+        encoding="utf-8",
+    )
+    (repo_root / "mobile" / "app" / "build" / "app" / "outputs" / "app-debug.apk").write_text(
+        "mobile build output\n",
+        encoding="utf-8",
+    )
+    (repo_root / "mobile" / "app" / "node_modules" / "pkg" / "index.js").write_text(
+        "dependency cache\n",
+        encoding="utf-8",
+    )
+    (repo_root / "dist-mobile" / "ccb-mobile.apk").write_text("mobile artifact\n", encoding="utf-8")
     (repo_root / "inherit_skills" / "codex_skills" / "ask" / "SKILL.md").write_text("ask\n", encoding="utf-8")
     (repo_root / "inherit_skills" / "claude_skills" / "ask" / "SKILL.md").write_text("ask\n", encoding="utf-8")
     (repo_root / "useful_tools" / "codex_skills" / "plan-tree" / "SKILL.md").write_text("skill\n", encoding="utf-8")
@@ -88,6 +115,12 @@ def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:
     assert not (destination / "dev_tools").exists()
     assert not (destination / "tools" / "ccb-agent-sidebar" / "target").exists()
     assert not (destination / "tools" / "ccb-rs-helper" / "target").exists()
+    assert not (destination / "mobile" / "app" / ".dart_tool").exists()
+    assert not (destination / "mobile" / "app" / ".gradle").exists()
+    assert not (destination / "mobile" / "app" / ".idea").exists()
+    assert not (destination / "mobile" / "app" / "build").exists()
+    assert not (destination / "mobile" / "app" / "node_modules").exists()
+    assert not (destination / "dist-mobile").exists()
 
 
 def test_copy_repo_tree_excludes_generated_output_subtree_inside_repo(tmp_path: Path) -> None:

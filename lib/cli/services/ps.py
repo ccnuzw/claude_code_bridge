@@ -14,32 +14,49 @@ def ps_summary(context: CliContext, command: ParsedPsCommand) -> dict:
     config = load_project_config(context.project.project_root).config
     store = AgentRuntimeStore(context.paths)
     local = ping_local_state(context)
+    ccbd_state = _effective_ccbd_state(local)
     agents: list[dict] = []
     for agent_name, spec in sorted(config.agents.items()):
         runtime = store.load(agent_name)
-        agents.append(_agent_summary(context, agent_name=agent_name, spec=spec, runtime=runtime))
+        agents.append(_agent_summary(context, agent_name=agent_name, spec=spec, runtime=runtime, ccbd_state=ccbd_state))
     return {
         'project_id': context.project.project_id,
-        'ccbd_state': local.mount_state,
+        'ccbd_state': ccbd_state,
+        'ccbd_mount_state': _local_attr(local, 'mount_state'),
+        'ccbd_health': _local_attr(local, 'health'),
+        'ccbd_reason': _local_attr(local, 'reason'),
+        'ccbd_pid_alive': _local_attr(local, 'pid_alive'),
+        'ccbd_socket_connectable': _local_attr(local, 'socket_connectable'),
+        'ccbd_heartbeat_fresh': _local_attr(local, 'heartbeat_fresh'),
         'agents': agents,
     }
 
 
-def _agent_summary(context: CliContext, *, agent_name: str, spec, runtime) -> dict:
+def _agent_summary(context: CliContext, *, agent_name: str, spec, runtime, ccbd_state: str) -> dict:
     workspace_path = _workspace_path(context, agent_name=agent_name, runtime=runtime)
     runtime_ref = _runtime_attr(runtime, 'runtime_ref')
     session_ref = _session_ref(runtime)
+    base_binding_status = binding_status(runtime_ref, session_ref, workspace_path)
+    state = _runtime_enum_value(runtime, 'state', 'stopped')
+    pane_state = _runtime_attr(runtime, 'pane_state')
+    if ccbd_state != 'mounted' and runtime is not None:
+        if state not in {'failed', 'stopped', 'stopping'}:
+            state = 'degraded'
+        if pane_state not in {None, 'missing', 'dead'}:
+            pane_state = 'missing'
+        if base_binding_status == 'bound':
+            base_binding_status = 'stale'
     return {
         'agent_name': agent_name,
         'provider': spec.provider,
         'runtime_mode': spec.runtime_mode.value,
         'workspace_mode': spec.workspace_mode.value,
-        'state': _runtime_enum_value(runtime, 'state', 'stopped'),
+        'state': state,
         'queue_depth': _runtime_attr(runtime, 'queue_depth', 0),
         'workspace_path': workspace_path,
         'runtime_ref': runtime_ref,
         'session_ref': session_ref,
-        'binding_status': binding_status(runtime_ref, session_ref, workspace_path),
+        'binding_status': base_binding_status,
         'backend_type': _runtime_attr(runtime, 'backend_type', spec.runtime_mode.value),
         'binding_source': _runtime_enum_value(runtime, 'binding_source', 'provider-session'),
         'terminal': _runtime_attr(runtime, 'terminal_backend'),
@@ -50,8 +67,25 @@ def _agent_summary(context: CliContext, *, agent_name: str, spec, runtime) -> di
         'pane_id': _runtime_attr(runtime, 'pane_id'),
         'active_pane_id': _runtime_attr(runtime, 'active_pane_id'),
         'pane_title_marker': _runtime_attr(runtime, 'pane_title_marker'),
-        'pane_state': _runtime_attr(runtime, 'pane_state'),
+        'pane_state': pane_state,
     }
+
+
+def _effective_ccbd_state(local) -> str:
+    mount_state = str(_local_attr(local, 'mount_state') or '').strip() or 'unknown'
+    health = str(_local_attr(local, 'health') or '').strip()
+    if mount_state == 'mounted':
+        if health and health != 'healthy':
+            return health
+        for field in ('pid_alive', 'socket_connectable', 'heartbeat_fresh'):
+            value = _local_attr(local, field)
+            if value is False:
+                return 'stale'
+    return mount_state
+
+
+def _local_attr(local, name: str, default=None):
+    return getattr(local, name, default)
 
 
 def _runtime_attr(runtime, name: str, default=None):

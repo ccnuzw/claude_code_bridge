@@ -34,7 +34,13 @@ def test_start_handler_defaults_missing_auto_permission_to_plain_ccb_policy() ->
     assert payload == {'started': []}
     assert start_calls[0]['restore'] is True
     assert start_calls[0]['auto_permission'] is True
-    assert policies == [{'auto_permission': True, 'source': 'start_command'}]
+    assert policies == [
+        {
+            'auto_permission': True,
+            'recovery_restore': True,
+            'source': 'start_command',
+        }
+    ]
 
 
 def test_start_handler_preserves_explicit_safe_auto_permission_false() -> None:
@@ -54,4 +60,10 @@ def test_start_handler_preserves_explicit_safe_auto_permission_false() -> None:
 
     assert start_calls[0]['restore'] is False
     assert start_calls[0]['auto_permission'] is False
-    assert policies == [{'auto_permission': False, 'source': 'start_command'}]
+    assert policies == [
+        {
+            'auto_permission': False,
+            'recovery_restore': False,
+            'source': 'start_command',
+        }
+    ]

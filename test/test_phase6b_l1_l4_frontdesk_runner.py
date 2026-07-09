@@ -98,6 +98,33 @@ def test_materializer_emits_fresh_root_manifest_and_current_label_consistently(t
     assert all(str(root) in ' '.join(command['argv']) for command in commands)
 
 
+def test_write_fixtures_make_lab_tests_importable_by_module_name(tmp_path: Path) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    project = Path(str(manifest['project']))
+
+    runner.write_fixtures(manifest)
+    test_module = project / 'tests' / 'test_l2_readiness.py'
+    test_module.write_text(
+        'import unittest\n\n'
+        'class ReadinessImportTest(unittest.TestCase):\n'
+        '    def test_imports_from_local_tests_package(self):\n'
+        '        self.assertTrue(True)\n'
+        '\n',
+        encoding='utf-8',
+    )
+    result = subprocess.run(
+        [sys.executable, '-m', 'unittest', 'tests.test_l2_readiness'],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert (project / 'tests' / '__init__.py').is_file()
+    assert result.returncode == 0, result.stderr
+
+
 def test_materializer_rejects_existing_root_and_stale_sequence_fragments(tmp_path: Path) -> None:
     existing = tmp_path / 'deploy-l1-l4-frontdesk-sequence19-existing'
     existing.mkdir()
@@ -498,6 +525,214 @@ def test_stale_provider_binding_snapshot_detects_log_path_outside_project(tmp_pa
     ) == []
 
 
+def test_auto_runner_quiet_wait_blocks_manual_progress_while_lock_is_live(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    states = [
+        {
+            'status': 'live',
+            'pid': 12345,
+            'path': str(Path(str(manifest['project'])) / '.ccb/runtime/loops/auto-runner.lock'),
+        },
+        {
+            'status': 'live',
+            'pid': 12345,
+            'path': str(Path(str(manifest['project'])) / '.ccb/runtime/loops/auto-runner.lock'),
+        },
+    ]
+    sleeps = []
+
+    monkeypatch.setattr(runner, 'AUTO_RUNNER_QUIET_ATTEMPTS', len(states))
+    monkeypatch.setattr(runner, 'auto_runner_lock_state', lambda _manifest: states.pop(0))
+    monkeypatch.setattr(runner.time, 'sleep', lambda seconds: sleeps.append(seconds))
+
+    with pytest.raises(
+        runner.HarnessBlocker,
+        match='runner_resume_and_evidence_integrity.*frontdesk_auto_runner_still_active',
+    ):
+        runner.wait_for_auto_runner_quiet(manifest, before='start_task_phase6b-l1-doc-direct-execution')
+
+    checkpoint = (
+        Path(str(manifest['root']))
+        / 'pending-checkpoints'
+        / f"{manifest['label']}__auto_runner_active_before_start_task_phase6b-l1-doc-direct-execution.json"
+    )
+    payload = json.loads(checkpoint.read_text(encoding='utf-8'))
+    assert payload['classification'] == 'runner_resume_and_evidence_integrity'
+    assert payload['reason'] == 'frontdesk_auto_runner_still_active'
+    assert payload['claimable'] is False
+    assert payload['auto_runner_lock']['status'] == 'live'
+    assert sleeps == [runner.AUTO_RUNNER_QUIET_RETRY_DELAY_SECONDS] * 2
+
+
+def test_start_task_observes_already_completed_task_before_waiting_for_auto_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    task_id = 'phase6b-l2-code-test-direct-execution'
+    calls = []
+
+    monkeypatch.setattr(runner, 'wait_for_planner_task_set_handoff', lambda _manifest, *, before: {})
+    monkeypatch.setattr(runner, 'assert_planner_task_set_present', lambda _manifest: {})
+    monkeypatch.setattr(runner, 'validate_sequence_task_set_only', lambda _manifest: None)
+    monkeypatch.setattr(runner, 'task_record_exists', lambda _manifest, _task_id: True)
+
+    def fail_wait(_manifest, *, before):
+        raise AssertionError(f'unexpected auto-runner wait before completed task observation: {before}')
+
+    def fake_run_logged(observed_manifest, label_suffix, argv):
+        calls.append((label_suffix, argv))
+        assert label_suffix == f'{task_id}__task_observe_existing'
+        _label, stdout_path, _stderr_path = runner.command_output_paths(
+            observed_manifest,
+            label_suffix,
+        )
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        stdout_path.write_text(
+            json.dumps(
+                {
+                    'task': {
+                        'task_id': task_id,
+                        'status': 'done',
+                        'current_loop': None,
+                        'artifacts': {
+                            'task_packet': {'path': 'task_packet.md'},
+                            'execution_contract': {'path': 'execution_contract.md'},
+                            'orchestration_notes': {'orchestrator_route': 'direct_execution'},
+                        },
+                    },
+                }
+            ),
+            encoding='utf-8',
+        )
+
+    monkeypatch.setattr(runner, 'wait_for_auto_runner_quiet', fail_wait)
+    monkeypatch.setattr(runner, 'run_logged', fake_run_logged)
+
+    runner.start_task(manifest, task_id)
+
+    assert [call[0] for call in calls] == [f'{task_id}__task_observe_existing']
+
+
+def test_start_task_waits_for_frontdesk_auto_runner_before_manual_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    task_id = 'phase6b-l1-doc-direct-execution'
+    calls = []
+    handoff_seen = {'value': False}
+    wait_seen = {'value': False}
+
+    def fake_wait_for_planner_task_set_handoff(_manifest, *, before):
+        calls.append(('wait_for_planner_task_set_handoff', before))
+        handoff_seen['value'] = True
+        return {'fenced_task_set_present': True}
+
+    def fake_assert_planner_task_set_present(_manifest):
+        assert handoff_seen['value'] is True
+        calls.append(('assert_planner_task_set_present', None))
+        return {}
+
+    monkeypatch.setattr(runner, 'assert_planner_task_set_present', fake_assert_planner_task_set_present)
+    monkeypatch.setattr(runner, 'validate_sequence_task_set_only', lambda _manifest: None)
+    monkeypatch.setattr(runner, 'task_record_exists', lambda _manifest, _task_id: True)
+
+    def fake_wait(_manifest, *, before):
+        assert handoff_seen['value'] is True
+        calls.append(('wait', before))
+        wait_seen['value'] = True
+
+    def fake_run_logged(observed_manifest, label_suffix, argv):
+        assert handoff_seen['value'] is True
+        calls.append(('run_logged', label_suffix))
+        if label_suffix == f'{task_id}__task_observe_existing':
+            _label, stdout_path, _stderr_path = runner.command_output_paths(
+                observed_manifest,
+                label_suffix,
+            )
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text(
+                json.dumps(
+                    {
+                        'task': {
+                            'task_id': task_id,
+                            'status': 'ready_for_orchestration',
+                            'current_loop': None,
+                            'artifacts': {
+                                'task_packet': {'path': 'task_packet.md'},
+                                'execution_contract': {'path': 'execution_contract.md'},
+                            },
+                        }
+                    }
+                ),
+                encoding='utf-8',
+            )
+
+    monkeypatch.setattr(runner, 'wait_for_planner_task_set_handoff', fake_wait_for_planner_task_set_handoff)
+    monkeypatch.setattr(runner, 'wait_for_auto_runner_quiet', fake_wait)
+    monkeypatch.setattr(runner, 'run_logged', fake_run_logged)
+
+    runner.start_task(manifest, task_id)
+
+    assert calls == [
+        ('wait_for_planner_task_set_handoff', f'start_task_{task_id}'),
+        ('assert_planner_task_set_present', None),
+        ('run_logged', f'{task_id}__task_observe_existing'),
+        ('wait', f'start_task_{task_id}'),
+        ('run_logged', f'{task_id}__task_observe_existing'),
+        ('run_logged', f'{task_id}__activate_orchestrator'),
+    ]
+
+
+def test_planner_task_set_handoff_wait_checkpoints_before_false_missing_task_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    states = [
+        {'frontdesk_job_id': 'job_frontdesk', 'frontdesk_job_status': 'running'},
+        {'frontdesk_job_id': 'job_frontdesk', 'frontdesk_job_status': 'running'},
+    ]
+    sleeps = []
+
+    monkeypatch.setattr(runner, 'PLANNER_TASK_SET_WAIT_ATTEMPTS', len(states))
+    monkeypatch.setattr(runner, 'planner_task_set_handoff_state', lambda _manifest: states.pop(0))
+    monkeypatch.setattr(runner.time, 'sleep', lambda seconds: sleeps.append(seconds))
+
+    with pytest.raises(
+        runner.HarnessBlocker,
+        match='runner_resume_and_evidence_integrity.*frontdesk_planner_handoff_pending',
+    ):
+        runner.wait_for_planner_task_set_handoff(
+            manifest,
+            before='start_task_phase6b-l1-doc-direct-execution',
+        )
+
+    checkpoint = (
+        Path(str(manifest['root']))
+        / 'pending-checkpoints'
+        / (
+            f"{manifest['label']}__planner_task_set_handoff_pending_before_"
+            'start_task_phase6b-l1-doc-direct-execution.json'
+        )
+    )
+    payload = json.loads(checkpoint.read_text(encoding='utf-8'))
+    assert payload['classification'] == 'runner_resume_and_evidence_integrity'
+    assert payload['reason'] == 'frontdesk_planner_handoff_pending'
+    assert payload['claimable'] is False
+    assert payload['handoff_state']['frontdesk_job_status'] == 'running'
+    assert not Path(str(manifest['rows'])).exists()
+    assert sleeps == [runner.PLANNER_TASK_SET_WAIT_RETRY_DELAY_SECONDS] * 2
+
+
 def test_init_writes_config_before_startup_and_validates_mount_after_startup() -> None:
     source = RUNNER_PATH.read_text(encoding='utf-8')
     init_start = source.index('def init_lab(')
@@ -814,6 +1049,8 @@ def test_start_task_observes_existing_running_task_without_mutating_authority(
 
     monkeypatch.setattr(runner, 'assert_planner_task_set_present', lambda _manifest: {})
     monkeypatch.setattr(runner, 'validate_sequence_task_set_only', lambda _manifest: None)
+    monkeypatch.setattr(runner, 'wait_for_planner_task_set_handoff', lambda _manifest, *, before: {})
+    monkeypatch.setattr(runner, 'wait_for_auto_runner_quiet', lambda _manifest, *, before: None)
     monkeypatch.setattr(runner, 'task_record_exists', lambda _manifest, _task_id: True)
 
     def fake_run_logged(observed_manifest, label_suffix, argv):
@@ -863,6 +1100,8 @@ def test_start_task_activates_existing_ready_task_without_reimporting_anchors(
 
     monkeypatch.setattr(runner, 'assert_planner_task_set_present', lambda _manifest: {})
     monkeypatch.setattr(runner, 'validate_sequence_task_set_only', lambda _manifest: None)
+    monkeypatch.setattr(runner, 'wait_for_planner_task_set_handoff', lambda _manifest, *, before: {})
+    monkeypatch.setattr(runner, 'wait_for_auto_runner_quiet', lambda _manifest, *, before: None)
     monkeypatch.setattr(runner, 'task_record_exists', lambda _manifest, _task_id: True)
 
     def fake_run_logged(observed_manifest, label_suffix, argv):
@@ -898,6 +1137,7 @@ def test_start_task_activates_existing_ready_task_without_reimporting_anchors(
     runner.start_task(manifest, task_id)
 
     assert [call[0] for call in calls] == [
+        f'{task_id}__task_observe_existing',
         f'{task_id}__task_observe_existing',
         f'{task_id}__activate_orchestrator',
     ]
@@ -943,6 +1183,60 @@ def test_existing_orchestrator_route_allows_continue_without_supervisor_route_fi
 
     assert [call[0] for call in calls] == [f'{task_id}__route_observe_existing']
     assert not (Path(str(manifest['project'])) / 'supervisor_imports' / task_id / 'route.txt').exists()
+
+
+def test_existing_detail_artifacts_allow_detail_ready_without_supervisor_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    task_id = 'phase6b-l3-needs-detail'
+    calls = []
+
+    def fake_run_logged(observed_manifest, label_suffix, argv):
+        calls.append((label_suffix, argv))
+        if label_suffix == f'{task_id}__detail_observe_existing':
+            _label, stdout_path, _stderr_path = runner.command_output_paths(
+                observed_manifest,
+                label_suffix,
+            )
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text(
+                json.dumps(
+                    {
+                        'task': {
+                            'task_id': task_id,
+                            'status': 'ready_for_orchestration',
+                            'artifacts': {
+                                'detail_design': {'path': 'details/task-detail-design.md'},
+                                'detail_summary': {'path': 'details/brief-update-summary.md'},
+                                'detail_packet': {'path': 'details/detail-packet.manifest.json'},
+                            },
+                        }
+                    }
+                ),
+                encoding='utf-8',
+            )
+            return
+        assert label_suffix == f'{task_id}__status_detail_ready'
+        assert argv[-5:] == [
+            '--status',
+            'detail_ready',
+            '--activation-reason',
+            f"{manifest['label']}_detail_ready",
+            '--json',
+        ]
+
+    monkeypatch.setattr(runner, 'run_logged', fake_run_logged)
+
+    runner.continue_detail(manifest, task_id)
+
+    assert [call[0] for call in calls] == [
+        f'{task_id}__detail_observe_existing',
+        f'{task_id}__status_detail_ready',
+    ]
+    assert not (Path(str(manifest['project'])) / 'supervisor_imports' / task_id).exists()
 
 
 def test_unexpected_frontdesk_meta_task_writes_invalid_harness_report(tmp_path: Path) -> None:
@@ -1121,6 +1415,118 @@ def test_missing_fenced_task_set_blocks_with_explicit_row(tmp_path: Path) -> Non
     assert row['planner_reply_path'] == str(planner_reply_path)
     assert row['fenced_task_set_present'] is False
     assert 'fenced task-set.json block' in row['why_no_route_mix_rows_claimable']
+
+
+def test_b7_uses_script_owned_task_index_routes_and_status_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    project = Path(str(manifest['project']))
+    tasks_root = project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG / 'tasks'
+    records = []
+
+    monkeypatch.setattr(runner, 'assert_no_pending_authority', lambda _manifest: None)
+    monkeypatch.setattr(runner, 'planner_task_set_evidence', lambda _manifest: {'fenced_task_set_present': True})
+    monkeypatch.setattr(runner, 'unexpected_plan_task_ids', lambda _manifest: [])
+    monkeypatch.setattr(runner, 'sequence_task_aliases', lambda _manifest: {})
+
+    for index, case in enumerate(runner.TASKS, start=1):
+        task_id = case['task_id']
+        task_dir = tasks_root / task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        notes_path = task_dir / 'orchestration_notes.md'
+        notes_path.write_text(f"route: {case['expected_route']}\n", encoding='utf-8')
+        artifacts = {
+            'orchestration_notes': {
+                'path': str(notes_path.relative_to(project)),
+                'orchestrator_route': case['expected_route'],
+                'actor': {'source': 'loop_runner_role_output_import'},
+            }
+        }
+        if case['expected_route'] == 'direct_execution':
+            loop_id = f'lp-test-{index}'
+            round_dir = project / '.ccb' / 'runtime' / 'loops' / loop_id
+            runner._write_json(
+                round_dir / 'round.json',
+                {
+                    'task_id': task_id,
+                    'loop_id': loop_id,
+                    'round_result': 'pass',
+                    'round_result_source': 'round_reviewer_reply',
+                    'release': {'released_count': 2, 'retained_count': 0},
+                    'observed_topology': {'agents': []},
+                },
+            )
+            round_summary = task_dir / 'round_summary.md'
+            round_summary.write_text(
+                'round_result: pass\nround_result_source: round_reviewer_reply\n',
+                encoding='utf-8',
+            )
+            artifacts['round_summary'] = {
+                'path': str(round_summary.relative_to(project)),
+                'actor': {'source': 'loop_runner'},
+                'loop_id': loop_id,
+                'round_result': 'pass',
+            }
+        elif case['expected_route'] == 'needs_detail':
+            detail_packet = task_dir / 'details' / 'detail-packet.manifest.json'
+            detail_packet.parent.mkdir(parents=True, exist_ok=True)
+            detail_packet.write_text('{}\n', encoding='utf-8')
+            artifacts['detail_packet'] = {
+                'path': str(detail_packet.relative_to(project)),
+                'actor': {'source': 'loop_runner_role_output_import'},
+            }
+        elif case['expected_route'] == 'macro_adjustment_request':
+            macro = task_dir / 'details' / 'macro-adjustment-request.json'
+            macro.parent.mkdir(parents=True, exist_ok=True)
+            macro.write_text('{}\n', encoding='utf-8')
+            artifacts['macro_adjustment_request'] = {
+                'path': str(macro.relative_to(project)),
+                'actor': {'source': 'loop_runner/script-owned'},
+            }
+        elif case['expected_route'] == 'blocked':
+            blocker = task_dir / 'blocker-evidence.md'
+            blocker.write_text('blocked\n', encoding='utf-8')
+            artifacts['blocker_evidence'] = {
+                'path': str(blocker.relative_to(project)),
+                'actor': {'source': 'loop_runner/script-owned'},
+            }
+        records.append(
+            {
+                'task_id': task_id,
+                'status': case['expected_final_status'],
+                'next_owner': 'terminal' if case['expected_final_status'] in {'done', 'blocked'} else 'planner',
+                'artifacts': artifacts,
+            }
+        )
+
+    runner._write_json(tasks_root / 'index.json', {'schema': 'ccb.plan.tasks.v1', 'tasks': records})
+
+    runner.write_b7_report(manifest)
+
+    rows = [
+        json.loads(line)
+        for line in Path(str(manifest['rows'])).read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == len(runner.TASKS)
+    assert all(row['claimable_row'] for row in rows)
+    assert all(row['route_decision_correct'] for row in rows)
+    assert all(row['script_owned_route_imports'] for row in rows)
+    assert all(row['script_owned_round_imports'] for row in rows)
+    assert all(row['provider_reply_authority_parsing_absent'] for row in rows)
+    assert all(row['runtime_residue'] is False for row in rows)
+    assert all(row['dynamic_unload_ok'] is True for row in rows)
+    assert [row['observed_route'] for row in rows] == [case['expected_route'] for case in runner.TASKS]
+    assert [row['round_result'] for row in rows] == [case['expected_round_result'] for case in runner.TASKS]
+    assert rows[0]['cleanup_result'] == 'clean'
+    assert rows[1]['cleanup_result'] == 'clean'
+    assert rows[0]['release_released_count'] == 2
+    assert rows[0]['release_retained_count'] == 0
+    assert rows[2]['cleanup_result'] == 'not_applicable'
+    assert 'Status: pass' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
 
 
 def test_manifest_paths_are_inspectable_and_internally_consistent(tmp_path: Path) -> None:

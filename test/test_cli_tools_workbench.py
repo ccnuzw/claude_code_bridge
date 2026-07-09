@@ -53,13 +53,8 @@ def _prepare_env(tmp_path: Path, monkeypatch) -> Path:
     return fake_bin
 
 
-def _stub_neovim(monkeypatch, tmp_path: Path) -> None:
-    del monkeypatch, tmp_path
-
-
 def test_workbench_install_writes_independent_bundle_profiles(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
 
     result = workbench_tools.provision_workbench(profile='rich')
 
@@ -216,7 +211,6 @@ def test_workbench_install_writes_independent_bundle_profiles(tmp_path: Path, mo
 
 def test_workbench_doctor_reports_manifest_and_component_paths(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     stdout = StringIO()
     stderr = StringIO()
@@ -235,9 +229,20 @@ def test_workbench_doctor_reports_manifest_and_component_paths(tmp_path: Path, m
     assert 'wezterm_config:' in output
 
 
+def test_standalone_neovim_tool_route_is_unsupported() -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    code = cmd_tools(['doctor', 'neovim'], stdout=stdout, stderr=stderr)
+
+    assert code == 2
+    assert stdout.getvalue() == ''
+    assert 'standalone Neovim tools are no longer supported' in stderr.getvalue()
+    assert 'ccb update rich' in stderr.getvalue()
+
+
 def test_update_rich_workbench_provisions_and_enables_bundle(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
 
     result = workbench_tools.update_rich_workbench()
 
@@ -250,7 +255,6 @@ def test_update_rich_workbench_provisions_and_enables_bundle(tmp_path: Path, mon
 
 def test_rich_auto_start_allowed_respects_enabled_state_and_terminal_guard(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
 
     assert workbench_tools.rich_auto_start_allowed(environ={}) is False
 
@@ -307,7 +311,6 @@ def test_update_rich_workbench_installs_missing_dependencies(tmp_path: Path, mon
     fake_bin = _prepare_env(tmp_path, monkeypatch)
     for name in ('yazi', 'ya', 'wezterm', 'chafa', 'pdfinfo', 'pdftotext', 'pdftoppm', 'ffprobe', 'ffmpeg'):
         (fake_bin / name).unlink()
-    _stub_neovim(monkeypatch, tmp_path)
     monkeypatch.setattr(workbench_tools, '_font_dependency_missing', lambda _spec: False)
     monkeypatch.setattr(workbench_tools, '_python_module_available', lambda _module, *, python: True)
     commands_by_package = {
@@ -351,7 +354,6 @@ def test_update_rich_workbench_installs_missing_dependencies(tmp_path: Path, mon
 
 def test_workbench_enable_disable_and_uninstall_are_bundle_scoped(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     legacy_editor_marker = tmp_path / 'xdg-data' / 'ccb' / 'tools' / 'neovim' / 'keep.txt'
     legacy_editor_marker.parent.mkdir(parents=True, exist_ok=True)
     legacy_editor_marker.write_text('keep\n', encoding='utf-8')
@@ -379,7 +381,6 @@ def test_workbench_enable_disable_and_uninstall_are_bundle_scoped(tmp_path: Path
 
 def test_workbench_launch_dry_run_prints_component_commands(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     stdout = StringIO()
 
@@ -397,7 +398,6 @@ def test_workbench_launch_dry_run_prints_component_commands(tmp_path: Path, monk
 
 def test_workbench_launch_detaches_outer_tmux_environment(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     workbench_tools.enable_workbench(profile='rich')
     monkeypatch.setenv('TMUX', '/tmp/tmux-1000/outer,123,0')
@@ -430,7 +430,6 @@ def test_workbench_launch_detaches_outer_tmux_environment(tmp_path: Path, monkey
 
 def test_workbench_terminal_starts_managed_wezterm_when_current_window_is_not_ccb_rich(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     project_root = tmp_path / 'project'
     project_root.mkdir()
@@ -482,7 +481,6 @@ def test_workbench_terminal_starts_managed_wezterm_when_current_window_is_not_cc
 
 def test_workbench_terminal_reads_global_theme_config(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     wrapper = tmp_path / 'xdg-data' / 'ccb' / 'tools' / 'workbench' / 'bin' / 'ccb-workbench'
     theme_config = theme_config_path()
@@ -532,7 +530,6 @@ def test_workbench_terminal_reads_global_theme_config(tmp_path: Path, monkeypatc
 
 def test_workbench_terminal_reports_inotify_exhaustion_before_new_wezterm(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     project_root = tmp_path / 'project'
     project_root.mkdir()
@@ -576,7 +573,6 @@ def test_workbench_terminal_reports_inotify_exhaustion_before_new_wezterm(tmp_pa
 
 def test_workbench_terminal_reuses_current_ccb_rich_wezterm_window(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     project_root = tmp_path / 'project'
     project_root.mkdir()
@@ -625,7 +621,6 @@ def test_workbench_terminal_reuses_current_ccb_rich_wezterm_window(tmp_path: Pat
 
 def test_workbench_terminal_sets_input_method_env_for_fcitx(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     project_root = tmp_path / 'project'
     project_root.mkdir()
@@ -681,7 +676,6 @@ def test_workbench_terminal_sets_input_method_env_for_fcitx(tmp_path: Path, monk
 def test_workbench_terminal_uses_windows_wezterm_from_wsl(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
     (fake_bin / 'wezterm').unlink()
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     project_root = tmp_path / 'project'
     project_root.mkdir()
@@ -743,7 +737,6 @@ def test_workbench_terminal_uses_windows_wezterm_from_wsl(tmp_path: Path, monkey
 def test_workbench_terminal_reuses_current_ccb_rich_wezterm_window_from_wsl(tmp_path: Path, monkeypatch) -> None:
     fake_bin = _prepare_env(tmp_path, monkeypatch)
     (fake_bin / 'wezterm').unlink()
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     project_root = tmp_path / 'project'
     project_root.mkdir()
@@ -801,7 +794,6 @@ def test_workbench_terminal_reuses_current_ccb_rich_wezterm_window_from_wsl(tmp_
 
 def test_rich_launch_opens_wezterm_with_source_test_entrypoint(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     workbench_tools.enable_workbench(profile='rich')
     script_root = tmp_path / 'source'
@@ -846,7 +838,6 @@ def test_rich_launch_opens_wezterm_with_source_test_entrypoint(tmp_path: Path, m
 
 def test_rich_launch_requires_update_rich_first(tmp_path: Path, monkeypatch) -> None:
     _prepare_env(tmp_path, monkeypatch)
-    _stub_neovim(monkeypatch, tmp_path)
 
     result = workbench_tools.launch_rich_ccb(script_root=tmp_path / 'source', cwd=tmp_path / 'project')
 

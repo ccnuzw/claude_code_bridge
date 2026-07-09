@@ -23,9 +23,9 @@ class ProjectRoleResolution:
     lock_path: Path | None = None
 
 
-def load_installed_role(role_id: str) -> RolePack | None:
+def load_installed_role(role_id: str, *, project_root: Path | None = None) -> RolePack | None:
     role_id = normalize_role_id(role_id)
-    for store_root in role_store_roots():
+    for store_root in role_store_roots(project_root):
         for candidate_id in role_id_candidates(role_id):
             current = store_root / candidate_id / 'current'
             if current.exists():
@@ -63,7 +63,7 @@ def resolve_project_agent_role(project_root: Path, agent_name: str) -> ProjectRo
     else:
         lock_warning = ''
 
-    role = load_installed_role(role_id)
+    role = load_installed_role(role_id, project_root=project_root)
     if role is None:
         return ProjectRoleResolution(
             role_id=role_id,

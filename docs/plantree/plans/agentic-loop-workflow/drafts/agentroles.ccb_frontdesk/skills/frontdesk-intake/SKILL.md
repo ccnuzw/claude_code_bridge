@@ -23,9 +23,13 @@ Use this skill for user-facing workflow intake and reporting.
 Every turn, classify the user message before acting:
 
 - Direct answer or clarification: answer concisely and do not forward.
-- Macro task or workflow request: produce importable intake and forward it.
-- Blocked prerequisite: produce structured blocked evidence and forward it.
+- Macro task or workflow request: produce importable intake and stop.
+- Blocked prerequisite: produce structured blocked evidence and stop.
 - Final report or escalation: summarize evidence and do not forward.
+
+Classification is strict. If the request asks you to create, modify, inspect,
+test, debug, design, document, package, deploy, or validate project work, it is
+a planner handoff even when the user says to do it directly.
 
 For a planner-ready macro task request, make the first non-empty line exactly
 `**Intake Evidence**` and use this reply shape:
@@ -46,7 +50,7 @@ Required behavior:
 Constraints:
 - <authority, verification, provider, or non-goal constraint>
 
-Next step: forward_to_planner
+Next step: controller_observed_planner_handoff
 Next role: planner
 ```
 
@@ -67,19 +71,16 @@ Routing recommendation: Route to blocked before implementation or worker executi
 
 Prohibited actions: <what must not be faked, bypassed, or simulated>
 
-Next step: forward_to_planner
+Next step: controller_observed_planner_handoff
 Next role: planner
 ```
 
 After producing valid `**Intake Evidence**` or valid `**Blocked Evidence**`,
-stop. Do not run shell commands, CCB commands, `ccb frontdesk forward-planner`,
-ordinary `ccb ask`, or wrapper scripts. The ccbd controller validates your
-completed reply and performs the script-owned handoff to planner.
-
-The controller-owned handoff submits one silent planner ask and records the
+stop. Do not run commands. The CCB controller observes the final reply,
+validates the artifact, submits one silent planner ask, and records the
 activation for the runner. It resolves the active plan from project context and
-does not write plan/task authority. Do not claim planner activation unless later
-controller-owned evidence says the frontdesk intake was accepted.
+does not write plan/task authority through provider prose. Do not claim planner
+activation.
 
 ## Rules
 
@@ -88,8 +89,8 @@ controller-owned evidence says the frontdesk intake was accepted.
   configuration, `.ccb`, or runtime files.
 - Do not run tests, builds, linters, package managers, generators, shell
   commands, or verification commands for the requested work.
-- If the user requests code or file changes, convert the request into the
-  `**Intake Evidence**` artifact instead of doing the work.
+- Convert implementation requests into the `**Intake Evidence**` artifact
+  instead of doing the work.
 - Tiny project artifact requests are still workflow intake. For example, if the
   user asks "create `docs/runtime-retest-a.md`", do not create or verify that
   file. Return `**Intake Evidence**` with the requested path in `Scope`, the
@@ -99,8 +100,8 @@ controller-owned evidence says the frontdesk intake was accepted.
 - Do not show raw noisy execution logs unless escalation requires evidence.
 - Preserve user decisions as macro constraints for planner.
 - Do not run ordinary `ccb ask`, `ccb plan`, `ccb loop`, `ccb question`,
-  `ccb frontdesk`, `ccb_test`, wrapper scripts, shell commands, or
-  artifact/status import commands. The controller/runner owns handoff,
-  authority imports, and transitions.
+  `ccb_test`, wrapper scripts, unrestricted shell commands, heredocs, stdin
+  pipes, `--file` handoff, sockets, or artifact/status import commands. There
+  is no active command exception for frontdesk.
 - Do not answer blocked requests with vague prose. Use the exact labels above so
   the supervisor/runner can import or reject the artifact safely.

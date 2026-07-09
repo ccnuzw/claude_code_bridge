@@ -5,7 +5,9 @@ if_unsupported = "fail_mount"
 generic_shell = false
 generic_ccb = false
 supported_providers = ["codex", "claude"]
-allowed_effects = []
+allowed_effects = [
+  "observer_intake_handoff",
+]
 forbidden_effects = [
   "task_create",
   "artifact_import",

@@ -4,19 +4,22 @@ import json
 from pathlib import Path
 import sys
 import time
+import uuid
 
 import pytest
 
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
 from completion.models import CompletionItemKind, CompletionSourceKind, CompletionStatus
+from provider_backends.grok import home as grok_home
+from provider_backends.grok.execution import _grok_session_id_for_job, observe_grok_output
 from provider_backends.zai.execution import observe_zai_output
 from provider_core.pathing import session_filename_for_agent
 from provider_core.registry import build_default_backend_registry
 from provider_execution.base import ProviderRuntimeContext, ProviderSubmission
 
 
-PROVIDERS = ("qwen", "cursor", "copilot", "crush", "kiro", "pi", "zai")
-STRUCTURED_PROVIDERS = ("qwen", "cursor", "copilot", "pi")
+PROVIDERS = ("qwen", "cursor", "copilot", "crush", "grok", "kiro", "pi", "zai")
+STRUCTURED_PROVIDERS = ("qwen", "cursor", "copilot", "grok", "pi")
 
 
 def _job(provider: str, work_dir: Path) -> JobRecord:
@@ -129,6 +132,39 @@ def test_native_cli_provider_adapter_completes_from_native_process(monkeypatch, 
     assert CompletionItemKind.TURN_BOUNDARY in emitted
 
 
+def test_grok_provider_adapter_projects_system_login_and_uses_uuid_session(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / "source-home"
+    source_grok = source_home / ".grok"
+    source_grok.mkdir(parents=True)
+    (source_grok / "auth.json").write_text('{"token":"system-login"}\n', encoding="utf-8")
+    (source_grok / "config.toml").write_text('model = "grok-test"\n', encoding="utf-8")
+    monkeypatch.setattr(grok_home, "current_provider_source_home", lambda: source_home)
+
+    work_dir = tmp_path / "repo-grok-login"
+    work_dir.mkdir()
+    _write_session("grok", work_dir)
+    _install_stub(monkeypatch, "grok")
+
+    adapter = _adapter("grok")
+    job = _job("grok", work_dir)
+    submission = adapter.start(job, context=_runtime_context("grok", work_dir), now="2026-06-13T00:00:00Z")
+
+    managed_home = work_dir / ".ccb" / "agents" / "grok1" / "provider-state" / "grok" / "home"
+    assert (managed_home / ".grok" / "auth.json").read_text(encoding="utf-8") == '{"token":"system-login"}\n'
+    assert (managed_home / ".grok" / "config.toml").read_text(encoding="utf-8") == 'model = "grok-test"\n'
+    grok_session_id = _grok_session_id_for_job(job.job_id)
+    assert grok_session_id != job.job_id
+    assert str(uuid.UUID(grok_session_id)) == grok_session_id
+    assert submission.diagnostics["pid"]
+
+    terminal, _emitted = _run_to_terminal(adapter, submission)
+    assert terminal.decision is not None
+    assert terminal.decision.status is CompletionStatus.COMPLETED
+
+
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_native_cli_provider_adapter_reports_empty_reply(monkeypatch, tmp_path: Path, provider: str) -> None:
     work_dir = tmp_path / f"repo-empty-{provider}"
@@ -200,6 +236,65 @@ def test_zai_observer_extracts_assistant_and_drops_progress(tmp_path: Path) -> N
 
     assert observation.error == ""
     assert observation.text == "alpha beta gamma"
+
+
+def test_grok_observer_extracts_session_update_chunks(tmp_path: Path) -> None:
+    stdout = tmp_path / "grok.jsonl"
+    stdout.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": "ses-grok",
+                            "update": {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": "alpha "},
+                            },
+                        },
+                    },
+                    ensure_ascii=True,
+                ),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": "ses-grok",
+                            "update": {
+                                "sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": "beta"},
+                            },
+                        },
+                    },
+                    ensure_ascii=True,
+                ),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": "ses-grok",
+                            "update": {"sessionUpdate": "turn_end", "stopReason": "end_turn"},
+                        },
+                    },
+                    ensure_ascii=True,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    observation = observe_grok_output(stdout)
+
+    assert observation.error == ""
+    assert observation.text == "alpha beta"
+    assert observation.finished is True
+    assert observation.finish_reason == "end_turn"
+    assert observation.turn_ref == "ses-grok"
 
 
 @pytest.mark.parametrize("provider", STRUCTURED_PROVIDERS)

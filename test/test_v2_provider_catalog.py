@@ -36,6 +36,7 @@ def test_default_provider_catalog_contains_expected_profiles() -> None:
         'cursor',
         'copilot',
         'crush',
+        'grok',
         'kiro',
         'pi',
         'zai',
@@ -72,7 +73,7 @@ def test_default_provider_catalog_contains_expected_profiles() -> None:
     assert mimo.completion_source_kind is CompletionSourceKind.STRUCTURED_RESULT_STREAM
     assert mimo.supports_observed_completion is True
     assert mimo.supports_anchor_binding is True
-    for provider in ('qwen', 'cursor', 'copilot', 'crush', 'kiro', 'pi', 'zai'):
+    for provider in ('qwen', 'cursor', 'copilot', 'crush', 'grok', 'kiro', 'pi', 'zai'):
         native = catalog.resolve_completion_manifest(provider, RuntimeMode.PANE_BACKED)
         assert native.completion_family is CompletionFamily.STRUCTURED_RESULT
         assert native.completion_source_kind is CompletionSourceKind.STRUCTURED_RESULT_STREAM
@@ -131,6 +132,7 @@ def test_provider_catalog_can_build_core_only_catalog() -> None:
         'cursor',
         'copilot',
         'crush',
+        'grok',
         'kiro',
         'pi',
         'zai',

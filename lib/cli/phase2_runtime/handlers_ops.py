@@ -85,7 +85,8 @@ def handle_loop_runner(context, command, out, services) -> int:
 
 
 def handle_frontdesk(context, command, out, services) -> int:
-    payload = services.frontdesk_intake(context, command, services)
+    handler = getattr(services, 'frontdesk_intake_command', services.frontdesk_intake)
+    payload = handler(context, command, services)
     exit_code = 0 if str(payload.get('frontdesk_intake_status') or '') == 'ok' else 1
     if bool(getattr(command, 'json_output', False)):
         out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))

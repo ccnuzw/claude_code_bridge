@@ -30,8 +30,27 @@ def agent_roles_installed_root() -> Path:
     return agent_roles_store_root() / 'installed'
 
 
-def role_store_roots() -> tuple[Path, ...]:
-    return (agent_roles_installed_root(),)
+def project_role_store_roots(project_root: Path | None) -> tuple[Path, ...]:
+    if project_root is None:
+        return ()
+    root = Path(project_root)
+    candidates = (
+        root / 'roles' / 'installed',
+        root / '.ccb' / 'roles' / 'installed',
+    )
+    return tuple(candidate for candidate in candidates if candidate.exists())
+
+
+def role_store_roots(project_root: Path | None = None) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for root in (*project_role_store_roots(project_root), agent_roles_installed_root()):
+        key = str(root.expanduser())
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return tuple(roots)
 
 
 def normalize_role_id(value: str) -> str:
@@ -52,11 +71,12 @@ def looks_like_role_id(value: str) -> bool:
         return False
 
 
-def load_installed_role_manifest(role_id: str) -> tuple[Path, dict[str, Any]]:
+def load_installed_role_manifest(role_id: str, *, project_root: Path | None = None) -> tuple[Path, dict[str, Any]]:
     role_id = normalize_role_id(role_id)
     role_root = None
     root = None
-    for store_root in role_store_roots():
+    roots = role_store_roots(project_root)
+    for store_root in roots:
         for candidate_id in role_id_candidates(role_id):
             candidate_root = store_root / candidate_id
             current = candidate_root / 'current'
@@ -71,12 +91,12 @@ def load_installed_role_manifest(role_id: str) -> tuple[Path, dict[str, Any]]:
         if role_root is not None:
             break
     if role_root is None or root is None:
-        root = agent_roles_installed_root() / role_id
+        root = roots[0] / role_id
         role_root = root
     manifest_path = role_root / 'role.toml'
     if not manifest_path.exists():
         raise RoleLookupError(
-            f'role {role_id} is not installed in role store {agent_roles_installed_root()}; '
+            f'role {role_id} is not installed in role store {roots[0]}; '
             f'run `ccb roles install {role_id}`'
         )
     if not manifest_path.is_file():
@@ -90,7 +110,7 @@ def load_installed_role_manifest(role_id: str) -> tuple[Path, dict[str, Any]]:
 
 def installed_role_default_agent_name(role_id: str, *, project_root: Path | None = None) -> str:
     role_id = normalize_role_id(role_id)
-    root, manifest = load_installed_role_manifest(role_id)
+    root, manifest = load_installed_role_manifest(role_id, project_root=project_root)
     return _default_agent_name_from_manifest(role_id, root, manifest)
 
 
@@ -145,6 +165,7 @@ __all__ = [
     'agent_roles_store_root',
     'installed_role_default_agent_name',
     'load_installed_role_manifest',
+    'project_role_store_roots',
     'looks_like_role_id',
     'normalize_role_id',
     'role_store_root',

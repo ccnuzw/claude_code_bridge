@@ -40,7 +40,7 @@ The skill should present supported knobs in a structured way:
 - window names and agent placement;
 - agent names and providers;
 - Role Pack bindings;
-- managed Neovim tool window;
+- managed rich files surface;
 - sidebar mode and basic layout.
 
 ### Workspace
@@ -84,8 +84,9 @@ The skill should present supported knobs in a structured way:
   and advanced workspace fields. Do not write redundant `provider`,
   `workspace_mode = "inplace"`, or `workspace_mode = "git-worktree"` fields in
   overlays.
-- Include `[tool_windows.neovim]` by default unless the user asks to disable it.
-- Disable Neovim by removing the `[tool_windows.neovim]` block, not by writing
+- Include the `rich` layout alias by default unless the user asks to disable
+  the rich files surface.
+- Disable rich files by removing the `rich` layout alias, not by writing
   `enabled = false`.
 - Keep provider credentials inherited by default.
 - Do not write secrets unless the user explicitly provides and accepts that they

@@ -95,6 +95,7 @@ def submit_ask(
         message_body,
         owner_id=f'{normalized_sender}-to-{normalized_target}',
         force=bool(getattr(command, 'artifact_request', False)),
+        inline=bool(getattr(command, 'inline_request', False)),
     )
     payload = invoke_mounted_daemon_fn(
         context,
@@ -129,7 +130,9 @@ def _route_options(command) -> dict[str, object]:
     return options
 
 
-def _artifact_request_body(layout, message_body: str, *, owner_id: str, force: bool):
+def _artifact_request_body(layout, message_body: str, *, owner_id: str, force: bool, inline: bool = False):
+    if inline:
+        return message_body, None
     if force:
         artifact = write_text_artifact(
             layout,

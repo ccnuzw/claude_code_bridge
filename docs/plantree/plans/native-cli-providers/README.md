@@ -19,6 +19,7 @@ Next-wave research also covers five requested CLIs:
 - `kiro`: Kiro CLI, command `kiro-cli`.
 - `crush`: Charm Crush CLI, command `crush`.
 - `pi`: Pi coding agent, command `pi`.
+- `grok`: xAI Grok Build CLI, command `grok`.
 
 The current landing slice makes these providers usable in `.ccb/ccb.config`,
 mounts them in managed tmux panes, sends CCB ask prompts, detects replies via
@@ -65,15 +66,15 @@ override the shipped contracts.
 In scope:
 
 - Provider keys `kimi`, `deepseek`, and `mimo`.
-- Next-wave provider keys `qwen`, `copilot`, `cursor`, `kiro`, `crush`, and
-  `pi`, plus Z.ai CLI provider key `zai`.
+- Next-wave provider keys `qwen`, `copilot`, `cursor`, `kiro`, `crush`,
+  `pi`, and `grok`, plus Z.ai CLI provider key `zai`.
 - Default executables `kimi`, `deepcode`, and `mimo`.
 - Default next-wave executables `qwen`, `copilot`, `agent`, `kiro-cli`,
-  `crush`, `pi`, and `zai`.
+  `crush`, `pi`, `grok`, and `zai`.
 - `KIMI_START_CMD`, `DEEPSEEK_START_CMD`, and `MIMO_START_CMD` overrides.
 - Next-wave command overrides `QWEN_START_CMD`, `COPILOT_START_CMD`,
-  `CURSOR_START_CMD`, `KIRO_START_CMD`, `CRUSH_START_CMD`, and
-  `PI_START_CMD`; Z.ai uses `ZAI_START_CMD`.
+  `CURSOR_START_CMD`, `KIRO_START_CMD`, `CRUSH_START_CMD`,
+  `GROK_START_CMD`, and `PI_START_CMD`; Z.ai uses `ZAI_START_CMD`.
 - Managed tmux pane startup using the existing simple tmux runtime path.
 - Native completion detection using `CCB_REQ_ID` binding plus provider-owned
   Kimi `wire.jsonl` and DeepCode session stores.
@@ -96,6 +97,9 @@ In scope:
   visibility, and execution-resume metadata clarification.
 - Z.ai CLI (`zai`) provider registration using the shared native CLI subprocess
   path and `zai --prompt` headless execution.
+- Grok Build CLI (`grok`) provider registration using the shared native CLI
+  subprocess path and official `grok --no-auto-update -p ... --output-format
+  streaming-json --session-id ...` headless execution.
 - Unit and isolated source-runtime validation in `/home/bfly/yunwei/test_ccb2`.
 - Local install/source research under
   `/home/bfly/yunwei/test_ccb2/cli-integration-lab` before source integration.

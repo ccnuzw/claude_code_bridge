@@ -237,6 +237,19 @@ class FailingRestoreExecutionService(RecordingExecutionService):
         )
 
 
+class RestartedRuntimeRestoreExecutionService(RecordingExecutionService):
+    def restore(self, job, *, runtime_context=None):
+        del runtime_context
+        return ExecutionRestoreResult(
+            job_id=job.job_id,
+            agent_name=job.agent_name,
+            provider=job.provider,
+            status='abandoned',
+            reason='provider_runtime_restarted_without_pending_replay',
+            resume_capable=True,
+        )
+
+
 class ScriptedTerminalExecutionService:
     def __init__(
         self,
@@ -1995,6 +2008,63 @@ def test_dispatcher_restore_running_jobs_marks_unrecoverable_execution_incomplet
     event_types = [event['type'] for event in watched['events']]
     assert 'execution_restore_failed' in event_types
     assert watched['terminal'] is True
+
+
+def test_dispatcher_restore_running_jobs_marks_restarted_runtime_retryable_failure(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-restore-restarted-runtime'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _fake_config()
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('demo', project_id=ctx.project_id, layout=layout, pid=201))
+    execution_service = ExecutionService(
+        build_default_execution_registry(),
+        clock=lambda: '2026-03-18T00:00:00Z',
+        state_store=ExecutionStateStore(layout),
+    )
+    dispatcher = JobDispatcher(
+        layout,
+        config,
+        registry,
+        execution_service=execution_service,
+        clock=lambda: '2026-03-18T00:00:00Z',
+    )
+
+    receipt = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='demo',
+            from_actor='user',
+            body='restore me',
+            task_id='fake;latency_ms=1500',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    )
+    job_id = receipt.jobs[0].job_id
+    dispatcher.tick()
+    running = dispatcher.get(job_id)
+    assert running is not None
+    assert running.status is JobStatus.RUNNING
+
+    restarted = JobDispatcher(
+        layout,
+        config,
+        registry,
+        execution_service=RestartedRuntimeRestoreExecutionService(),
+        clock=lambda: '2026-03-18T00:00:05Z',
+    )
+    completed = restarted.restore_running_jobs()
+
+    assert len(completed) == 1
+    terminal = restarted.get(job_id)
+    assert terminal is not None
+    assert terminal.status is JobStatus.FAILED
+    assert terminal.terminal_decision is not None
+    assert terminal.terminal_decision['reason'] == 'runtime_unavailable'
+    assert terminal.terminal_decision['diagnostics']['delivery_retryable'] is True
+    assert terminal.terminal_decision['diagnostics']['no_reply_reason'] == 'provider_runtime_restarted_without_pending_replay'
 
 
 def test_dispatcher_terminate_nonterminal_jobs_prevents_retry_and_restart_restore(tmp_path: Path) -> None:

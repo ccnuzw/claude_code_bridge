@@ -13,7 +13,6 @@ Existing public media:
 
 - `assets/show.png`
 - `assets/demo.webp`
-- `assets/nvim.png`
 - `assets/readme_previews/video1.gif`
 - `assets/readme_previews/video2.gif`
 - `assets/weixin.jpg`

@@ -159,7 +159,7 @@ Use screenshots when:
 
 - the sidebar layout or status display looks wrong;
 - a provider TUI is visibly stuck but text capture is inconclusive;
-- a managed tool window such as Neovim or browser output matters;
+- a managed rich tool window or browser output matters;
 - tmux pane geometry, focus, or split layout is the suspected failure.
 - self-supervision cannot classify whether an active provider pane is really
   working, stale, waiting for input, dead/blank, misframed, rate-limited, or

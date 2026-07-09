@@ -71,6 +71,8 @@ def is_retryable_failure(
 ) -> bool:
     status = decision.status.value
     if status == JobStatus.INCOMPLETE.value:
+        if has_retryable_diagnostic(decision):
+            return True
         reason = str(decision.reason or '').strip().lower()
         error_type = str(decision.diagnostics.get('error_type') or '').strip().lower()
         return reason in DEFAULT_RETRYABLE_INCOMPLETE_REASONS or error_type in DEFAULT_RETRYABLE_INCOMPLETE_ERROR_TYPES

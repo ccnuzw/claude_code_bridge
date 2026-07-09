@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import shlex
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -35,6 +36,65 @@ _TASK_SET_INTENT_MARKERS = (
     'bounded task set',
     'route-mix validation',
     'task set validation',
+)
+_COMPLEX_TASK_SET_FEATURE_MARKERS = (
+    'alert',
+    'api',
+    'budget',
+    'csv',
+    'dashboard',
+    'database',
+    'doc',
+    'documentation',
+    'export',
+    'frontend',
+    'import',
+    'integration',
+    'json',
+    'module',
+    'modules',
+    'monthly',
+    'pipeline',
+    'readme',
+    'report',
+    'reports',
+    'test',
+    'tests',
+    'trend',
+    'ui',
+    'workflow',
+    '仪表盘',
+    '导入',
+    '导出',
+    '提醒',
+    '文档',
+    '月度',
+    '模块',
+    '测试',
+    '趋势',
+    '报告',
+    '流程',
+    '预算',
+)
+_COMPACT_SINGLE_TASK_HINTS = (
+    'compact',
+    'minimal',
+    'single',
+    'simple',
+    'small',
+    'tiny',
+    '单个',
+    '小型',
+    '简单',
+    '紧凑',
+)
+_GIT_SCOPE_CHECK_RE = re.compile(r'(?im)^\s*(?:[-*]\s*)?`?git`?\s+(?:diff|status)\b')
+_PHASE6B_L1_L4_EXPECTED_TASK_IDS = (
+    'phase6b-l1-doc-direct-execution',
+    'phase6b-l2-code-test-direct-execution',
+    'phase6b-l3-needs-detail',
+    'phase6b-l4-macro-adjustment-request',
+    'phase6b-l4-blocked-prerequisite',
 )
 
 
@@ -72,8 +132,9 @@ def consume_activation_role_output(context, command, services=None) -> dict[str,
 
 def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, object] | None) -> dict[str, object] | None:
     original_job_id = job_id
-    if _job_already_consumed(context, job_id):
-        return _already_consumed_payload(context, job_id=job_id)
+    consumed_record = _consumed_import_record(context, job_id)
+    if consumed_record is not None:
+        return _already_consumed_payload(context, job_id=job_id, record=consumed_record)
     snapshot = _load_job_snapshot(context, job_id)
     if snapshot is None:
         return _pending_payload(context, job_id=job_id, agent_name=None, reason='missing_completion_snapshot')
@@ -167,6 +228,7 @@ def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], r
         return plan_result
     activation_id = f'act-{uuid4().hex[:12]}'
     planner_contract = planner_contract_for_frontdesk_text(reply)
+    expected_task_ids = planner_expected_task_ids_for_frontdesk_text(reply)
     activation = {
         'schema_version': 1,
         'record_type': 'ccb_loop_frontdesk_planner_activation',
@@ -177,9 +239,23 @@ def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], r
         'plan_slug': plan_slug,
         'source_job': _job_trace(snapshot, reply),
         'planner_contract': planner_contract,
-        'required_next_output': planner_required_output_for_contract(planner_contract),
-        'script_write_rules': planner_script_write_rules_for_contract(planner_contract),
+        'required_next_output': planner_required_output_for_contract(
+            planner_contract,
+            expected_task_ids=expected_task_ids,
+        ),
+        'script_write_rules': planner_script_write_rules_for_contract(
+            planner_contract,
+            expected_task_ids=expected_task_ids,
+        ),
+        'expected_task_ids': list(expected_task_ids),
     }
+    source_task_id = _job_request_task_id(
+        context,
+        job_id=job_id,
+        agent_name=str(snapshot.get('agent_name') or 'frontdesk'),
+    )
+    if source_task_id:
+        activation['source_task_id'] = source_task_id
     activation_path = _activation_path(context, activation_id)
     atomic_write_json(activation_path, activation)
     summary = deps.submit_ask(
@@ -191,7 +267,7 @@ def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], r
             message=_planner_from_frontdesk_message(activation, reply),
             task_id=activation_id,
             compact=True,
-            artifact_request=True,
+            inline_request=True,
         ),
     )
     job = _single_job(summary.jobs, target='planner')
@@ -253,6 +329,8 @@ def _consume_existing_frontdesk_handoff(
             },
         )
     result = _frontdesk_handoff_result(handoff)
+    ask = result.get('ask') if isinstance(result, dict) and isinstance(result.get('ask'), dict) else None
+    planner_job_id = result.get('planner_job_id') if isinstance(result, dict) else None
     record = _log_import(
         context,
         {
@@ -261,6 +339,8 @@ def _consume_existing_frontdesk_handoff(
             'source_job': _job_trace(snapshot, reply),
             'handoff': _compact_frontdesk_handoff(handoff),
             'handoff_result': result,
+            'ask': ask,
+            'planner_job_id': planner_job_id,
         },
     )
     return _base_payload(
@@ -272,6 +352,8 @@ def _consume_existing_frontdesk_handoff(
         extra={
             'handoff': _compact_frontdesk_handoff(handoff),
             'handoff_result': result,
+            'ask': ask,
+            'planner_job_id': planner_job_id,
             'role_output_import': record,
             'next_activation': 'stop_after_existing_frontdesk_handoff',
         },
@@ -340,6 +422,24 @@ def _consume_planner(
             evidence=dict(parsed),
         )
     if parsed.get('planner_contract') == _PLANNER_CONTRACT_TASK_SET:
+        task_id_check = _validate_task_set_expected_task_ids(parsed, activation=activation)
+        if task_id_check.get('status') != 'ok':
+            return _blocked_payload(
+                context,
+                job_id=job_id,
+                agent_name=str(snapshot.get('agent_name') or ''),
+                reason=str(task_id_check.get('reason') or 'planner_task_set_unexpected_task_ids'),
+                evidence=dict(task_id_check),
+            )
+        contract_check = _validate_task_set_contracts_for_activation(parsed, activation=activation)
+        if contract_check.get('status') != 'ok':
+            return _blocked_payload(
+                context,
+                job_id=job_id,
+                agent_name=str(snapshot.get('agent_name') or ''),
+                reason=str(contract_check.get('reason') or 'planner_task_set_contract_invalid'),
+                evidence=dict(contract_check),
+            )
         return _consume_planner_task_set(
             context,
             command,
@@ -398,42 +498,59 @@ def _consume_planner(
             activation_reason='planner_reply_imported',
         ),
     )
+    source_task_settlement = _settle_frontdesk_single_task_source_task(
+        context,
+        deps,
+        plan_slug=plan_slug,
+        job_id=job_id,
+        snapshot=snapshot,
+        reply=reply,
+        activation=activation,
+        import_root=import_root,
+        imported_task_id=task_id,
+    )
+    record_payload = {
+        'action': 'imported_planner_task_authority',
+        'status': 'ok',
+        'source_job': _job_trace(snapshot, reply),
+        'plan_slug': plan_slug,
+        'task_id': task_id,
+        'created_task': bool(task_payload.get('created')),
+        'artifacts': {
+            'task_packet': task_packet_import.get('artifact'),
+            'execution_contract': execution_contract_import.get('artifact'),
+        },
+        'status_transition': _compact_plan_payload(ready),
+        'plan_bootstrap': plan_result,
+    }
+    if source_task_settlement is not None:
+        record_payload['source_task_settlement'] = source_task_settlement
     record = _log_import(
         context,
-        {
-            'action': 'imported_planner_task_authority',
-            'status': 'ok',
-            'source_job': _job_trace(snapshot, reply),
-            'plan_slug': plan_slug,
-            'task_id': task_id,
-            'created_task': bool(task_payload.get('created')),
-            'artifacts': {
-                'task_packet': task_packet_import.get('artifact'),
-                'execution_contract': execution_contract_import.get('artifact'),
-            },
-            'status_transition': _compact_plan_payload(ready),
-            'plan_bootstrap': plan_result,
-        },
+        record_payload,
     )
+    payload_extra = {
+        'plan_slug': plan_slug,
+        'task_id': task_id,
+        'task_status': ready.get('status'),
+        'next_owner': ready.get('next_owner'),
+        'created_task': bool(task_payload.get('created')),
+        'imports': {
+            'task_packet': _compact_plan_payload(task_packet_import),
+            'execution_contract': _compact_plan_payload(execution_contract_import),
+        },
+        'role_output_import': record,
+        'next_activation': 'orchestrator',
+    }
+    if source_task_settlement is not None:
+        payload_extra['source_task_settlement'] = source_task_settlement
     return _base_payload(
         context,
         loop_runner_status='ok',
         action='imported_planner_task_authority',
         job_id=job_id,
         agent_name=str(snapshot.get('agent_name') or ''),
-        extra={
-            'plan_slug': plan_slug,
-            'task_id': task_id,
-            'task_status': ready.get('status'),
-            'next_owner': ready.get('next_owner'),
-            'created_task': bool(task_payload.get('created')),
-            'imports': {
-                'task_packet': _compact_plan_payload(task_packet_import),
-                'execution_contract': _compact_plan_payload(execution_contract_import),
-            },
-            'role_output_import': record,
-            'next_activation': 'orchestrator',
-        },
+        extra=payload_extra,
     )
 
 
@@ -521,35 +638,213 @@ def _consume_planner_task_set(
                 'status_transition': _compact_plan_payload(ready),
             }
         )
-    record = _log_import(
+    task_ids = [task['task_id'] for task in imported_tasks]
+    source_task_settlement = _settle_frontdesk_task_set_source_task(
         context,
-        {
-            'action': 'imported_planner_task_set_authority',
-            'status': 'ok',
-            'source_job': _job_trace(snapshot, reply),
-            'planner_contract': _PLANNER_CONTRACT_TASK_SET,
-            'plan_slug': plan_slug,
-            'task_ids': [task['task_id'] for task in imported_tasks],
-            'tasks': imported_tasks,
-            'plan_bootstrap': plan_result,
-        },
+        deps,
+        plan_slug=plan_slug,
+        job_id=job_id,
+        snapshot=snapshot,
+        reply=reply,
+        activation=activation,
+        import_root=import_root,
+        imported_tasks=imported_tasks,
     )
+    single_task_fields = _single_task_set_fields(imported_tasks)
+    record_payload = {
+        'action': 'imported_planner_task_set_authority',
+        'status': 'ok',
+        'source_job': _job_trace(snapshot, reply),
+        'planner_contract': _PLANNER_CONTRACT_TASK_SET,
+        'plan_slug': plan_slug,
+        'task_ids': task_ids,
+        'tasks': imported_tasks,
+        'task_count': len(imported_tasks),
+        'plan_bootstrap': plan_result,
+    }
+    if source_task_settlement is not None:
+        record_payload['source_task_settlement'] = source_task_settlement
+    record_payload.update(single_task_fields)
+    record = _log_import(context, record_payload)
+    payload_extra = {
+        'plan_slug': plan_slug,
+        'planner_contract': _PLANNER_CONTRACT_TASK_SET,
+        'task_ids': task_ids,
+        'tasks': imported_tasks,
+        'task_count': len(imported_tasks),
+        'role_output_import': record,
+        'next_activation': 'orchestrator',
+    }
+    if source_task_settlement is not None:
+        payload_extra['source_task_settlement'] = source_task_settlement
+    payload_extra.update(single_task_fields)
     return _base_payload(
         context,
         loop_runner_status='ok',
         action='imported_planner_task_set_authority',
         job_id=job_id,
         agent_name=str(snapshot.get('agent_name') or ''),
-        extra={
-            'plan_slug': plan_slug,
-            'planner_contract': _PLANNER_CONTRACT_TASK_SET,
-            'task_ids': [task['task_id'] for task in imported_tasks],
-            'tasks': imported_tasks,
-            'task_count': len(imported_tasks),
-            'role_output_import': record,
-            'next_activation': 'orchestrator',
-        },
+        extra=payload_extra,
     )
+
+
+def _settle_frontdesk_task_set_source_task(
+    context,
+    deps,
+    *,
+    plan_slug: str,
+    job_id: str,
+    snapshot: dict[str, object],
+    reply: str,
+    activation: dict[str, object] | None,
+    import_root: Path,
+    imported_tasks: list[dict[str, object]],
+) -> dict[str, object] | None:
+    source_task_id = _source_task_id_for_task_set(context, activation=activation)
+    if not source_task_id:
+        return None
+    imported_task_ids = [str(task.get('task_id') or '').strip() for task in imported_tasks]
+    return _settle_frontdesk_source_task(
+        context,
+        deps,
+        plan_slug=plan_slug,
+        job_id=job_id,
+        snapshot=snapshot,
+        reply=reply,
+        activation=activation,
+        import_root=import_root,
+        source_task_id=source_task_id,
+        imported_task_ids=imported_task_ids,
+        completion_filename='source_task_set_decomposition_completion.md',
+        completion_title='Task Set Decomposition Complete',
+        activation_reason='planner_task_set_decomposed_source_task',
+    )
+
+
+def _settle_frontdesk_single_task_source_task(
+    context,
+    deps,
+    *,
+    plan_slug: str,
+    job_id: str,
+    snapshot: dict[str, object],
+    reply: str,
+    activation: dict[str, object] | None,
+    import_root: Path,
+    imported_task_id: str,
+) -> dict[str, object] | None:
+    source_task_id = _source_task_id_for_task_set(context, activation=activation)
+    if not source_task_id:
+        return None
+    return _settle_frontdesk_source_task(
+        context,
+        deps,
+        plan_slug=plan_slug,
+        job_id=job_id,
+        snapshot=snapshot,
+        reply=reply,
+        activation=activation,
+        import_root=import_root,
+        source_task_id=source_task_id,
+        imported_task_ids=[imported_task_id],
+        completion_filename='source_single_task_handoff_completion.md',
+        completion_title='Single Task Handoff Complete',
+        activation_reason='planner_single_task_handoff_source_task',
+    )
+
+
+def _settle_frontdesk_source_task(
+    context,
+    deps,
+    *,
+    plan_slug: str,
+    job_id: str,
+    snapshot: dict[str, object],
+    reply: str,
+    activation: dict[str, object] | None,
+    import_root: Path,
+    source_task_id: str,
+    imported_task_ids: list[str],
+    completion_filename: str,
+    completion_title: str,
+    activation_reason: str,
+) -> dict[str, object] | None:
+    imported_task_ids = [task_id for task_id in imported_task_ids if task_id]
+    if source_task_id in imported_task_ids:
+        return None
+    try:
+        source = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=source_task_id))
+    except ValueError:
+        return None
+    source_task = source.get('task') if isinstance(source.get('task'), dict) else {}
+    if str(source_task.get('plan_slug') or '') != plan_slug:
+        return None
+    source_status = str(source_task.get('status') or '').strip().lower()
+    source_next_owner = str(source_task.get('next_owner') or '').strip().lower()
+    if source_status == 'done' and source_next_owner == 'terminal':
+        return {
+            'status': 'already_done',
+            'task_id': source_task_id,
+            'status_transition': _compact_plan_payload(source),
+        }
+    if source_status not in {'draft', 'ready_for_orchestration'}:
+        return {
+            'status': 'skipped',
+            'reason': 'source_task_not_settleable',
+            'task_id': source_task_id,
+            'source_status': source_status,
+            'source_next_owner': source_next_owner,
+        }
+    completion_path = import_root / completion_filename
+    child_lines = '\n'.join(f'- {task_id}' for task_id in imported_task_ids)
+    atomic_write_text(
+        completion_path,
+        '\n'.join(
+            [
+                f'# {completion_title}',
+                '',
+                f'source_task_id: {source_task_id}',
+                f'plan_slug: {plan_slug}',
+                f'planner_job_id: {job_id}',
+                f'source_job_id: {_activation_source_job_id(activation)}',
+                f'child_task_count: {len(imported_task_ids)}',
+                '',
+                'child_task_ids:',
+                child_lines or '- none',
+                '',
+            ]
+        ),
+    )
+    imported = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=source_task_id,
+            artifact_kind='completion',
+            file_path=str(completion_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    transitioned = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id=source_task_id,
+            status='done',
+            next_owner='terminal',
+            activation_reason=activation_reason,
+        ),
+    )
+    return {
+        'status': 'done',
+        'task_id': source_task_id,
+        'artifact': imported.get('artifact'),
+        'status_transition': _compact_plan_payload(transitioned),
+        'child_task_ids': imported_task_ids,
+        'source_job': _job_trace(snapshot, reply),
+    }
 
 
 def _consume_orchestrator(
@@ -626,6 +921,80 @@ def _consume_orchestrator(
     )
 
 
+def _single_task_set_fields(imported_tasks: list[dict[str, object]]) -> dict[str, object]:
+    if len(imported_tasks) != 1:
+        return {}
+    task = imported_tasks[0]
+    fields: dict[str, object] = {}
+    task_id = str(task.get('task_id') or '').strip()
+    if task_id:
+        fields['task_id'] = task_id
+    route = str(task.get('route') or '').strip()
+    if route:
+        fields['route'] = route
+    status_transition = task.get('status_transition') if isinstance(task.get('status_transition'), dict) else {}
+    if status_transition:
+        fields['status_transition'] = status_transition
+    status = str(status_transition.get('status') or '').strip()
+    if status:
+        fields['task_status'] = status
+    next_owner = str(status_transition.get('next_owner') or '').strip()
+    if next_owner:
+        fields['next_owner'] = next_owner
+    return fields
+
+
+def _source_task_id_for_task_set(context, *, activation: dict[str, object] | None) -> str:
+    if not isinstance(activation, dict):
+        return ''
+    raw = str(activation.get('source_task_id') or '').strip()
+    if not raw:
+        source_task = activation.get('source_task') if isinstance(activation.get('source_task'), dict) else {}
+        raw = str(source_task.get('task_id') or '').strip()
+    if not raw:
+        source_job = activation.get('source_job') if isinstance(activation.get('source_job'), dict) else {}
+        raw = _job_request_task_id(
+            context,
+            job_id=str(source_job.get('job_id') or '').strip(),
+            agent_name=str(source_job.get('agent_name') or '').strip(),
+        )
+    if not raw or raw.startswith('act-'):
+        return ''
+    if not _SEGMENT_RE.fullmatch(raw):
+        return ''
+    return raw
+
+
+def _activation_source_job_id(activation: dict[str, object] | None) -> str:
+    source_job = activation.get('source_job') if isinstance(activation, dict) and isinstance(activation.get('source_job'), dict) else {}
+    return str(source_job.get('job_id') or '').strip()
+
+
+def _job_request_task_id(context, *, job_id: str, agent_name: str) -> str:
+    job_id = str(job_id or '').strip()
+    agent_name = str(agent_name or '').strip()
+    if not job_id or not agent_name or not _SEGMENT_RE.fullmatch(agent_name):
+        return ''
+    path = Path(context.project.project_root) / '.ccb' / 'agents' / agent_name / 'jobs.jsonl'
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except FileNotFoundError:
+        return ''
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or str(record.get('job_id') or '').strip() != job_id:
+            continue
+        request = record.get('request') if isinstance(record.get('request'), dict) else {}
+        task_id = str(request.get('task_id') or '').strip()
+        return task_id if _SEGMENT_RE.fullmatch(task_id) else ''
+    return ''
+
+
 def _consume_task_detailer(
     context,
     command,
@@ -647,7 +1016,38 @@ def _consume_task_detailer(
             agent_name=str(snapshot.get('agent_name') or ''),
             reason='task_detailer_import_requires_task_id',
         )
-    parsed = _parse_task_detailer_reply(reply)
+    parsed = _parse_task_detailer_reply(
+        reply,
+        detail_ready_stop_contract=activation.get('detail_ready_stop_contract') if isinstance(activation, dict) else None,
+    )
+    if (
+        parsed.get('status') == 'blocked'
+        and parsed.get('reason') == 'task_detailer_reply_not_detail_ready'
+        and str(parsed.get('readiness') or '').strip().lower() == 'needs_clarification'
+    ):
+        return _consume_task_detailer_clarification(
+            context,
+            deps,
+            snapshot=snapshot,
+            parsed=parsed,
+            reply=reply,
+            job_id=job_id,
+            task_id=task_id,
+        )
+    if (
+        parsed.get('status') == 'blocked'
+        and parsed.get('reason') == 'task_detailer_reply_not_detail_ready'
+        and str(parsed.get('readiness') or '').strip().lower() == 'blocked'
+    ):
+        return _consume_task_detailer_blocker(
+            context,
+            deps,
+            snapshot=snapshot,
+            parsed=parsed,
+            reply=reply,
+            job_id=job_id,
+            task_id=task_id,
+        )
     if parsed.get('status') != 'ok':
         return _blocked_payload(
             context,
@@ -747,6 +1147,253 @@ def _consume_task_detailer(
     )
 
 
+def _consume_task_detailer_clarification(
+    context,
+    deps,
+    *,
+    snapshot: dict[str, object],
+    parsed: dict[str, object],
+    reply: str,
+    job_id: str,
+    task_id: str,
+) -> dict[str, object]:
+    import_root = _role_import_dir(context, job_id)
+    detail_design_path = import_root / 'task-detail-design.md'
+    detail_summary_path = import_root / 'brief-update-summary.md'
+    detail_packet_path = import_root / 'detail-packet.manifest.json'
+    detail_design = str(parsed.get('detail_design') or '')
+    detail_summary = str(parsed.get('detail_summary') or '')
+    detail_packet = str(parsed.get('detail_packet') or '')
+    atomic_write_text(detail_design_path, detail_design)
+    atomic_write_text(detail_summary_path, detail_summary)
+    atomic_write_text(detail_packet_path, detail_packet)
+    detail_design_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='detail_design',
+            file_path=str(detail_design_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    detail_summary_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='detail_summary',
+            file_path=str(detail_summary_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    detail_packet_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='detail_packet',
+            file_path=str(detail_packet_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    clarified = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id=task_id,
+            status='needs_clarification',
+            next_owner='task_detailer',
+            activation_reason='needs_clarification_from_task_detailer',
+        ),
+    )
+    record = _log_import(
+        context,
+        {
+            'action': 'imported_task_detailer_clarification_authority',
+            'status': 'ok',
+            'source_job': _job_trace(snapshot, reply),
+            'task_id': task_id,
+            'readiness': str(parsed.get('readiness') or 'needs_clarification'),
+            'created_task': False,
+            'artifacts': {
+                'detail_design': detail_design_import.get('artifact'),
+                'detail_summary': detail_summary_import.get('artifact'),
+                'detail_packet': detail_packet_import.get('artifact'),
+            },
+            'status_transition': _compact_plan_payload(clarified),
+        },
+    )
+    return _base_payload(
+        context,
+        loop_runner_status='paused',
+        action='imported_task_detailer_clarification_authority',
+        job_id=job_id,
+        agent_name=str(snapshot.get('agent_name') or ''),
+        extra={
+            'task_id': task_id,
+            'task_status': clarified.get('status'),
+            'next_owner': clarified.get('next_owner'),
+            'readiness': str(parsed.get('readiness') or 'needs_clarification'),
+            'created_task': False,
+            'imports': {
+                'detail_design': _compact_plan_payload(detail_design_import),
+                'detail_summary': _compact_plan_payload(detail_summary_import),
+                'detail_packet': _compact_plan_payload(detail_packet_import),
+            },
+            'role_output_import': record,
+            'next_activation': 'task_detailer',
+        },
+    )
+
+
+def _consume_task_detailer_blocker(
+    context,
+    deps,
+    *,
+    snapshot: dict[str, object],
+    parsed: dict[str, object],
+    reply: str,
+    job_id: str,
+    task_id: str,
+) -> dict[str, object]:
+    import_root = _role_import_dir(context, job_id)
+    detail_design_path = import_root / 'task-detail-design.md'
+    detail_summary_path = import_root / 'brief-update-summary.md'
+    detail_packet_path = import_root / 'detail-packet.manifest.json'
+    blocker_evidence_path = import_root / 'blocker-evidence.md'
+    detail_design = str(parsed.get('detail_design') or '')
+    detail_summary = str(parsed.get('detail_summary') or '')
+    detail_packet = str(parsed.get('detail_packet') or '')
+    atomic_write_text(detail_design_path, detail_design)
+    atomic_write_text(detail_summary_path, detail_summary)
+    atomic_write_text(detail_packet_path, detail_packet)
+    atomic_write_text(
+        blocker_evidence_path,
+        '\n\n'.join(
+            part
+            for part in (
+                '# Task Detailer Blocker Evidence',
+                f'Task: {task_id}',
+                'Readiness recommendation: blocked',
+                'The task detailer determined that this task cannot be safely refined into implementation work yet.',
+                '## Detail Design',
+                detail_design,
+                '## Detail Summary',
+                detail_summary,
+                '## Detail Packet',
+                detail_packet,
+            )
+            if part
+        )
+        + '\n',
+    )
+    detail_design_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='detail_design',
+            file_path=str(detail_design_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    detail_summary_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='detail_summary',
+            file_path=str(detail_summary_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    detail_packet_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='detail_packet',
+            file_path=str(detail_packet_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    blocker_import = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='blocker_evidence',
+            file_path=str(blocker_evidence_path),
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id=job_id,
+        ),
+    )
+    blocked = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id=task_id,
+            status='blocked',
+            next_owner='terminal',
+            activation_reason='blocked_from_task_detailer',
+        ),
+    )
+    record = _log_import(
+        context,
+        {
+            'action': 'imported_task_detailer_blocker_authority',
+            'status': 'ok',
+            'source_job': _job_trace(snapshot, reply),
+            'task_id': task_id,
+            'created_task': False,
+            'readiness': parsed.get('readiness'),
+            'controller_expected_stop': parsed.get('controller_expected_stop'),
+            'artifacts': {
+                'detail_design': detail_design_import.get('artifact'),
+                'detail_summary': detail_summary_import.get('artifact'),
+                'detail_packet': detail_packet_import.get('artifact'),
+                'blocker_evidence': blocker_import.get('artifact'),
+            },
+            'status_transition': _compact_plan_payload(blocked),
+        },
+    )
+    return _base_payload(
+        context,
+        loop_runner_status='ok',
+        action='imported_task_detailer_blocker_authority',
+        job_id=job_id,
+        agent_name=str(snapshot.get('agent_name') or ''),
+        extra={
+            'task_id': task_id,
+            'task_status': blocked.get('status'),
+            'next_owner': blocked.get('next_owner'),
+            'created_task': False,
+            'imports': {
+                'detail_design': _compact_plan_payload(detail_design_import),
+                'detail_summary': _compact_plan_payload(detail_summary_import),
+                'detail_packet': _compact_plan_payload(detail_packet_import),
+                'blocker_evidence': _compact_plan_payload(blocker_import),
+            },
+            'role_output_import': record,
+            'next_activation': 'none',
+        },
+    )
+
+
 def _parse_planner_reply(reply: str) -> dict[str, object]:
     task_packet = _fenced_section(reply, ('task-packet.md', 'task_packet.md'))
     readiness_text = _fenced_section(reply, ('readiness.json',))
@@ -791,7 +1438,7 @@ def _parse_planner_reply(reply: str) -> dict[str, object]:
             'expected_readiness': sorted(_NEEDS_DETAIL_READINESS),
         }
     allowed_paths = _string_list(readiness.get('allowed_paths'))
-    verification = _string_list(readiness.get('verification'))
+    verification = _canonicalize_verification_commands(_string_list(readiness.get('verification')))
     blockers = _string_list(readiness.get('blockers'))
     missing_fields = []
     if route in _EXECUTION_ROUTES and not allowed_paths:
@@ -816,6 +1463,8 @@ def _parse_planner_reply(reply: str) -> dict[str, object]:
             allowed_paths=allowed_paths,
             verification=verification,
         )
+    else:
+        execution_contract = _canonicalize_verification_text(execution_contract)
     title = _task_title_from_packet(task_packet)
     return {
         'status': 'ok',
@@ -912,6 +1561,84 @@ def _parse_planner_task_set_reply(reply: str) -> dict[str, object]:
     }
 
 
+def _validate_task_set_expected_task_ids(
+    parsed: dict[str, object],
+    *,
+    activation: dict[str, object] | None,
+) -> dict[str, object]:
+    expected = _expected_task_ids_from_activation(activation)
+    if not expected:
+        return {'status': 'ok'}
+    tasks = [task for task in tuple(parsed.get('tasks') or ()) if isinstance(task, dict)]
+    observed = [str(task.get('task_id') or '') for task in tasks]
+    expected_set = set(expected)
+    observed_set = set(observed)
+    missing = [task_id for task_id in expected if task_id not in observed_set]
+    unexpected = [task_id for task_id in observed if task_id and task_id not in expected_set]
+    duplicate = sorted({task_id for task_id in observed if observed.count(task_id) > 1})
+    if missing or unexpected or duplicate or len(observed) != len(expected):
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_unexpected_task_ids',
+            'expected_task_ids': list(expected),
+            'observed_task_ids': observed,
+            'missing_task_ids': missing,
+            'unexpected_task_ids': unexpected,
+            'duplicate_task_ids': duplicate,
+            'expected_task_count': len(expected),
+            'observed_task_count': len(observed),
+            'planner_contract': _PLANNER_CONTRACT_TASK_SET,
+        }
+    return {'status': 'ok', 'expected_task_ids': list(expected)}
+
+
+def _validate_task_set_contracts_for_activation(
+    parsed: dict[str, object],
+    *,
+    activation: dict[str, object] | None,
+) -> dict[str, object]:
+    expected = _expected_task_ids_from_activation(activation)
+    if expected != _PHASE6B_L1_L4_EXPECTED_TASK_IDS:
+        return {'status': 'ok'}
+    violations: list[dict[str, object]] = []
+    for task in tuple(parsed.get('tasks') or ()):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get('task_id') or '').strip()
+        route = str(task.get('route') or '').strip()
+        haystacks = [
+            ('execution_contract', str(task.get('execution_contract') or '')),
+            ('verification', '\n'.join(str(item) for item in tuple(task.get('verification') or ()))),
+        ]
+        fields = [field for field, text in haystacks if _GIT_SCOPE_CHECK_RE.search(text)]
+        if fields:
+            violations.append({'task_id': task_id, 'route': route, 'fields': fields})
+    if not violations:
+        return {'status': 'ok'}
+    return {
+        'status': 'blocked',
+        'reason': 'planner_task_set_git_scope_check_unsupported',
+        'unsupported_scope_checks': violations,
+        'expected_task_ids': list(expected),
+        'message': 'L1-L4 real-provider lab projects are not guaranteed to be git repositories; use repo-independent allowed-path verification.',
+        'planner_contract': _PLANNER_CONTRACT_TASK_SET,
+    }
+
+
+def _expected_task_ids_from_activation(activation: dict[str, object] | None) -> tuple[str, ...]:
+    if activation is None:
+        return ()
+    raw = activation.get('expected_task_ids')
+    if not isinstance(raw, list):
+        return ()
+    task_ids: list[str] = []
+    for item in raw:
+        text = str(item or '').strip()
+        if _SEGMENT_RE.fullmatch(text):
+            task_ids.append(text)
+    return tuple(task_ids)
+
+
 def _parse_planner_task_set_item(raw_task: object, *, index: int) -> dict[str, object]:
     prefix = f'tasks[{index}]'
     if not isinstance(raw_task, dict):
@@ -925,7 +1652,7 @@ def _parse_planner_task_set_item(raw_task: object, *, index: int) -> dict[str, o
     readiness_value = str(raw_task.get('readiness') or '').strip().lower()
     title = str(raw_task.get('title') or '').strip() or _task_title_from_packet(task_packet)
     allowed_paths = _string_list(raw_task.get('allowed_paths'))
-    verification = _string_list(raw_task.get('verification'))
+    verification = _canonicalize_verification_commands(_string_list(raw_task.get('verification')))
     blockers = _string_list(raw_task.get('blockers'))
     missing_fields: list[str] = []
     if not task_packet:
@@ -995,13 +1722,12 @@ def _parse_planner_task_set_item(raw_task: object, *, index: int) -> dict[str, o
             'task_id': task_id,
             'invalid_allowed_paths': invalid_allowed_paths,
         }
-    execution_contract = str(raw_task.get('execution_contract') or '').strip()
-    if not execution_contract:
-        execution_contract = _normalized_execution_contract(
-            route=route,
-            allowed_paths=allowed_paths,
-            verification=verification,
-        )
+    execution_contract = _task_set_execution_contract(
+        raw_contract=str(raw_task.get('execution_contract') or '').strip(),
+        route=route,
+        allowed_paths=allowed_paths,
+        verification=verification,
+    )
     return {
         'status': 'ok',
         'task_id': task_id,
@@ -1020,7 +1746,11 @@ def _has_single_task_planner_sections(reply: str) -> bool:
     return bool(_fenced_section(reply, ('task-packet.md', 'task_packet.md')) or _fenced_section(reply, ('readiness.json',)))
 
 
-def _parse_task_detailer_reply(reply: str) -> dict[str, object]:
+def _parse_task_detailer_reply(
+    reply: str,
+    *,
+    detail_ready_stop_contract: object | None = None,
+) -> dict[str, object]:
     detail_labels = (
         'task-detail-design.md',
         'task-detail-design',
@@ -1052,6 +1782,7 @@ def _parse_task_detailer_reply(reply: str) -> dict[str, object]:
         terminator_names=detail_terminator_labels,
     )
     readiness = _task_detailer_readiness(reply)
+    controller_expected_stop = _task_detailer_controller_expected_stop(reply)
     missing = []
     if not detail_design:
         missing.append('task-detail-design.md section')
@@ -1061,18 +1792,34 @@ def _parse_task_detailer_reply(reply: str) -> dict[str, object]:
         missing.append('detail-packet.manifest.json section')
     if missing:
         return {'status': 'blocked', 'reason': 'task_detailer_reply_missing_required_sections', 'missing_fields': missing}
-    if readiness != 'detail_ready':
+    effective_readiness = readiness
+    contract_status = ''
+    if isinstance(detail_ready_stop_contract, dict):
+        contract_status = str(detail_ready_stop_contract.get('status') or '').strip().lower()
+    if (
+        effective_readiness != 'detail_ready'
+        and controller_expected_stop == 'detail_ready'
+        and contract_status == 'detail_ready'
+    ):
+        effective_readiness = 'detail_ready'
+    if effective_readiness != 'detail_ready':
         return {
             'status': 'blocked',
             'reason': 'task_detailer_reply_not_detail_ready',
             'readiness': readiness or 'missing',
+            'controller_expected_stop': controller_expected_stop or None,
+            'detail_design': detail_design,
+            'detail_summary': detail_summary,
+            'detail_packet': detail_packet,
         }
     return {
         'status': 'ok',
         'detail_design': detail_design,
         'detail_summary': detail_summary,
         'detail_packet': detail_packet,
-        'readiness': readiness,
+        'readiness': effective_readiness,
+        'detail_readiness_recommendation': readiness or None,
+        'controller_expected_stop': controller_expected_stop or None,
     }
 
 
@@ -1131,9 +1878,8 @@ def _parse_orchestrator_reply(reply: str) -> dict[str, object]:
 
 def _fenced_section(text: str, names: tuple[str, ...]) -> str:
     for name in names:
-        escaped = re.escape(name).replace(r'\-', '[-_ ]')
         pattern = (
-            rf'(?is)(?:^|\n)\s*(?:#+\s*)?(?:\*\*)?\s*{escaped}\s*(?:\*\*)?\s*\n'
+            rf'(?is)(?:^|\n)\s*{_label_heading_fragment(name)}\s*\n'
             r'```[A-Za-z0-9_-]*\s*\n(.*?)\n```'
         )
         match = re.search(pattern, text)
@@ -1144,10 +1890,7 @@ def _fenced_section(text: str, names: tuple[str, ...]) -> str:
 
 def _labeled_section(text: str, names: tuple[str, ...], *, terminator_names: tuple[str, ...] | None = None) -> str:
     for name in names:
-        escaped = re.escape(name).replace(r'\-', '[-_ ]')
-        pattern = (
-            rf'(?im)(?:^|\n)\s*(?:#+\s*)?(?:\*\*)?\s*{escaped}\s*(?:\*\*)?\s*$'
-        )
+        pattern = rf'(?im)(?:^|\n)\s*{_label_heading_fragment(name)}\s*$'
         match = re.search(pattern, text)
         if match:
             body_start = match.end()
@@ -1162,12 +1905,24 @@ def _labeled_section(text: str, names: tuple[str, ...], *, terminator_names: tup
 def _labeled_section_terminator(text: str, names: tuple[str, ...]) -> int:
     matches = []
     for name in names:
-        escaped = re.escape(name).replace(r'\-', '[-_ ]')
-        pattern = rf'(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*{escaped}\s*(?:\*\*)?\s*$'
+        pattern = rf'(?im)^\s*{_label_heading_fragment(name)}\s*$'
         match = re.search(pattern, text)
         if match:
             matches.append(match.start())
     return min(matches) if matches else len(text)
+
+
+def _label_heading_fragment(name: str) -> str:
+    escaped = re.escape(name).replace(r'\-', '[-_ ]')
+    return (
+        r'(?:#+\s*)?'
+        r'(?:\*\*)?'
+        r'\s*(?:Artifact\s*:\s*)?'
+        r'`?'
+        rf'{escaped}'
+        r'`?'
+        r'\s*(?:\*\*)?'
+    )
 
 
 def _fenced_block(text: str) -> str:
@@ -1179,6 +1934,7 @@ def _fenced_block(text: str) -> str:
 
 def _task_detailer_readiness(reply: str) -> str:
     patterns = (
+        r'(?mi)^\s*(?:detail[_\s]+)?readiness[_\s]+recommendation\s*:\s*`?([A-Za-z_]+)`?\s*$',
         r'(?mi)^\s*(?:detail\s+)?readiness(?:\s+recommendation)?\s*:\s*`?([A-Za-z_]+)`?\s*$',
         r'(?mi)^\s*detail\s+status\s*:\s*`?([A-Za-z_]+)`?\s*$',
         r'(?mi)^\s*readiness\s*:\s*`?([A-Za-z_]+)`?\s*$',
@@ -1202,6 +1958,18 @@ def _task_detailer_readiness(reply: str) -> str:
     return ''
 
 
+def _task_detailer_controller_expected_stop(reply: str) -> str:
+    patterns = (
+        r'(?mi)^\s*controller[_\s-]+expected[_\s-]+stop\s*:\s*`?([A-Za-z_]+)`?\s*$',
+        r'(?mi)^\s*controller[_\s-]+expected[_\s-]+(?:status|outcome)\s*:\s*`?([A-Za-z_]+)`?\s*$',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, reply)
+        if match:
+            return match.group(1).strip().lower()
+    return ''
+
+
 def _path_within(path: Path, root: Path) -> bool:
     try:
         path.resolve(strict=False).relative_to(root.resolve(strict=False))
@@ -1211,6 +1979,7 @@ def _path_within(path: Path, root: Path) -> bool:
 
 
 def _normalized_execution_contract(*, route: str, allowed_paths: tuple[str, ...], verification: tuple[str, ...]) -> str:
+    verification = _canonicalize_verification_commands(verification)
     lines = [
         '# Execution Contract',
         '',
@@ -1222,6 +1991,126 @@ def _normalized_execution_contract(*, route: str, allowed_paths: tuple[str, ...]
     lines.extend(['', 'Verification:'])
     lines.extend(f'- {item}' for item in verification)
     return '\n'.join(lines)
+
+
+def _task_set_execution_contract(
+    *,
+    raw_contract: str,
+    route: str,
+    allowed_paths: tuple[str, ...],
+    verification: tuple[str, ...],
+) -> str:
+    verification = _canonicalize_verification_commands(verification)
+    if not raw_contract:
+        return _normalized_execution_contract(route=route, allowed_paths=allowed_paths, verification=verification)
+    raw_contract = _canonicalize_verification_text(raw_contract)
+    if route not in _EXECUTION_ROUTES or not allowed_paths:
+        return raw_contract
+    if _execution_contract_declares_allowed_change_paths(raw_contract):
+        return raw_contract
+    lines = [raw_contract.rstrip(), '', 'Allowed Change Paths:']
+    lines.extend(f'- {path}' for path in allowed_paths)
+    return '\n'.join(lines)
+
+
+def _execution_contract_declares_allowed_change_paths(text: str) -> bool:
+    for raw_line in str(text or '').splitlines():
+        heading = raw_line.strip().lstrip('#').strip().rstrip(':').lower()
+        if heading in {
+            'allowed_change_paths',
+            'allowed change paths',
+            'allowed_change_path',
+            'allowed change path',
+            'changed_files',
+            'changed files',
+        }:
+            return True
+        if heading.startswith(
+            (
+                'allowed_change_paths:',
+                'allowed change paths:',
+                'allowed_change_path:',
+                'allowed change path:',
+                'changed_files:',
+                'changed files:',
+            )
+        ):
+            return True
+    return False
+
+
+def _canonicalize_verification_commands(commands: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(_canonicalize_unittest_file_command(command) for command in commands)
+
+
+def _canonicalize_verification_text(text: str) -> str:
+    lines: list[str] = []
+    for raw_line in str(text or '').splitlines():
+        bullet = re.match(r'^(\s*[-*]\s+)(.+?)\s*$', raw_line)
+        if bullet:
+            command = bullet.group(2).strip()
+            canonical = _canonicalize_unittest_file_command(command)
+            lines.append(f'{bullet.group(1)}{canonical}' if canonical != command else raw_line)
+            continue
+        label = re.match(r'^(\s*(?:verification|verify)\s*:\s*)(.+?)\s*$', raw_line, flags=re.IGNORECASE)
+        if label:
+            command = label.group(2).strip()
+            canonical = _canonicalize_unittest_file_command(command)
+            lines.append(f'{label.group(1)}{canonical}' if canonical != command else raw_line)
+            continue
+        stripped = raw_line.strip()
+        canonical = _canonicalize_unittest_file_command(stripped)
+        if canonical != stripped:
+            indent = raw_line[: len(raw_line) - len(raw_line.lstrip())]
+            lines.append(f'{indent}{canonical}')
+        else:
+            lines.append(raw_line)
+    return '\n'.join(lines)
+
+
+def _canonicalize_unittest_file_command(command: str) -> str:
+    text = str(command or '').strip()
+    if not text:
+        return text
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        return text
+    if len(parts) < 4:
+        return text
+    env_prefix: list[str] = []
+    index = 0
+    while index < len(parts) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', parts[index]):
+        env_prefix.append(parts[index])
+        index += 1
+    remaining = parts[index:]
+    if len(remaining) != 4:
+        return text
+    python_cmd, dash_m, module, test_path = remaining
+    if dash_m != '-m' or module != 'unittest':
+        return text
+    if not re.fullmatch(r'python(?:3(?:\.\d+)?)?', python_cmd):
+        return text
+    normalized_path = test_path[2:] if test_path.startswith('./') else test_path
+    if not normalized_path.startswith('tests/') or not normalized_path.endswith('.py'):
+        return text
+    posix_path = PurePosixPath(normalized_path)
+    if posix_path.is_absolute() or '..' in posix_path.parts or len(posix_path.parts) < 2:
+        return text
+    search_dir = '/'.join(posix_path.parts[:-1])
+    pattern = posix_path.name
+    canonical_parts = [
+        *env_prefix,
+        python_cmd,
+        '-m',
+        'unittest',
+        'discover',
+        '-s',
+        search_dir,
+        '-p',
+        pattern,
+    ]
+    return ' '.join(shlex.quote(part) for part in canonical_parts)
 
 
 def _task_title_from_packet(task_packet: str) -> str:
@@ -1332,24 +2221,45 @@ def planner_contract_for_frontdesk_text(text: str) -> str:
     return _PLANNER_CONTRACT_TASK_SET if _frontdesk_text_requests_task_set(text) else _PLANNER_CONTRACT_SINGLE_TASK
 
 
-def planner_required_output_for_contract(planner_contract: str) -> str:
+def planner_expected_task_ids_for_frontdesk_text(text: str) -> tuple[str, ...]:
+    if _frontdesk_text_requests_phase6b_l1_l4_route_mix(text):
+        return _PHASE6B_L1_L4_EXPECTED_TASK_IDS
+    return ()
+
+
+def planner_required_output_for_contract(
+    planner_contract: str,
+    *,
+    expected_task_ids: tuple[str, ...] = (),
+) -> str:
     if planner_contract == _PLANNER_CONTRACT_TASK_SET:
+        if expected_task_ids:
+            return 'reply-only task-set.json with exact bounded task IDs for supervisor-owned import'
         return 'reply-only task-set.json with bounded planner tasks for supervisor-owned import'
     return 'reply-only task-packet.md plus readiness.json for supervisor-owned import'
 
 
-def planner_script_write_rules_for_contract(planner_contract: str) -> list[str]:
+def planner_script_write_rules_for_contract(
+    planner_contract: str,
+    *,
+    expected_task_ids: tuple[str, ...] = (),
+) -> list[str]:
     base_rules = [
         'Reply only; do not run ccb, ccb_test, ccb plan, ccb loop, ccb ask, artifact import, or wrapper commands.',
         'Supervisor/runner scripts own plan/task authority creation, artifact imports, and status transitions.',
     ]
     if planner_contract == _PLANNER_CONTRACT_TASK_SET:
-        return [
+        rules = [
             base_rules[0],
             'Return exactly one fenced **task-set.json** section with one task object per requested bounded task.',
+            'For direct_execution and partial_completion, include allowed_paths and make execution_contract declare Allowed Change Paths.',
             'Do not collapse multi-task or route-mix validation into a controller-owned meta task.',
-            base_rules[1],
         ]
+        if expected_task_ids:
+            rules.append('Use exactly these task_id values and no others: ' + ', '.join(expected_task_ids) + '.')
+            rules.append('Do not require git diff, git status, or any git-only scope check; lab projects may not be git repositories.')
+        rules.append(base_rules[1])
+        return rules
     return [
         base_rules[0],
         'Return explicit fenced **task-packet.md** and **readiness.json** sections.',
@@ -1367,6 +2277,13 @@ def _planner_contract_from_activation(
         raw_contract = str(activation.get('planner_contract') or '').strip()
     if raw_contract in _PLANNER_CONTRACTS:
         return raw_contract
+    if activation is None:
+        return _PLANNER_CONTRACT_SINGLE_TASK
+    if activation is not None:
+        record_type = str(activation.get('record_type') or '').strip()
+        action = str(activation.get('action') or '').strip()
+        if record_type != 'ccb_loop_frontdesk_planner_activation' and action != 'activate_planner_from_frontdesk':
+            return _PLANNER_CONTRACT_SINGLE_TASK
     intake_preview = ''
     if activation is not None and isinstance(activation.get('source_intake'), dict):
         intake_preview = str(activation['source_intake'].get('preview') or '')
@@ -1378,7 +2295,62 @@ def _frontdesk_text_requests_task_set(text: str) -> bool:
     if any(marker in lowered for marker in _TASK_SET_INTENT_MARKERS):
         return True
     route_mentions = sum(1 for route in _VALID_ROUTES if route in lowered)
-    return route_mentions >= 2 and ('task' in lowered or 'validation' in lowered)
+    if route_mentions >= 2 and ('task' in lowered or 'validation' in lowered):
+        return True
+    return _frontdesk_text_has_multi_task_complexity(text)
+
+
+def _frontdesk_text_has_multi_task_complexity(text: str) -> bool:
+    lowered = str(text or '').lower()
+    feature_hits = sum(1 for marker in _COMPLEX_TASK_SET_FEATURE_MARKERS if marker in lowered)
+    required_bullets = _frontdesk_section_bullet_count(text, 'required behavior')
+    scope_bullets = _frontdesk_section_bullet_count(text, 'scope')
+    comma_like_separators = lowered.count(',') + lowered.count('，') + lowered.count(';') + lowered.count('；')
+    compact_hint = any(marker in lowered for marker in _COMPACT_SINGLE_TASK_HINTS)
+    if compact_hint and feature_hits < 6 and required_bullets < 4:
+        return False
+    if feature_hits >= 6:
+        return True
+    if required_bullets >= 4 and feature_hits >= 3:
+        return True
+    if scope_bullets >= 4 and required_bullets >= 3:
+        return True
+    return feature_hits >= 4 and comma_like_separators >= 4
+
+
+def _frontdesk_section_bullet_count(text: str, section_name: str) -> int:
+    in_section = False
+    count = 0
+    section = section_name.strip().lower().rstrip(':')
+    for line in str(text or '').splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lower = stripped.lower()
+        if lower.startswith(f'{section}:'):
+            in_section = True
+            continue
+        if in_section and re.match(r'^[A-Za-z][A-Za-z _/-]{1,40}:$', stripped):
+            break
+        if in_section and re.match(r'^[-*]\s+\S+', stripped):
+            count += 1
+    return count
+
+
+def _frontdesk_text_requests_phase6b_l1_l4_route_mix(text: str) -> bool:
+    lowered = str(text or '').lower()
+    level_markers = ('l1', 'l2', 'l3', 'l4')
+    route_marker_groups = (
+        ('direct_execution', 'direct execution'),
+        ('needs_detail', 'needs-detail', 'needs detail'),
+        ('macro_adjustment_request', 'macro-adjustment', 'macro adjustment'),
+        ('blocked', 'blocked-prerequisite', 'blocked prerequisite'),
+    )
+    return (
+        ('route-mix' in lowered or 'route mix' in lowered)
+        and all(marker in lowered for marker in level_markers)
+        and all(any(marker in lowered for marker in group) for group in route_marker_groups)
+    )
 
 
 def _planner_from_frontdesk_message(activation: dict[str, object], frontdesk_reply: str) -> str:
@@ -1424,6 +2396,15 @@ def _planner_single_task_from_frontdesk_message(activation: dict[str, object], f
 
 
 def _planner_task_set_from_frontdesk_message(activation: dict[str, object], frontdesk_reply: str) -> str:
+    expected_task_ids = _expected_task_ids_from_activation(activation)
+    exact_id_rules = ''
+    if expected_task_ids:
+        exact_id_rules = (
+            'Exact task_id contract for this intake:\n'
+            '- Use exactly these task_id values, once each, and no other task_id values:\n'
+            + ''.join(f'  - {task_id}\n' for task_id in expected_task_ids)
+            + '- Do not append route/status suffixes such as "-detail-ready" or "-replan-required".\n\n'
+        )
     return (
         'Role: planner\n'
         f"Activation id: {activation.get('activation_id')}\n"
@@ -1435,17 +2416,18 @@ def _planner_task_set_from_frontdesk_message(activation: dict[str, object], fron
         'Required reply-only output for this multi-task/route-mix intake. Use exactly one fenced '
         '**task-set.json** block. Do not collapse this into a controller-owned validation task, report task, '
         'B7 task, cleanup task, or other meta task:\n'
+        f'{exact_id_rules}'
         '**task-set.json**\n'
         '```json\n'
         '{\n'
         '  "tasks": [\n'
         '    {\n'
-        '      "task_id": "phase6b-l1-doc-direct-execution",\n'
-        '      "title": "L1 bounded documentation direct execution",\n'
+        '      "task_id": "bounded-feature-slice-1",\n'
+        '      "title": "Bounded feature slice",\n'
         '      "route": "direct_execution",\n'
         '      "readiness": "ready",\n'
-        '      "task_packet": "# Task: L1 bounded documentation direct execution\\nRoute: direct_execution\\n",\n'
-        '      "execution_contract": "# Execution Contract\\nRoute: direct_execution\\n",\n'
+        '      "task_packet": "# Task: Bounded feature slice\\nRoute: direct_execution\\n",\n'
+        '      "execution_contract": "# Execution Contract\\nRoute: direct_execution\\n\\nAllowed Change Paths:\\n- relative/path\\n",\n'
         '      "allowed_paths": ["relative/path"],\n'
         '      "verification": ["command"],\n'
         '      "blockers": []\n'
@@ -1458,6 +2440,9 @@ def _planner_task_set_from_frontdesk_message(activation: dict[str, object], fron
         '- Each task_id must be stable, unique, and match [A-Za-z0-9][A-Za-z0-9_-]{0,79}.\n'
         '- Routes must be direct_execution, needs_detail, macro_adjustment_request, blocked, or partial_completion.\n'
         '- direct_execution and partial_completion tasks must be readiness "ready" with non-empty allowed_paths and verification.\n'
+        '- For direct_execution and partial_completion, execution_contract must declare Allowed Change Paths matching allowed_paths.\n'
+        '- Do not require git diff, git status, or any git-only scope check; real-provider lab projects may not be git repositories.\n'
+        '- Scope verification must be repo-independent: use allowed_paths plus file existence/content checks or explicit manifest checks.\n'
         '- needs_detail tasks may use readiness "needs_clarification" with blockers, allowed_paths [], and verification.\n'
         '- blocked tasks must use readiness "blocked", blockers, allowed_paths [], and verification.\n\n'
         'Authority boundary:\n'
@@ -1637,6 +2622,13 @@ def _activation_already_satisfied(context, deps, *, activation: dict[str, object
             artifacts.get('execution_contract'),
             job_id=job_id,
         )
+    if target == 'task_detailer':
+        if str(task.get('status') or '') == 'blocked':
+            return _artifact_imported_from_job(artifacts.get('blocker_evidence'), job_id=job_id)
+        return str(task.get('status') or '') == 'detail_ready' and all(
+            isinstance(artifacts.get(kind), dict)
+            for kind in ('detail_design', 'detail_summary', 'detail_packet')
+        )
     return False
 
 
@@ -1678,11 +2670,15 @@ def _log_import(context, record: dict[str, object]) -> dict[str, object]:
 
 
 def _job_already_consumed(context, job_id: str) -> bool:
+    return _consumed_import_record(context, job_id) is not None
+
+
+def _consumed_import_record(context, job_id: str) -> dict[str, object] | None:
     for record in _iter_import_log(context):
         if _import_record_matches_job(record, job_id=job_id):
             if str(record.get('status') or '') == 'ok':
-                return True
-    return False
+                return record
+    return None
 
 
 def _job_settled_for_activation_scan(context, job_id: str) -> bool:
@@ -1692,7 +2688,10 @@ def _job_settled_for_activation_scan(context, job_id: str) -> bool:
         status = str(record.get('status') or '')
         if status == 'ok':
             return True
-        if status == 'blocked' and str(record.get('action') or '') == 'role_output_import_blocked':
+        if (
+            str(record.get('action') or '') == 'role_output_import_blocked'
+            and str(record.get('reason') or '') == 'terminal_job_not_completed'
+        ):
             return True
     return False
 
@@ -1735,15 +2734,67 @@ def _iter_import_log(context):
             yield payload
 
 
-def _already_consumed_payload(context, *, job_id: str) -> dict[str, object]:
+def _already_consumed_payload(context, *, job_id: str, record: dict[str, object]) -> dict[str, object]:
+    extra: dict[str, object] = {
+        'idempotent': True,
+        'consumed_action': str(record.get('action') or ''),
+        'role_output_import': record,
+        'next_activation': _next_activation_for_consumed_record(record),
+    }
+    for key in (
+        'ask',
+        'artifact',
+        'artifacts',
+        'created_task',
+        'handoff',
+        'handoff_result',
+        'next_owner',
+        'plan_slug',
+        'planner_job_id',
+        'route',
+        'status_transition',
+        'task_id',
+        'task_count',
+        'task_ids',
+        'task_status',
+        'tasks',
+    ):
+        if key in record:
+            extra[key] = record[key]
+    tasks = record.get('tasks') if isinstance(record.get('tasks'), list) else []
+    if 'task_id' not in extra:
+        extra.update(_single_task_set_fields([task for task in tasks if isinstance(task, dict)]))
+    status_transition = record.get('status_transition') if isinstance(record.get('status_transition'), dict) else {}
+    if 'task_id' not in extra and status_transition.get('task_id'):
+        extra['task_id'] = status_transition['task_id']
+    if 'task_status' not in extra and status_transition.get('status'):
+        extra['task_status'] = status_transition['status']
+    if 'next_owner' not in extra and status_transition.get('next_owner'):
+        extra['next_owner'] = status_transition['next_owner']
+    source_job = record.get('source_job') if isinstance(record.get('source_job'), dict) else {}
     return _base_payload(
         context,
         loop_runner_status='ok',
         action='role_output_already_consumed',
         job_id=job_id,
-        agent_name=None,
-        extra={'idempotent': True, 'next_activation': 'inspect'},
+        agent_name=str(source_job.get('agent_name') or '') or None,
+        extra=extra,
     )
+
+
+def _next_activation_for_consumed_record(record: dict[str, object]) -> str:
+    action = str(record.get('action') or '')
+    if action == 'frontdesk_handoff_already_started':
+        return 'auto_runner'
+    if action in {'imported_planner_task_authority', 'imported_planner_task_set_authority'}:
+        return 'orchestrator'
+    if action == 'imported_orchestration_notes':
+        return 'ask_first_execution'
+    if action == 'imported_task_detailer_clarification_authority':
+        return 'task_detailer'
+    if action in {'imported_task_detailer_detail_authority', 'imported_task_detailer_blocker_authority'}:
+        return 'terminal'
+    return 'inspect'
 
 
 def _pending_payload(context, *, job_id: str, agent_name: str | None, reason: str) -> dict[str, object]:

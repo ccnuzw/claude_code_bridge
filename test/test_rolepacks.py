@@ -1457,12 +1457,16 @@ def test_frontdesk_rolepack_forbids_direct_project_artifact_implementation() -> 
     assert policy.enforcement == 'required'
     assert policy.generic_shell is False
     assert policy.generic_ccb is False
+    assert policy.allowed_effects == ('observer_intake_handoff',)
     assert policy.allowed == ()
     assert {'project_artifact_write', 'file_write', 'shell_exec', 'implementation'} <= set(policy.forbidden_effects)
     assert 'create `docs/runtime-retest-a.md`' in frontdesk_text
     assert 'do not create or verify that' in frontdesk_text
     assert '**intake evidence**' in frontdesk_text
-    assert 'planner handoff' in frontdesk_text
+    assert 'controller observes' in frontdesk_text
+    assert 'every user turn must pass this gate' in frontdesk_text
+    assert 'choose `planner_handoff`' in frontdesk_text
+    assert 'ordinary `ccb ask`' in frontdesk_text
 
 
 def test_legacy_ccb_store_migrates_to_spec_owned_store(tmp_path: Path, monkeypatch) -> None:

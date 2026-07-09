@@ -159,8 +159,8 @@ def test_reload_plan_classifies_tool_window_add_remove_and_change(tmp_path: Path
         tmp_path / 'new-tool-add',
         BASE_CONFIG
         + """
-[tool_windows.neovim]
-command = "ccb-nvim"
+[tool_windows.files]
+command = "ccb-workbench files"
 """,
     )
 
@@ -184,8 +184,8 @@ command = "ccb-nvim"
         tmp_path / 'new-tool-change',
         BASE_CONFIG
         + """
-[tool_windows.neovim]
-command = "nvim"
+[tool_windows.files]
+command = "files"
 """,
     )
     change_plan = build_reload_dry_run_plan(added, changed, project_id='project-1', current_namespace=_namespace('project-1'))
@@ -201,9 +201,9 @@ def test_reload_plan_treats_tool_window_label_and_visibility_as_view_only(tmp_pa
         tmp_path / 'current-tool-view',
         BASE_CONFIG
         + """
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.files]
+command = "ccb-workbench files"
+label = "files"
 show_in_sidebar = true
 """,
     )
@@ -211,8 +211,8 @@ show_in_sidebar = true
         tmp_path / 'new-tool-view',
         BASE_CONFIG
         + """
-[tool_windows.neovim]
-command = "ccb-nvim"
+[tool_windows.files]
+command = "ccb-workbench files"
 label = "editor"
 show_in_sidebar = false
 """,

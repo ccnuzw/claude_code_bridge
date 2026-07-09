@@ -54,6 +54,7 @@ from cli.services.doctor_storage import doctor_storage_summary
 from cli.services.diagnostics import export_diagnostic_bundle
 from cli.services.fault import arm_fault_rule, clear_fault_rule, list_fault_rules
 from cli.services.frontdesk_intake import frontdesk_intake
+from cli.services.frontdesk_intake_command import frontdesk_intake_command
 from cli.services.inbox import inbox_target
 from cli.services.kill import kill_project
 from cli.services.layout import layout_command
@@ -95,6 +96,7 @@ def build_phase2_dispatch_services(**overrides):
         exit_code_for_ask_status=exit_code_for_ask_status,
         export_diagnostic_bundle=export_diagnostic_bundle,
         frontdesk_intake=frontdesk_intake,
+        frontdesk_intake_command=frontdesk_intake_command,
         inbox_target=inbox_target,
         kill_project=kill_project,
         layout_command=layout_command,

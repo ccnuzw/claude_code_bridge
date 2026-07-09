@@ -11,6 +11,20 @@ def test_codex_looks_ready_accepts_ready_banner() -> None:
     assert looks_ready('>_ OpenAI Codex\nmodel: gpt-5.5 xhigh /model to change\n› Implement {feature}')
 
 
+def test_codex_looks_ready_uses_latest_banner_when_scrollback_has_stale_loading() -> None:
+    text = (
+        '>_ OpenAI Codex\n'
+        'model: loading /model to change\n'
+        '› Run /review on my current changes\n'
+        '\n'
+        '>_ OpenAI Codex\n'
+        'model: gpt-5.5 xhigh /model to change\n'
+        '› Run /review on my current changes\n'
+    )
+
+    assert looks_ready(text)
+
+
 def test_codex_looks_ready_rejects_shutdown_text() -> None:
     text = '>_ OpenAI Codex\nShutting down...\nPane is dead'
 
@@ -48,6 +62,20 @@ def test_codex_wait_for_runtime_ready_waits_for_stable_ready_prompt(monkeypatch)
     monkeypatch.setattr('provider_backends.codex.execution_runtime.readiness.time.time', lambda: next(time_values))
     monkeypatch.setattr('provider_backends.codex.execution_runtime.readiness.time.sleep', lambda seconds: None)
 
-    wait_for_runtime_ready(backend, '%1', timeout_s=3.0)
+    assert wait_for_runtime_ready(backend, '%1', timeout_s=3.0) is True
 
     assert backend.calls == 3
+
+
+def test_codex_wait_for_runtime_ready_rejects_stable_loading_prompt(monkeypatch) -> None:
+    class _Backend:
+        def get_pane_content(self, pane_id: str, *, lines: int = 120) -> str:
+            del pane_id, lines
+            return '>_ OpenAI Codex\nmodel: loading /model to change\n› Implement {feature}'
+
+    time_values = iter([0.0, 0.0, 0.2, 0.2, 0.4, 0.4])
+
+    monkeypatch.setattr('provider_backends.codex.execution_runtime.readiness.time.time', lambda: next(time_values))
+    monkeypatch.setattr('provider_backends.codex.execution_runtime.readiness.time.sleep', lambda seconds: None)
+
+    assert wait_for_runtime_ready(_Backend(), '%1', timeout_s=0.3) is False

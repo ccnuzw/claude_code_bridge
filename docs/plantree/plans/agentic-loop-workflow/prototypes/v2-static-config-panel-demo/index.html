@@ -1,0 +1,2409 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCB Config Control Panel Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef3f5;
+      --panel: #ffffff;
+      --soft: #f7f9fa;
+      --line: #d7e0e5;
+      --line-strong: #9dacb6;
+      --text: #142029;
+      --muted: #61727d;
+      --blue: #2563eb;
+      --blue-soft: #eef4ff;
+      --teal: #0f8b8d;
+      --green: #147a43;
+      --green-soft: #edf8f2;
+      --amber: #a15c00;
+      --amber-soft: #fff6e8;
+      --red: #b83232;
+      --shadow: 0 8px 20px rgba(18, 32, 43, 0.08);
+      --radius: 8px;
+      --font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg);
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 var(--font);
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .app {
+      min-height: 100vh;
+      padding-bottom: 78px;
+    }
+
+    .shell {
+      width: min(1220px, calc(100vw - 28px));
+      margin: 0 auto;
+    }
+
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: rgba(244, 247, 248, 0.96);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 1px 0 rgba(20, 32, 41, 0.04);
+    }
+
+    .header-inner {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 0;
+    }
+
+    .header-main {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .status-row,
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .status-row {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-row strong {
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .header-actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .field-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 4px 6px 4px 9px;
+      background: #fff;
+    }
+
+    .field-inline label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .select-inline {
+      min-width: 150px;
+      border: 0;
+      color: var(--text);
+      background: transparent;
+      outline: 0;
+    }
+
+    .select-inline.version {
+      min-width: 138px;
+    }
+
+    .btn {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 6px 10px;
+      background: #fff;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      border-color: var(--line-strong);
+    }
+
+    .btn.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .btn.ghost {
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .btn.subtle {
+      min-height: 30px;
+      padding: 4px 8px;
+      background: var(--soft);
+      font-size: 12px;
+    }
+
+    .btn.danger {
+      border-color: rgba(184, 50, 50, 0.42);
+      color: var(--red);
+      background: #fff7f7;
+    }
+
+    .btn:disabled {
+      cursor: not-allowed;
+      color: #8796a0;
+      background: #eef2f4;
+    }
+
+    .pending {
+      display: none;
+      gap: 7px;
+      align-items: center;
+      color: var(--amber);
+      font-size: 12px;
+    }
+
+    .pending.active {
+      display: inline-flex;
+    }
+
+    .summary-line {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .summary-line strong {
+      color: var(--text);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 23px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: var(--muted);
+      background: #fff;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--line-strong);
+    }
+
+    .badge.ok {
+      color: var(--green);
+      border-color: rgba(20, 122, 67, 0.32);
+      background: var(--green-soft);
+    }
+
+    .badge.ok::before {
+      background: var(--green);
+    }
+
+    .badge.info {
+      color: var(--blue);
+      border-color: rgba(37, 99, 235, 0.32);
+      background: var(--blue-soft);
+    }
+
+    .badge.info::before {
+      background: var(--blue);
+    }
+
+    .badge.warn {
+      color: var(--amber);
+      border-color: rgba(161, 92, 0, 0.34);
+      background: var(--amber-soft);
+    }
+
+    .badge.warn::before {
+      background: var(--amber);
+    }
+
+    .badge.danger {
+      color: var(--red);
+      border-color: rgba(184, 50, 50, 0.34);
+      background: #fff0f0;
+    }
+
+    .badge.danger::before {
+      background: var(--red);
+    }
+
+    .mono {
+      font-family: var(--mono);
+    }
+
+    .page {
+      padding: 14px 0 24px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .page-section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 24px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .section-label span {
+      color: var(--text);
+      font-weight: 800;
+    }
+
+    .section-label em {
+      font-style: normal;
+    }
+
+    .section-label::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-primary {
+      border-color: #c5d2dc;
+      box-shadow: 0 10px 24px rgba(18, 32, 43, 0.1);
+    }
+
+    .panel-secondary {
+      box-shadow: 0 4px 14px rgba(18, 32, 43, 0.06);
+    }
+
+    .panel-maintenance {
+      box-shadow: none;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+
+    .panel-secondary .panel-head,
+    .panel-maintenance .panel-head {
+      background: #fff;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+
+    .panel-subtitle {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: grid;
+      gap: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .toolbar .spacer {
+      flex: 1;
+    }
+
+    .toolbar-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-note {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .select,
+    .input,
+    .textarea {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 7px 9px;
+      color: var(--text);
+      background: #fff;
+    }
+
+    .select.compact {
+      width: auto;
+      min-width: 120px;
+    }
+
+    .readonly-value {
+      min-width: 96px;
+      color: var(--text);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: minmax(520px, 1fr) 340px;
+      gap: 12px;
+      padding: 14px;
+      align-items: stretch;
+    }
+
+    .layout-shell {
+      display: grid;
+      grid-template-columns: 108px minmax(0, 1fr);
+      gap: 10px;
+      min-height: 276px;
+    }
+
+    .window-rail {
+      display: grid;
+      align-content: start;
+      gap: 7px;
+      border-right: 1px solid var(--line);
+      padding-right: 9px;
+    }
+
+    .rail-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .window-tab {
+      display: grid;
+      grid-template-columns: 8px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 7px 8px;
+      background: #fff;
+      color: var(--text);
+      text-align: left;
+    }
+
+    .window-tab.active {
+      border-color: rgba(37, 99, 235, 0.62);
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
+      background: var(--blue-soft);
+    }
+
+    .window-color {
+      width: 8px;
+      height: 24px;
+      border-radius: 999px;
+    }
+
+    .window-meta {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .rail-actions {
+      display: grid;
+      gap: 6px;
+      padding-top: 4px;
+    }
+
+    .layout-card,
+    .inspector {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .layout-card {
+      padding: 10px;
+      background: #fbfcfd;
+    }
+
+    .layout-preview {
+      display: grid;
+      grid-template-columns: 1fr 1.06fr;
+      gap: 8px;
+      min-height: 256px;
+      max-height: 276px;
+    }
+
+    .layout-col {
+      display: grid;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .pane {
+      display: grid;
+      align-content: space-between;
+      min-height: 92px;
+      border: 1px solid #c7d3db;
+      border-radius: var(--radius);
+      padding: 9px;
+      background: #fbfcfd;
+    }
+
+    .pane.selected {
+      border-color: rgba(37, 99, 235, 0.74);
+      box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.3);
+      background: #fff;
+    }
+
+    .pane.tool {
+      border-style: dashed;
+      background: #f8fbfa;
+    }
+
+    .pane-name {
+      font-weight: 800;
+    }
+
+    .pane-meta {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pane-meta span {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 1px 6px;
+      background: #fff;
+    }
+
+    .inspector {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      align-self: stretch;
+      align-content: start;
+      min-height: 276px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 4px;
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .field-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .field.wide {
+      grid-column: 1 / -1;
+    }
+
+    .api-details {
+      background: #f8fbfc;
+    }
+
+    .api-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .segment {
+      min-height: 34px;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+    }
+
+    .segment:last-child {
+      border-right: 0;
+    }
+
+    .segment.active {
+      background: var(--teal);
+      color: #fff;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    summary {
+      cursor: pointer;
+      padding: 9px 11px;
+      font-weight: 700;
+    }
+
+    .details-body {
+      display: grid;
+      gap: 10px;
+      padding: 0 11px 11px;
+      border-top: 1px solid var(--line);
+    }
+
+    .preview-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 14px;
+      border-top: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+
+    .preview-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .code-line {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .quick-drawers {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+
+    .basic-grid {
+      display: grid;
+      grid-template-columns: minmax(300px, 0.75fr) minmax(0, 1fr);
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: minmax(290px, 0.72fr) minmax(0, 1fr);
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .role-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .role-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 8px 9px;
+      background: #fff;
+    }
+
+    .sidebar-split-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .sidebar-split-row {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr) 64px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .sidebar-split-row input[type="range"] {
+      width: 100%;
+    }
+
+    .percent-input {
+      text-align: right;
+    }
+
+    .activation {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 8px;
+      padding: 12px 14px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 8px 9px;
+      background: #fff;
+    }
+
+    .step-no {
+      display: inline-grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .session-bar {
+      display: grid;
+      gap: 10px;
+      padding: 12px 14px 14px;
+    }
+
+    .session-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .session-stat {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 8px 9px;
+      background: #fff;
+    }
+
+    .session-stat strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .session-controls {
+      display: grid;
+      grid-template-columns: minmax(210px, 0.7fr) minmax(190px, 0.6fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: end;
+    }
+
+    .session-table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .session-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .comm-flow {
+      display: grid;
+      grid-template-columns: minmax(560px, 1fr) 360px;
+      gap: 12px;
+      padding: 12px 14px 14px;
+      align-items: start;
+    }
+
+    .flow-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .flow-map {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .flow-map::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(to right, rgba(215, 224, 229, 0.42) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(215, 224, 229, 0.42) 1px, transparent 1px);
+      background-size: 44px 44px;
+      pointer-events: none;
+    }
+
+    .flow-lines {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      color: var(--blue);
+    }
+
+    .flow-line {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-dasharray: 7 8;
+      opacity: 0.82;
+      animation: flow-dash 1.4s linear infinite;
+    }
+
+    .flow-line.chain {
+      color: var(--amber);
+      animation-duration: 2s;
+    }
+
+    .flow-line.reply {
+      color: var(--green);
+      animation-duration: 1.7s;
+    }
+
+    .flow-line.blocked {
+      color: var(--red);
+      animation: none;
+      stroke-dasharray: 3 7;
+      opacity: 0.7;
+    }
+
+    .flow-paused .flow-line {
+      animation-play-state: paused;
+    }
+
+    @keyframes flow-dash {
+      to {
+        stroke-dashoffset: -30;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .flow-line {
+        animation: none;
+      }
+    }
+
+    .agent-node {
+      position: absolute;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 2px;
+      width: 64px;
+      height: 64px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      padding: 7px;
+      background: #fff;
+      color: var(--text);
+      text-align: center;
+      box-shadow: 0 8px 18px rgba(18, 32, 43, 0.1);
+    }
+
+    .agent-node strong {
+      max-width: 50px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+
+    .agent-node small {
+      max-width: 52px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .agent-node .badge {
+      min-height: 16px;
+      padding: 0 5px;
+      font-size: 9px;
+    }
+
+    .agent-node.active {
+      border-color: rgba(37, 99, 235, 0.72);
+      box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.18), 0 8px 18px rgba(18, 32, 43, 0.1);
+    }
+
+    .node-self {
+      left: calc(50% - 32px);
+      top: 6%;
+    }
+
+    .node-odesign {
+      right: 6%;
+      top: calc(50% - 32px);
+    }
+
+    .node-worker {
+      left: calc(50% - 32px);
+      bottom: 6%;
+    }
+
+    .node-reviewer {
+      left: 6%;
+      top: calc(50% - 32px);
+    }
+
+    .node-archi {
+      left: 19%;
+      top: 17%;
+    }
+
+    .node-planner {
+      right: 19%;
+      top: 17%;
+    }
+
+    .node-worker2 {
+      right: 19%;
+      bottom: 17%;
+    }
+
+    .node-reviewer2 {
+      left: 19%;
+      bottom: 17%;
+    }
+
+    .flow-center {
+      position: absolute;
+      left: calc(50% - 56px);
+      top: calc(50% - 26px);
+      z-index: 1;
+      width: 112px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 8px;
+      background: rgba(255, 255, 255, 0.94);
+      color: var(--muted);
+      text-align: center;
+      font-size: 11px;
+    }
+
+    .flow-center strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .flow-legend {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 8px;
+      z-index: 1;
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      pointer-events: none;
+    }
+
+    .legend-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: rgba(255, 255, 255, 0.94);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .legend-pill::before {
+      content: "";
+      width: 14px;
+      height: 2px;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .legend-pill.reply::before {
+      background: var(--green);
+    }
+
+    .legend-pill.chain::before {
+      background: var(--amber);
+    }
+
+    .flow-label {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .flow-label.ask {
+      right: 18%;
+      top: 28%;
+    }
+
+    .flow-label.chain {
+      right: 22%;
+      bottom: 22%;
+    }
+
+    .flow-label.reply {
+      left: 22%;
+      bottom: 22%;
+    }
+
+    .flow-label.blocked {
+      left: 19%;
+      top: 31%;
+    }
+
+    .flow-events {
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px;
+      background: #fff;
+    }
+
+    .event-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 8px;
+      background: #fbfcfd;
+      color: var(--text);
+      text-align: left;
+    }
+
+    .event-route {
+      display: block;
+      margin-bottom: 2px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .event-meta {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      color: var(--text);
+      font: 12px/1.5 var(--mono);
+      white-space: pre;
+    }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 50;
+      width: min(500px, 100vw);
+      border-left: 1px solid var(--line);
+      background: #fff;
+      box-shadow: -18px 0 36px rgba(18, 32, 43, 0.18);
+      transform: translateX(100%);
+      transition: transform 0.18s ease;
+      overflow: auto;
+    }
+
+    .drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-head {
+      position: sticky;
+      top: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      z-index: 1;
+    }
+
+    .drawer-body {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .drawer-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 11px;
+      background: #fff;
+    }
+
+    .drawer-card h3 {
+      margin: 0 0 4px;
+      font-size: 14px;
+    }
+
+    .drawer-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .profile-list {
+      display: grid;
+      gap: 7px;
+    }
+
+    .profile-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 9px;
+      background: #fff;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .table th,
+    .table td {
+      padding: 8px 9px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .table th {
+      color: var(--muted);
+      font-size: 12px;
+      background: var(--soft);
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      z-index: 45;
+      background: rgba(15, 25, 35, 0.28);
+    }
+
+    .overlay.open {
+      display: block;
+    }
+
+    .bottom {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 30;
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.97);
+      box-shadow: 0 -10px 28px rgba(18, 32, 43, 0.12);
+      backdrop-filter: blur(12px);
+    }
+
+    .bottom-inner {
+      display: grid;
+      grid-template-columns: minmax(250px, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 0;
+    }
+
+    .action-summary {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .action-summary strong {
+      color: var(--text);
+    }
+
+    .action-buttons {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 860px) {
+      .header-inner,
+      .workspace-grid,
+      .basic-grid,
+      .workflow-grid,
+      .bottom-inner,
+      .session-stats,
+      .session-controls,
+      .comm-flow {
+        grid-template-columns: 1fr;
+      }
+
+      .header-actions,
+      .action-buttons {
+        justify-content: flex-start;
+      }
+
+      .layout-preview {
+        grid-template-columns: 1fr;
+        max-height: none;
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-row {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-map {
+        width: 100%;
+      }
+
+      .agent-node {
+        width: 60px;
+        height: 60px;
+      }
+
+      .node-self {
+        left: calc(50% - 30px);
+        top: 5%;
+      }
+
+      .node-odesign {
+        right: 4%;
+        top: calc(50% - 30px);
+      }
+
+      .node-worker {
+        left: calc(50% - 30px);
+        bottom: 5%;
+      }
+
+      .node-reviewer {
+        left: 4%;
+        top: calc(50% - 30px);
+      }
+
+      .node-archi {
+        left: 15%;
+        top: 16%;
+      }
+
+      .node-planner {
+        right: 15%;
+        top: 16%;
+      }
+
+      .node-worker2 {
+        right: 15%;
+        bottom: 16%;
+      }
+
+      .node-reviewer2 {
+        left: 15%;
+        bottom: 16%;
+      }
+
+      .flow-label.ask {
+        right: 28%;
+        top: 96px;
+      }
+
+      .flow-label.chain {
+        right: 28%;
+        top: 270px;
+      }
+
+      .flow-label.reply {
+        left: 24%;
+        bottom: 96px;
+      }
+
+      .flow-label.blocked {
+        left: 31%;
+        top: 190px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="shell header-inner">
+        <div class="header-main">
+          <div class="status-row">
+            <strong>CCB Config Control</strong>
+            <span data-i18n="active">Active</span>
+            <span class="mono">.ccb/ccb.config</span>
+            <span class="badge ok">digest a13f9c2</span>
+            <span class="badge info" id="currentVersionBadge">Static V2</span>
+          </div>
+          <div class="control-row">
+            <span class="field-inline">
+              <label for="profileSelect" data-i18n="profile">Profile</label>
+              <select id="profileSelect" class="select-inline">
+                <option value="static-ops">static-ops</option>
+                <option value="basic-main">basic-main</option>
+                <option value="workflow-loop">workflow-loop</option>
+                <option value="experiment-a">experiment-a</option>
+              </select>
+            </span>
+            <button class="btn" data-drawer="profiles" data-i18n="manageProfiles">Manage profiles</button>
+            <span class="field-inline">
+              <label for="versionSelect" data-i18n="version">Version</label>
+              <select id="versionSelect" class="select-inline version">
+                <option value="basic">Basic V1</option>
+                <option value="static" selected>Static V2</option>
+                <option value="workflow">Workflow V3</option>
+              </select>
+            </span>
+            <span id="pendingSwitch" class="pending">
+              <span id="pendingText">Pending switch</span>
+              <button class="btn primary" id="confirmSwitch" data-i18n="confirmSwitch">Confirm switch</button>
+              <button class="btn" id="cancelSwitch" data-i18n="cancel">Cancel</button>
+            </span>
+            <button class="btn ghost" data-drawer="version" data-i18n="versionDetails">Version details</button>
+          </div>
+          <div class="summary-line">
+            <strong id="summaryTitle">Static V2</strong>
+            <span id="summaryCopy">Current static config. Edit windows, Rich, sidebar settings, and agent overlays.</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <select id="languageSelect" class="select compact" aria-label="Language">
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+          <button class="btn" data-drawer="toml">Full TOML</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell page">
+      <div id="config-editor-section" class="page-section">
+        <div class="section-label"><span data-i18n="configureSection">Configure</span><em data-i18n="configureSectionNote">desired-state draft editor</em></div>
+        <section id="view-static" class="view active">
+        <section class="panel panel-primary">
+          <div class="panel-head">
+            <div>
+              <h1 class="panel-title" data-i18n="staticTitle">Static V2 editor</h1>
+              <div class="panel-subtitle" data-i18n="staticSubtitle">Binary split windows topology editor. Profile changes do not affect runtime until activation.</div>
+            </div>
+            <span class="badge ok" data-i18n="formalPath">Formal config path</span>
+          </div>
+          <div class="toolbar">
+            <span class="toolbar-group">
+              <button class="btn">Split LR</button>
+              <button class="btn">Split TB</button>
+              <button class="btn">Undo</button>
+              <span class="toolbar-note" data-i18n="binarySplitNote">50/50 binary split</span>
+            </span>
+            <span class="spacer"></span>
+            <button class="btn" data-drawer="sidebar" data-i18n="sidebarSettings">Sidebar settings</button>
+          </div>
+          <div class="workspace-grid">
+            <div class="layout-card" aria-label="Small layout preview">
+              <div class="layout-shell">
+                <nav class="window-rail" aria-label="Windows">
+                  <span class="rail-title">Windows</span>
+                  <button class="window-tab active"><span class="window-color" style="background:#2563eb"></span><span>main<span class="window-meta">entry · 3 panes</span></span></button>
+                  <div class="rail-actions">
+                    <button class="btn subtle">Add</button>
+                    <button class="btn subtle">Rename</button>
+                    <button class="btn subtle" disabled>Delete</button>
+                  </div>
+                </nav>
+                <div class="layout-preview">
+                  <div class="layout-col">
+                    <div class="pane">
+                      <span class="pane-name">archi</span>
+                      <span class="pane-meta"><span>codex</span><span>worktree</span><span>left branch</span></span>
+                    </div>
+                 </div>
+                  <div class="layout-col">
+                    <div class="pane selected">
+                      <span class="pane-name">odesign</span>
+                      <span class="pane-meta"><span>codex</span><span>right / top</span><span>agentroles.open_design</span></span>
+                    </div>
+                    <div class="pane tool">
+                      <span class="pane-name">rich</span>
+                      <span class="pane-meta"><span>right / bottom</span><span>not ask target</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <aside class="inspector">
+              <h2 class="panel-title" data-i18n="selectedPane">Selected pane</h2>
+              <label class="field">
+                <span class="label">Pane type</span>
+                <select class="select">
+                  <option>Agent</option>
+                  <option>Rich</option>
+                </select>
+                <span class="field-note">Rich available · not ask target; disable this option when the package is missing.</span>
+              </label>
+              <div class="field-row">
+                <label class="field">
+                  <span class="label" data-i18n="agentName">Agent name</span>
+                  <input class="input" value="odesign">
+                </label>
+                <label class="field">
+                  <span class="label">Workspace</span>
+                  <select class="select"><option>inplace</option><option>worktree</option></select>
+                </label>
+              </div>
+              <div class="field-row">
+                <label class="field">
+                  <span class="label">Provider</span>
+                  <select class="select"><option>codex</option><option>claude</option><option>gemini</option></select>
+                </label>
+                <label class="field">
+                  <span class="label">RolePack</span>
+                  <select class="select"><option>agentroles.open_design</option><option>agentroles.coder</option><option>none</option></select>
+                </label>
+              </div>
+              <div class="field-row">
+                <label class="field">
+                  <span class="label">Model</span>
+                  <select class="select"><option>gpt-5.5</option><option>inherit</option><option>sonnet</option></select>
+                </label>
+                <label class="field">
+                  <span class="label">Thinking</span>
+                  <select class="select"><option>inherit</option><option>medium</option><option>high</option></select>
+                </label>
+              </div>
+              <details class="api-details">
+                <summary>API override</summary>
+                <div class="details-body api-grid">
+                  <p class="field-note wide">Closed means inherit project/provider defaults. Open this only when this pane needs its own API route.</p>
+                  <label class="field"><span class="label">Override type</span><select class="select"><option>provider profile</option><option>custom key/url</option></select></label>
+                  <label class="field"><span class="label">Profile</span><select class="select"><option>openai-main</option><option>anthropic-main</option><option>new profile...</option></select></label>
+                  <label class="field"><span class="label">API key</span><input class="input" type="password" placeholder="$OPENAI_API_KEY or key"></label>
+                  <label class="field"><span class="label">Base URL</span><input class="input" placeholder="https://api.openai.com/v1"></label>
+                </div>
+              </details>
+              <details>
+                <summary data-i18n="advancedOverlay">Advanced overlay</summary>
+                <div class="details-body">
+                  <label class="field"><span class="label">startup_args</span><input class="input" value="--search"></label>
+                  <label class="field"><span class="label">workspace_group</span><input class="input" value="design"></label>
+                </div>
+              </details>
+            </aside>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label" data-i18n="compactPreview">Preview</span>
+            <span class="code-line">main = "archi:codex(worktree); (odesign:codex, rich)"</span>
+            <span class="quick-drawers">
+              <button class="btn ghost" data-drawer="validation" data-i18n="validationDetails">Validation details</button>
+              <button class="btn ghost" data-drawer="toml">Full TOML</button>
+            </span>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-basic" class="view">
+        <section class="panel panel-primary">
+          <div class="panel-head">
+            <div>
+              <h1 class="panel-title" data-i18n="basicTitle">Basic V1 layout editor</h1>
+              <div class="panel-subtitle" data-i18n="basicSubtitle">Single-window layout editor. It uses the same binary split canvas as Static V2.</div>
+            </div>
+            <span class="badge info">single window preset</span>
+          </div>
+          <div class="toolbar">
+            <span class="field-inline">
+              <label data-i18n="window">Window</label>
+              <span class="readonly-value">main only</span>
+            </span>
+            <span class="toolbar-group">
+              <button class="btn">Split LR</button>
+              <button class="btn">Split TB</button>
+              <button class="btn">Undo</button>
+              <span class="toolbar-note" data-i18n="binarySplitNote">50/50 binary split</span>
+            </span>
+            <span class="spacer"></span>
+            <button class="btn" data-drawer="basicTools" data-i18n="optionalTools">Optional tools</button>
+            <button class="btn" data-drawer="toml">Full TOML</button>
+            <button class="btn" data-drawer="basicUpgrade">Upgrade to Static V2</button>
+          </div>
+          <div class="workspace-grid">
+            <div class="layout-card" aria-label="Basic V1 topology preview">
+              <div class="layout-preview">
+                <div class="layout-col">
+                  <div class="pane">
+                    <span class="pane-name">archi</span>
+                    <span class="pane-meta"><span>codex</span><span>worktree</span><span>left branch</span></span>
+                  </div>
+                </div>
+                <div class="layout-col">
+                  <div class="pane selected">
+                    <span class="pane-name">odesign</span>
+                    <span class="pane-meta"><span>codex</span><span>right / top</span><span>agentroles.open_design</span></span>
+                  </div>
+                  <div class="pane tool">
+                    <span class="pane-name">rich</span>
+                    <span class="pane-meta"><span>right / bottom</span><span>not ask target</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <aside class="inspector">
+              <h2 class="panel-title" data-i18n="selectedPane">Selected pane</h2>
+              <label class="field">
+                <span class="label">Pane type</span>
+                <select class="select">
+                  <option>Agent</option>
+                  <option>Rich</option>
+                </select>
+                <span class="field-note">Rich available · not ask target; disable this option when the package is missing.</span>
+              </label>
+              <div class="field-row">
+                <label class="field">
+                  <span class="label" data-i18n="agentName">Agent name</span>
+                  <input class="input" value="odesign">
+                </label>
+                <label class="field">
+                  <span class="label">Workspace</span>
+                  <select class="select"><option>inplace</option><option>worktree</option></select>
+                </label>
+              </div>
+              <div class="field-row">
+                <label class="field">
+                  <span class="label">Provider</span>
+                  <select class="select"><option>codex</option><option>claude</option><option>gemini</option></select>
+                </label>
+                <label class="field">
+                  <span class="label">RolePack</span>
+                  <select class="select"><option>agentroles.open_design</option><option>agentroles.coder</option><option>none</option></select>
+                </label>
+              </div>
+              <div class="field-row">
+                <label class="field">
+                  <span class="label">Model</span>
+                  <select class="select"><option>inherit</option><option>gpt-5.5</option><option>sonnet</option></select>
+                </label>
+                <label class="field">
+                  <span class="label">Thinking</span>
+                  <select class="select"><option>inherit</option><option>low</option><option>medium</option><option>high</option></select>
+                </label>
+              </div>
+              <details class="api-details">
+                <summary>API override</summary>
+                <div class="details-body api-grid">
+                  <p class="field-note wide">Closed means inherit project/provider defaults. Open this only when this pane needs its own API route.</p>
+                  <label class="field"><span class="label">Override type</span><select class="select"><option>provider profile</option><option>custom key/url</option></select></label>
+                  <label class="field"><span class="label">Profile</span><select class="select"><option>openai-main</option><option>anthropic-main</option><option>new profile...</option></select></label>
+                  <label class="field"><span class="label">API key</span><input class="input" type="password" placeholder="$OPENAI_API_KEY or key"></label>
+                  <label class="field"><span class="label">Base URL</span><input class="input" placeholder="https://api.openai.com/v1"></label>
+                </div>
+              </details>
+              <details>
+                <summary data-i18n="advancedOverlay">Advanced overlay</summary>
+                <div class="details-body">
+                  <label class="field"><span class="label">startup_args</span><input class="input" value=""></label>
+                  <label class="field"><span class="label">workspace_group</span><input class="input" value=""></label>
+                </div>
+              </details>
+            </aside>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label" data-i18n="compactPreview">Preview</span>
+            <span class="code-line">layout = "archi:codex(worktree); (odesign:codex, rich)"</span>
+            <span class="quick-drawers">
+              <button class="btn ghost" data-drawer="basicTools" data-i18n="optionalTools">Optional tools</button>
+              <button class="btn ghost" data-drawer="toml">Full TOML</button>
+              <button class="btn ghost" data-drawer="basicUpgrade">Upgrade to Static V2</button>
+            </span>
+          </div>
+        </section>
+      </section>
+
+      <template id="basicTomlTemplate">
+        <pre>version = 1
+
+layout = "archi:codex(worktree); (odesign:codex, rich)"
+
+[agents.odesign]
+role = "agentroles.open_design"
+model = "gpt-5.5"
+thinking = "medium"</pre>
+      </template>
+
+      <section id="view-workflow" class="view">
+        <section class="panel panel-primary">
+          <div class="panel-head">
+            <div>
+              <h1 class="panel-title" data-i18n="workflowTitle">Workflow V3 preview</h1>
+              <div class="panel-subtitle" data-i18n="workflowSubtitle">Dynamic roles, provider defaults, model policy, and capacity. Activation is gated.</div>
+            </div>
+            <span class="badge warn" data-i18n="validatorRequired">Validator required</span>
+          </div>
+          <div class="workflow-grid">
+            <div class="inspector">
+              <label class="field"><span class="label">Workflow profile</span><select class="select"><option>agentic_loop_v1</option><option>custom</option></select></label>
+              <label class="field"><span class="label">Entry role</span><select class="select"><option>frontdesk</option><option>planner</option></select></label>
+              <label class="field"><span class="label">Provider default</span><select class="select"><option>codex / gpt-5.5</option><option>claude / sonnet</option></select></label>
+              <label class="field"><span class="label">Max dynamic nodes</span><input class="input" value="4"></label>
+            </div>
+            <div class="role-list">
+              <div class="role-row"><span>frontdesk</span><span class="badge ok">resident</span></div>
+              <div class="role-row"><span>planner</span><span class="badge ok">resident</span></div>
+              <div class="role-row"><span>orchestrator</span><span class="badge ok">resident</span></div>
+              <div class="role-row"><span>task_detailer</span><span class="badge ok">resident</span></div>
+              <div class="role-row"><span>coder</span><span class="badge info">dynamic</span></div>
+              <div class="role-row"><span>code_reviewer</span><span class="badge info">dynamic</span></div>
+            </div>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">Status</span>
+            <span class="code-line">Save profile is allowed. Activate is blocked until config v3 parser and validator are available.</span>
+            <button class="btn ghost" data-drawer="migration">Migration notes</button>
+          </div>
+        </section>
+      </section>
+
+      </div>
+
+      <div id="activation-review-section" class="page-section">
+        <div class="section-label"><span data-i18n="reviewSection">Review</span><em data-i18n="reviewSectionNote">validate, save, dry-run, and reload gates</em></div>
+      <section class="panel panel-secondary">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title" data-i18n="activationTitle">Activation review</h2>
+            <div class="panel-subtitle" data-i18n="activationSubtitle">Profiles are drafts. Runtime changes only after validate, backup, dry-run, and reload.</div>
+          </div>
+          <span class="badge info" id="planClass">plan_class pending</span>
+        </div>
+        <div class="activation">
+          <div class="step"><span class="step-no">1</span><span data-i18n="stepDiff">Preview profile to active config diff</span><span class="badge ok">ready</span></div>
+          <div class="step"><span class="step-no">2</span><span data-i18n="stepValidate">Validate candidate config</span><span id="validateState" class="badge">waiting</span></div>
+          <div class="step"><span class="step-no">3</span><span data-i18n="stepBackup">Backup and write .ccb/ccb.config</span><span class="badge">locked</span></div>
+          <div class="step"><span class="step-no">4</span><span data-i18n="stepDryRun">Reload dry-run classifies impact</span><span id="dryRunState" class="badge">waiting</span></div>
+          <div class="step"><span class="step-no">5</span><span data-i18n="stepApply">Apply hot reload or show blocker</span><span id="applyState" class="badge">waiting</span></div>
+        </div>
+      </section>
+      </div>
+
+      <div id="observe-section" class="page-section">
+        <div class="section-label"><span data-i18n="observeSection">Observe</span><em data-i18n="observeSectionNote">read-only runtime explanation</em></div>
+      <section id="agent-communication-flow" class="panel panel-secondary" aria-label="Agent communication flow">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title" data-i18n="commFlowTitle">Agent communication flow</h2>
+            <div class="panel-subtitle" data-i18n="commFlowSubtitle">Read-only trace view for ask, chain, reply, and review events. It does not write mailbox or lifecycle state.</div>
+          </div>
+          <span class="badge info" data-i18n="observerOnly">observer only</span>
+        </div>
+        <div class="toolbar">
+          <span class="toolbar-group">
+            <button class="btn" id="pauseFlow" data-i18n="pauseAnimation">Pause animation</button>
+            <span class="field-inline">
+              <label data-i18n="timeWindow">Window</label>
+              <select class="select-inline">
+                <option>15 min</option>
+                <option>1 hour</option>
+                <option>24 hours</option>
+              </select>
+            </span>
+            <span class="field-inline">
+              <label data-i18n="agentFilter">Agent</label>
+              <select class="select-inline">
+                <option>all agents</option>
+                <option>ccb_self</option>
+                <option>odesign</option>
+                <option>worker1</option>
+                <option>reviewer3</option>
+              </select>
+            </span>
+          </span>
+          <span class="spacer"></span>
+          <button class="btn" data-drawer="messageTrace" data-i18n="traceDetails">Trace details</button>
+        </div>
+        <div class="comm-flow" id="commFlowPanel">
+          <div class="flow-map" aria-label="Animated agent message flow">
+            <svg class="flow-lines" viewBox="0 0 640 640" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <marker id="arrow-request" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+                  <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#2563eb"></path>
+                </marker>
+                <marker id="arrow-chain" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+                  <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#a15c00"></path>
+                </marker>
+                <marker id="arrow-reply" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+                  <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#147a43"></path>
+                </marker>
+                <marker id="arrow-blocked" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+                  <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#b83232"></path>
+                </marker>
+              </defs>
+              <path class="flow-line" marker-end="url(#arrow-request)" d="M 320 70 C 455 94 540 180 570 320"></path>
+              <path class="flow-line chain" marker-end="url(#arrow-chain)" d="M 570 320 C 530 470 450 548 320 570"></path>
+              <path class="flow-line reply" marker-end="url(#arrow-reply)" d="M 320 570 C 150 540 72 438 70 320 C 72 196 152 98 320 70"></path>
+              <path class="flow-line blocked" marker-end="url(#arrow-blocked)" d="M 70 320 C 185 226 450 226 570 320"></path>
+            </svg>
+            <div class="flow-center"><strong>active trace</strong><span>opened agents</span></div>
+            <button class="agent-node node-self active" data-drawer="messageTrace">
+              <strong>ccb_self</strong>
+              <small>frontdesk · running</small>
+              <span class="badge ok">delivered</span>
+            </button>
+            <button class="agent-node node-planner" data-drawer="messageTrace">
+              <strong>planner</strong>
+              <small>idle</small>
+              <span class="badge">idle</span>
+            </button>
+            <button class="agent-node node-odesign" data-drawer="messageTrace">
+              <strong>odesign</strong>
+              <small>design · chain waiting</small>
+              <span class="badge warn">waiting</span>
+            </button>
+            <button class="agent-node node-worker2" data-drawer="messageTrace">
+              <strong>worker2</strong>
+              <small>queued</small>
+              <span class="badge info">queued</span>
+            </button>
+            <button class="agent-node node-worker" data-drawer="messageTrace">
+              <strong>worker1</strong>
+              <small>coder · review requested</small>
+              <span class="badge info">running</span>
+            </button>
+            <button class="agent-node node-reviewer2" data-drawer="messageTrace">
+              <strong>reviewer1</strong>
+              <small>ready</small>
+              <span class="badge ok">ready</span>
+            </button>
+            <button class="agent-node node-reviewer" data-drawer="messageTrace">
+              <strong>reviewer3</strong>
+              <small>reviewer · stale reply</small>
+              <span class="badge danger">stale</span>
+            </button>
+            <button class="agent-node node-archi" data-drawer="messageTrace">
+              <strong>archi</strong>
+              <small>observer</small>
+              <span class="badge">idle</span>
+            </button>
+            <span class="flow-label ask">ask · job_8b204</span>
+            <span class="flow-label chain">chain wait</span>
+            <span class="flow-label reply">reply completed</span>
+            <span class="flow-label blocked">stale reply</span>
+            <div class="flow-legend" aria-hidden="true">
+              <span class="legend-pill request">request</span>
+              <span class="legend-pill chain">chain</span>
+              <span class="legend-pill reply">reply</span>
+            </div>
+          </div>
+          <div class="flow-events">
+            <div>
+              <h3 class="panel-title" data-i18n="latestEvents">Latest events</h3>
+              <div class="panel-subtitle" data-i18n="eventSummary">Sanitized summaries only. Full artifacts open by path when allowed.</div>
+            </div>
+            <button class="event-row" data-drawer="messageTrace">
+              <span><span class="event-route">ccb_self -> odesign</span><span class="event-meta">ask · job_8b204be32628 · 14:52:11</span></span>
+              <span class="badge ok">delivered</span>
+            </button>
+            <button class="event-row" data-drawer="messageTrace">
+              <span><span class="event-route">odesign -> worker1</span><span class="event-meta">chain · parent job_8b204 · waiting</span></span>
+              <span class="badge warn">chain waiting</span>
+            </button>
+            <button class="event-row" data-drawer="messageTrace">
+              <span><span class="event-route">worker1 -> reviewer3</span><span class="event-meta">review · artifact summary ready</span></span>
+              <span class="badge info">running</span>
+            </button>
+            <button class="event-row" data-drawer="messageTrace">
+              <span><span class="event-route">reviewer3 -> odesign</span><span class="event-meta">reply · digest mismatch</span></span>
+              <span class="badge danger">stale</span>
+            </button>
+          </div>
+        </div>
+      </section>
+      </div>
+
+      <div id="agent-session-storage" class="page-section">
+        <div class="section-label"><span data-i18n="maintainSection">Maintain</span><em data-i18n="maintainSectionNote">local session storage cleanup</em></div>
+      <section class="panel panel-maintenance">
+        <div class="panel-head">
+          <div>
+            <h2 class="panel-title">Agent session storage</h2>
+            <div class="panel-subtitle">Scan .ccb/agents history, estimate old session storage, and stage cleanup actions with mounted-agent protection.</div>
+          </div>
+          <span class="badge warn">maintenance</span>
+        </div>
+        <div class="session-bar">
+          <div class="session-stats">
+            <div class="session-stat"><span class="label">Total .ccb agent storage</span><strong>2.8 GB</strong><span class="panel-subtitle">sessions, logs, artifacts</span></div>
+            <div class="session-stat"><span class="label">Historical sessions</span><strong>1.9 GB</strong><span class="panel-subtitle">safe cleanup candidates</span></div>
+            <div class="session-stat"><span class="label">Mounted agents</span><strong>4 protected</strong><span class="panel-subtitle">current session excluded</span></div>
+            <div class="session-stat"><span class="label">Stale agents</span><strong>3 removable</strong><span class="panel-subtitle">not in current graph</span></div>
+          </div>
+          <div class="session-controls">
+            <label class="field">
+              <span class="label">Cleanup older than</span>
+              <select class="select"><option>30 days</option><option>7 days</option><option>90 days</option><option>custom date...</option></select>
+            </label>
+            <label class="field">
+              <span class="label">Agent scope</span>
+              <select class="select"><option>all agents</option><option>mounted only</option><option>stale/unmounted only</option><option>selected agent</option></select>
+            </label>
+            <div class="session-actions">
+              <button class="btn">Scan storage</button>
+              <button class="btn danger">Delete old sessions</button>
+              <button class="btn danger" disabled>Delete mounted agent data</button>
+            </div>
+          </div>
+          <div class="session-table-wrap">
+            <table class="table">
+              <thead><tr><th>Agent</th><th>Status</th><th>Current session</th><th>Historical storage</th><th>Oldest</th><th>Allowed cleanup</th></tr></thead>
+              <tbody>
+                <tr><td><strong>ccb_self</strong><div class="panel-subtitle">codex</div></td><td><span class="badge ok">mounted</span></td><td>protected</td><td>420 MB</td><td>18 days</td><td><button class="btn subtle">History only</button></td></tr>
+                <tr><td><strong>odesign</strong><div class="panel-subtitle">codex</div></td><td><span class="badge ok">mounted</span></td><td>protected</td><td>310 MB</td><td>11 days</td><td><button class="btn subtle">History only</button></td></tr>
+                <tr><td><strong>worker1</strong><div class="panel-subtitle">old role binding</div></td><td><span class="badge warn">stale</span></td><td>none</td><td>760 MB</td><td>64 days</td><td><button class="btn subtle">History</button><button class="btn danger">Delete all</button></td></tr>
+                <tr><td><strong>reviewer3</strong><div class="panel-subtitle">not mounted</div></td><td><span class="badge danger">archived</span></td><td>none</td><td>540 MB</td><td>92 days</td><td><button class="btn danger">Delete all</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="summary-line"><strong>Rule:</strong> mounted agents can only remove historical sessions and detached evidence. Current provider state, active mailbox, lifecycle, lease, and runtime records stay protected.</div>
+        </div>
+      </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="overlay" class="overlay"></div>
+  <aside id="drawer" class="drawer" aria-label="Details drawer">
+    <div class="drawer-head">
+      <h2 id="drawerTitle" class="panel-title">Details</h2>
+      <button class="btn" id="closeDrawer" data-i18n="close">Close</button>
+    </div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </aside>
+
+  <footer class="bottom">
+    <div class="shell bottom-inner">
+      <div class="action-summary">
+        <strong data-i18n="draftChanged">Draft changed</strong>
+        <span id="actionDetail">static-ops profile, runtime unchanged</span>
+      </div>
+      <div class="action-buttons">
+        <button class="btn" id="validateBtn" data-i18n="validate">Validate config</button>
+        <button class="btn" data-i18n="saveProfile">Save profile</button>
+        <button class="btn" data-i18n="saveActive">Save active config</button>
+        <button class="btn" id="dryRunBtn" data-i18n="dryRun">Reload dry-run</button>
+        <button class="btn primary" id="applyBtn" data-i18n="hotReload">Hot reload</button>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const text = {
+      en: {
+        active: "Active",
+        profile: "Profile",
+        manageProfiles: "Manage profiles",
+        version: "Version",
+        confirmSwitch: "Confirm switch",
+        cancel: "Cancel",
+        versionDetails: "Version details",
+        configureSection: "Configure",
+        configureSectionNote: "desired-state draft editor",
+        staticTitle: "Static V2 editor",
+        staticSubtitle: "Binary split windows topology editor. Profile changes do not affect runtime until activation.",
+        formalPath: "Formal config path",
+        binarySplitNote: "50/50 binary split",
+        window: "Window",
+        optionalTools: "Optional tools",
+        sidebarSettings: "Sidebar settings",
+        richAvailability: "Rich availability",
+        selectedPane: "Selected pane",
+        agentName: "Agent name",
+        advancedOverlay: "Advanced overlay",
+        compactPreview: "Preview",
+        validationDetails: "Validation details",
+        basicTitle: "Basic V1 layout editor",
+        basicSubtitle: "Single-window layout editor. It uses the same binary split canvas as Static V2.",
+        mainAgent: "Agent name",
+        basicAgentSettings: "Agent settings",
+        advancedAgentOptions: "Advanced agent options",
+        generatedConfig: "Generated config",
+        basicTopology: "Topology",
+        topologyOutput: "Output",
+        workflowTitle: "Workflow V3 preview",
+        workflowSubtitle: "Dynamic roles, provider defaults, model policy, and capacity. Activation is gated.",
+        validatorRequired: "Validator required",
+        reviewSection: "Review",
+        reviewSectionNote: "validate, save, dry-run, and reload gates",
+        activationTitle: "Activation review",
+        activationSubtitle: "Profiles are drafts. Runtime changes only after validate, backup, dry-run, and reload.",
+        stepDiff: "Preview profile to active config diff",
+        stepValidate: "Validate candidate config",
+        stepBackup: "Backup and write .ccb/ccb.config",
+        stepDryRun: "Reload dry-run classifies impact",
+        stepApply: "Apply hot reload or show blocker",
+        observeSection: "Observe",
+        observeSectionNote: "read-only runtime explanation",
+        commFlowTitle: "Agent communication flow",
+        commFlowSubtitle: "Read-only trace view for ask, chain, reply, and review events. It does not write mailbox or lifecycle state.",
+        observerOnly: "observer only",
+        pauseAnimation: "Pause animation",
+        resumeAnimation: "Resume animation",
+        timeWindow: "Window",
+        agentFilter: "Agent",
+        traceDetails: "Trace details",
+        latestEvents: "Latest events",
+        eventSummary: "Sanitized summaries only. Full artifacts open by path when allowed.",
+        maintainSection: "Maintain",
+        maintainSectionNote: "local session storage cleanup",
+        close: "Close",
+        draftChanged: "Draft changed",
+        validate: "Validate config",
+        saveProfile: "Save profile",
+        saveActive: "Save active config",
+        dryRun: "Reload dry-run",
+        hotReload: "Hot reload"
+      },
+      zh: {
+        active: "当前",
+        profile: "档案",
+        manageProfiles: "管理档案",
+        version: "版本",
+        confirmSwitch: "确认切换",
+        cancel: "取消",
+        versionDetails: "版本说明",
+        configureSection: "配置",
+        configureSectionNote: "desired-state 草稿编辑",
+        staticTitle: "静态 V2 编辑器",
+        staticSubtitle: "二分拆分 windows 拓扑编辑器。档案变更不会在激活前影响运行时。",
+        formalPath: "正式配置路径",
+        binarySplitNote: "50/50 二分拆分",
+        window: "Window",
+        optionalTools: "可选工具",
+        sidebarSettings: "侧边栏设置",
+        richSettings: "Rich 设置",
+        selectedPane: "选中分屏",
+        agentName: "Agent 名称",
+        advancedOverlay: "高级覆盖项",
+        compactPreview: "预览",
+        validationDetails: "校验详情",
+        basicTitle: "基础 V1 布局编辑器",
+        basicSubtitle: "单窗口布局编辑器，和静态 V2 使用同一套二分拆分画布。",
+        mainAgent: "Agent 名称",
+        basicAgentSettings: "Agent 设置",
+        advancedAgentOptions: "高级 agent 选项",
+        generatedConfig: "生成配置",
+        basicTopology: "拓扑图",
+        topologyOutput: "输出",
+        workflowTitle: "工作流 V3 预览",
+        workflowSubtitle: "动态角色、provider 默认值、模型策略和容量。激活需要门禁。",
+        validatorRequired: "需要校验器",
+        reviewSection: "审查",
+        reviewSectionNote: "validate、save、dry-run、reload 门禁",
+        activationTitle: "激活审查",
+        activationSubtitle: "档案只是草稿。运行时变更必须经过校验、备份、dry-run 和 reload。",
+        stepDiff: "预览 profile 到当前配置的差异",
+        stepValidate: "校验候选配置",
+        stepBackup: "备份并写入 .ccb/ccb.config",
+        stepDryRun: "Reload dry-run 判断影响",
+        stepApply: "执行热加载或显示阻断原因",
+        observeSection: "观察",
+        observeSectionNote: "只读运行解释",
+        commFlowTitle: "Agent 通讯流",
+        commFlowSubtitle: "只读展示 ask、chain、reply、review 事件，不写 mailbox 或 lifecycle 状态。",
+        observerOnly: "仅观察",
+        pauseAnimation: "暂停动画",
+        resumeAnimation: "继续动画",
+        timeWindow: "时间窗",
+        agentFilter: "Agent",
+        traceDetails: "Trace 详情",
+        latestEvents: "最近事件",
+        eventSummary: "只显示脱敏摘要。允许时再通过 artifact 路径打开全文。",
+        maintainSection: "维护",
+        maintainSectionNote: "本地 session 存储清理",
+        close: "关闭",
+        draftChanged: "草稿已变更",
+        validate: "检测配置",
+        saveProfile: "保存档案",
+        saveActive: "保存当前配置",
+        dryRun: "Reload dry-run",
+        hotReload: "热加载"
+      }
+    };
+
+    const versions = {
+      basic: {
+        label: "Basic V1",
+        summary: "Single-window setup with the same binary split canvas as Static V2.",
+        summaryZh: "单窗口基础设置，和静态 V2 使用同一套二分拆分画布。",
+        action: "basic-main profile, renders a supported single-window static config"
+      },
+      static: {
+        label: "Static V2",
+        summary: "Current static config. Starts with one window; add or remove named windows beside the canvas.",
+        summaryZh: "当前正式静态配置，初始一个 window，可在画布侧边增减命名 window。",
+        action: "static-ops profile, runtime unchanged"
+      },
+      workflow: {
+        label: "Workflow V3",
+        summary: "Dynamic roles, providers, models, and capacity. Activation waits for v3 validation.",
+        summaryZh: "动态角色、provider、模型和容量，激活依赖 v3 校验能力。",
+        action: "workflow-loop profile, activation blocked until v3 validator lands"
+      }
+    };
+
+    const profiles = {
+      "static-ops": { version: "static", status: "Active", badge: "V2" },
+      "basic-main": { version: "basic", status: "Saved profile", badge: "V1 preset" },
+      "workflow-loop": { version: "workflow", status: "Needs validator", badge: "V3" },
+      "experiment-a": { version: "static", status: "Invalid", badge: "V2" }
+    };
+
+    let currentVersion = "static";
+    let pendingVersion = null;
+    let lang = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+
+    const drawerContent = {
+      profiles: () => `
+        <div class="profile-list">
+          ${Object.entries(profiles).map(([name, item]) => `
+            <div class="profile-row">
+              <div><strong>${name}</strong><div class="panel-subtitle">.ccb/config-profiles/${name}.toml</div></div>
+              <span class="badge ${item.status === "Active" ? "ok" : item.status === "Invalid" || item.status === "Needs validator" ? "warn" : "info"}">${item.badge} · ${item.status}</span>
+            </div>`).join("")}
+        </div>
+        <div class="drawer-card">
+          <h3>Authority</h3>
+          <p>Profiles are saved control files. They are not live runtime authority. Activate writes .ccb/ccb.config through validate, backup, dry-run, and reload.</p>
+        </div>
+        <div class="quick-drawers">
+          <button class="btn">Import current as profile</button>
+          <button class="btn">Duplicate</button>
+          <button class="btn">Rename</button>
+          <button class="btn">Archive</button>
+        </div>`,
+      version: () => `
+        <div class="drawer-card"><h3>Basic V1</h3><p>Single-window layout setup using the same binary split canvas as Static V2, without window or sidebar management. Activation renders a supported single-window static config.</p></div>
+        <div class="drawer-card"><h3>Static V2</h3><p>Current formal path for named windows, binary split layout, Rich, sidebar settings, and agent overlays.</p></div>
+        <div class="drawer-card"><h3>Workflow V3</h3><p>Dynamic roles, providers, models, and capacity. Save profile is possible; activation is blocked until v3 validation lands.</p></div>`,
+      basicTools: () => `
+        <div class="drawer-card"><h3>Optional tools</h3><p>Basic V1 can place the supported Rich files surface inside the same binary split canvas. It is a tool pane, not an agent.</p></div>
+        <div class="profile-row"><div><strong>rich</strong><div class="panel-subtitle">Reserved layout alias, not an ask target.</div></div><span class="badge info">tool pane</span></div>
+        <div class="drawer-card"><h3>Boundary</h3><p>Basic V1 keeps one fixed window, but uses the same multi-pane binary layout editor as Static V2. Static V2 adds named windows and sidebar settings.</p></div>`,
+      basicUpgrade: () => `
+        <div class="drawer-card"><h3>Upgrade to Static V2</h3><p>Static V2 unlocks named windows and sidebar settings while preserving the current binary split tree. This creates a V2 draft only; it does not write .ccb/ccb.config.</p></div>
+        <pre>from: Basic V1
+to: Static V2 draft
+carry:
+  window main
+  split tree main / rich
+  agent main
+  provider codex
+  model inherit
+  workspace inplace
+  rich tool pane
+effect: editor draft only</pre>
+        <button class="btn primary" id="continueBasicUpgrade">Create Static V2 draft</button>`,
+      migration: () => `
+        <div class="drawer-card"><h3>Migration review</h3><p>Switching between V2 and V3, or downgrading to V1, creates a new version draft and requires diff review. It does not write .ccb/ccb.config.</p></div>
+        <pre>profile: ${document.getElementById("profileSelect").value}
+from: ${versions[currentVersion].label}
+to: ${pendingVersion ? versions[pendingVersion].label : versions[currentVersion].label}
+effect: editor draft only
+active config: unchanged</pre>
+        <button class="btn primary" id="continueMigration">Create version draft</button>`,
+      sidebar: () => `
+        <div class="drawer-card"><h3>Sidebar split</h3><p>Presentation only. Tune the three vertical blocks as percentages; keep the total near 100%.</p></div>
+        <div class="sidebar-split-grid">
+          <label class="sidebar-split-row">
+            <span class="label">Agents</span>
+            <input type="range" min="10" max="80" value="36">
+            <input class="input percent-input" value="36%">
+          </label>
+          <label class="sidebar-split-row">
+            <span class="label">Comms</span>
+            <input type="range" min="10" max="80" value="40">
+            <input class="input percent-input" value="40%">
+          </label>
+          <label class="sidebar-split-row">
+            <span class="label">Tips</span>
+            <input type="range" min="10" max="80" value="24">
+            <input class="input percent-input" value="24%">
+          </label>
+        </div>
+        <div class="drawer-card"><h3>Sidebar tips</h3><p>Presentation-only multiline text. Line breaks are preserved; this is not an item list.</p></div>
+        <label class="field">
+          <span class="label">Tips text</span>
+          <textarea class="textarea" rows="8">C-b d  detach
+copy: v select
+copy: y yank</textarea>
+        </label>
+        <div class="quick-drawers">
+          <button class="btn">Restore defaults</button>
+          <button class="btn primary">Hot reload sidebar</button>
+        </div>`,
+      tools: () => `
+        <table class="table">
+          <thead><tr><th>Name</th><th>Command</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>rich</td><td><span class="mono">ccb-workbench files</span></td><td><span class="badge info">not ask target</span></td></tr>
+          </tbody>
+        </table>`,
+      toml: () => currentVersion === "basic" ? `
+        <pre>version = 1
+
+layout = "archi:codex(worktree); (odesign:codex, rich)"
+
+[agents.odesign]
+role = "agentroles.open_design"
+model = "gpt-5.5"
+thinking = "medium"</pre>` : currentVersion === "workflow" ? `
+        <pre>version = 3
+
+[workflow]
+entry_role = "frontdesk"
+
+[workflow.defaults]
+provider = "codex"
+model = "gpt-5.5"
+
+[workflow.runtime]
+max_dynamic_nodes = 4</pre>` : `
+        <pre>version = 2
+entry_window = "main"
+
+[windows]
+main = "archi:codex(worktree); (odesign:codex, rich)"
+
+[agents.odesign]
+role = "agentroles.open_design"
+model = "gpt-5.5"
+thinking = "medium"
+
+[ui.sidebar]
+position = "left"
+width = "15%"
+tips_enabled = true</pre>`,
+      validation: () => `
+        <div class="drawer-card"><h3>Validation</h3><p>No blocking errors. One style warning: overlay field repeats topology-owned setting.</p></div>
+        <div class="step"><span class="step-no">1</span><span>rolepacks installed</span><span class="badge ok">pass</span></div>
+        <div class="step"><span class="step-no">2</span><span>windows topology parse</span><span class="badge ok">pass</span></div>
+        <div class="step"><span class="step-no">3</span><span>style warnings</span><span class="badge warn">1</span></div>`,
+      messageTrace: () => `
+        <div class="drawer-card">
+          <h3>Trace summary</h3>
+          <p>Read-only event explanation assembled from mailbox traces, job state, completion tracker, and reply artifacts. The control panel never mutates these records.</p>
+        </div>
+        <table class="table">
+          <tbody>
+            <tr><th>trace id</th><td><span class="mono">job_8b204be32628</span> <button class="btn subtle">Copy</button></td></tr>
+            <tr><th>route</th><td>ccb_self -> odesign -> worker1 -> reviewer3 -> odesign</td></tr>
+            <tr><th>state</th><td><span class="badge warn">chain waiting</span></td></tr>
+            <tr><th>visible payload</th><td>Design request summary, sanitized status, artifact references only.</td></tr>
+            <tr><th>artifact</th><td><span class="mono">.ccb/ccbd/artifacts/text/completion-reply/job_8b204...</span></td></tr>
+          </tbody>
+        </table>
+        <div class="drawer-card">
+          <h3>Safety boundary</h3>
+          <p>Do not show provider auth, API keys, full private prompts, or large message bodies. Long content should be summarized with artifact links.</p>
+        </div>`
+    };
+
+    function applyLanguage(nextLang) {
+      lang = nextLang;
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.querySelectorAll("[data-i18n]").forEach((node) => {
+        const key = node.dataset.i18n;
+        if (text[lang][key]) node.textContent = text[lang][key];
+      });
+      updateSummary();
+    }
+
+    function setVersion(version) {
+      currentVersion = version;
+      pendingVersion = null;
+      document.getElementById("versionSelect").value = version;
+      document.getElementById("pendingSwitch").classList.remove("active");
+      document.querySelectorAll(".view").forEach((view) => {
+        view.classList.toggle("active", view.id === `view-${version}`);
+      });
+      updateSummary();
+    }
+
+    function updateSummary() {
+      const data = versions[currentVersion];
+      document.getElementById("summaryTitle").textContent = data.label;
+      document.getElementById("summaryCopy").textContent = lang === "zh" ? data.summaryZh : data.summary;
+      document.getElementById("currentVersionBadge").textContent = data.label;
+      document.getElementById("actionDetail").textContent = data.action;
+      const apply = document.getElementById("applyBtn");
+      if (currentVersion === "workflow") {
+        apply.disabled = true;
+        apply.textContent = lang === "zh" ? "激活已阻断" : "Activation blocked";
+      } else if (currentVersion === "static") {
+        apply.disabled = false;
+        apply.textContent = lang === "zh" ? "热加载" : "Hot reload";
+      } else {
+        apply.disabled = false;
+        apply.textContent = lang === "zh" ? "激活" : "Activate";
+      }
+    }
+
+    function showPending(target) {
+      if (target === currentVersion) {
+        pendingVersion = null;
+        document.getElementById("pendingSwitch").classList.remove("active");
+        return;
+      }
+      pendingVersion = target;
+      document.getElementById("pendingText").textContent = `${versions[currentVersion].label} -> ${versions[target].label}: editor draft only`;
+      document.getElementById("pendingSwitch").classList.add("active");
+    }
+
+    function confirmVersionSwitch() {
+      if (!pendingVersion) return;
+      const risk = currentVersion !== "basic" || pendingVersion === "workflow";
+      if (risk) {
+        openDrawer("migration");
+      } else {
+        setVersion(pendingVersion);
+      }
+    }
+
+    function openDrawer(kind) {
+      document.getElementById("drawerTitle").textContent = {
+        profiles: "Config profiles",
+        version: "Version details",
+        basicTools: "Optional tools",
+        basicUpgrade: "Upgrade to Static V2",
+        migration: "Migration review",
+        sidebar: "Sidebar settings",
+        tools: "Optional tools",
+        toml: "Full TOML",
+        validation: "Validation details",
+        messageTrace: "Message trace"
+      }[kind] || "Details";
+      document.getElementById("drawerBody").innerHTML = drawerContent[kind] ? drawerContent[kind]() : "";
+      document.getElementById("drawer").classList.add("open");
+      document.getElementById("overlay").classList.add("open");
+      const continueButton = document.getElementById("continueMigration");
+      if (continueButton) {
+        continueButton.addEventListener("click", () => {
+          if (pendingVersion) setVersion(pendingVersion);
+          closeDrawer();
+        });
+      }
+      const basicUpgradeButton = document.getElementById("continueBasicUpgrade");
+      if (basicUpgradeButton) {
+        basicUpgradeButton.addEventListener("click", () => {
+          setVersion("static");
+          document.getElementById("actionDetail").textContent = "Draft conversion: Basic V1 -> Static V2";
+          closeDrawer();
+        });
+      }
+    }
+
+    function closeDrawer() {
+      document.getElementById("drawer").classList.remove("open");
+      document.getElementById("overlay").classList.remove("open");
+    }
+
+    document.getElementById("languageSelect").value = lang;
+    applyLanguage(lang);
+    setVersion("static");
+
+    document.getElementById("languageSelect").addEventListener("change", (event) => applyLanguage(event.target.value));
+    document.getElementById("versionSelect").addEventListener("change", (event) => showPending(event.target.value));
+    document.getElementById("confirmSwitch").addEventListener("click", confirmVersionSwitch);
+    document.getElementById("cancelSwitch").addEventListener("click", () => setVersion(currentVersion));
+
+    document.getElementById("profileSelect").addEventListener("change", (event) => {
+      const profile = profiles[event.target.value];
+      showPending(profile.version);
+    });
+
+    document.querySelectorAll("[data-drawer]").forEach((button) => {
+      button.addEventListener("click", () => openDrawer(button.dataset.drawer));
+    });
+
+    document.querySelectorAll(".segment").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.parentElement.querySelectorAll(".segment").forEach((peer) => peer.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+
+    document.getElementById("closeDrawer").addEventListener("click", closeDrawer);
+    document.getElementById("overlay").addEventListener("click", closeDrawer);
+
+    document.getElementById("pauseFlow").addEventListener("click", () => {
+      const panel = document.getElementById("commFlowPanel");
+      const paused = panel.classList.toggle("flow-paused");
+      document.getElementById("pauseFlow").textContent = paused
+        ? text[lang].resumeAnimation
+        : text[lang].pauseAnimation;
+    });
+
+    document.getElementById("validateBtn").addEventListener("click", () => {
+      const state = document.getElementById("validateState");
+      state.className = "badge ok";
+      state.textContent = "passed";
+    });
+
+    document.getElementById("dryRunBtn").addEventListener("click", () => {
+      document.getElementById("planClass").textContent = currentVersion === "static" ? "plan_class view_only" : "plan_class pending";
+      const dryRun = document.getElementById("dryRunState");
+      const apply = document.getElementById("applyState");
+      dryRun.className = "badge ok";
+      dryRun.textContent = currentVersion === "static" ? "view_only" : "blocked";
+      apply.className = currentVersion === "workflow" ? "badge warn" : "badge ok";
+      apply.textContent = currentVersion === "workflow" ? "blocked" : "safe";
+    });
+  </script>
+</body>
+</html>

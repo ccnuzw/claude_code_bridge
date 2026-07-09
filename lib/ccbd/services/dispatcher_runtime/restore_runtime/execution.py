@@ -43,10 +43,12 @@ def _mark_restored(dispatcher, current, *, target_kind: TargetKind):
 
 def _failed_restore_decision(dispatcher, current, restored):
     failed_at = dispatcher._clock()
+    status, reason, extra_diagnostics = _restore_failure_decision_shape(restored)
     diagnostics = {
         'restore_status': restored.status,
         'restore_reason': restored.reason,
         'resume_capable': restored.resume_capable,
+        **extra_diagnostics,
     }
     append_event(
         dispatcher,
@@ -57,8 +59,8 @@ def _failed_restore_decision(dispatcher, current, restored):
     )
     decision = CompletionDecision(
         terminal=True,
-        status=CompletionStatus.INCOMPLETE,
-        reason='ccbd_restart_requires_resubmit',
+        status=status,
+        reason=reason,
         confidence=CompletionConfidence.DEGRADED,
         reply='',
         anchor_seen=False,
@@ -70,6 +72,20 @@ def _failed_restore_decision(dispatcher, current, restored):
         diagnostics=diagnostics,
     )
     return dispatcher.complete(current.job_id, decision)
+
+
+def _restore_failure_decision_shape(restored) -> tuple[CompletionStatus, str, dict[str, object]]:
+    if str(restored.reason or '').strip() == 'provider_runtime_restarted_without_pending_replay':
+        return (
+            CompletionStatus.FAILED,
+            'runtime_unavailable',
+            {
+                'delivery_retryable': True,
+                'error_type': 'runtime_unavailable',
+                'no_reply_reason': 'provider_runtime_restarted_without_pending_replay',
+            },
+        )
+    return CompletionStatus.INCOMPLETE, 'ccbd_restart_requires_resubmit', {}
 
 
 def _restore_current_job(dispatcher, *, target_kind: TargetKind, job_id: str):

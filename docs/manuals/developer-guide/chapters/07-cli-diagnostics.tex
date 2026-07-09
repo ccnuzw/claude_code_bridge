@@ -68,15 +68,16 @@ management 命令包括 \cmd{version}、\cmd{update}、\cmd{uninstall}、\cmd{re
 
 \section{tools 命令}
 
-当前 tools 命令集中在 Neovim：
+当前 tools 命令集中在 rich workbench：
 
 \begin{itemize}
-  \item \cmd{ccb tools doctor neovim}
-  \item \cmd{ccb tools install neovim}
-  \item \cmd{ccb tools update neovim}
+  \item \cmd{ccb update rich}
+  \item \cmd{ccb tools doctor workbench --profile rich}
+  \item \cmd{ccb tools install workbench --profile rich}
+  \item \cmd{ccb tools launch workbench --profile rich}
 \end{itemize}
 
-实现位于 \src{lib/cli/tools_runtime/neovim.py}。它使用 XDG data/state/cache roots，在 \src{ccb/tools/neovim} 下维护 managed Neovim/LazyVim profile。环境变量 \src{CCB_INSTALL_NEOVIM}、\src{CCB_LAZYVIM_PROFILE}、\src{CCB_LAZYVIM_SYNC_TIMEOUT_S}、\src{CCB_LAZYVIM_BOOTSTRAP_TIMEOUT_S} 会影响行为。
+实现位于 \src{lib/cli/tools_runtime/workbench.py}。它使用 XDG data/state/cache roots，在 \src{ccb/tools/workbench} 下维护 rich workbench 配置和 wrapper。环境变量 \src{CCB_WORKBENCH_PROFILE}、\src{CCB_WORKBENCH_FORCE_RICH}、\src{CCB_WORKBENCH_THEME}、\src{CCB_RICH_AUTO_START} 会影响行为。
 
 \section{fault injection}
 

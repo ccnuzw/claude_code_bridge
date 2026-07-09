@@ -16,6 +16,7 @@ from completion.models import (
     CompletionStatus,
 )
 from provider_execution.base import ProviderSubmission
+from provider_execution.base import ProviderRuntimeContext
 from provider_execution.fake import FakeProviderAdapter
 from provider_execution.fake_runtime import FakeDirective, build_terminal_decision, default_script, materialize_payload
 from provider_execution.fake_runtime.parsing import parse_directive
@@ -210,3 +211,96 @@ def test_fake_provider_completes_mobile_artifact_reply(tmp_path) -> None:
     assert result.decision is not None
     assert result.decision.status is CompletionStatus.COMPLETED
     assert 'CCB Local Artifacts probe' in result.decision.reply
+
+
+def test_fake_worker_writes_declared_workspace_change(tmp_path) -> None:
+    workspace = tmp_path / 'workspace'
+    request = MessageEnvelope(
+        project_id='proj-1',
+        to_agent='worker',
+        from_actor='loop_runner',
+        body=(
+            'Loop: lp1\n'
+            'Role: worker\n'
+            'Task: task-1\n\n'
+            'Task packet and execution contract evidence:\n'
+            'allowed_change_paths: workflow_smoke_output.txt\n'
+        ),
+        task_id='task-1',
+        reply_to=None,
+        message_type='ask',
+        delivery_scope=DeliveryScope.SINGLE,
+    )
+    job = JobRecord(
+        job_id='job-1',
+        submission_id=None,
+        agent_name='loop-lp1-coder-1',
+        provider='fake',
+        request=request,
+        status=JobStatus.QUEUED,
+        terminal_decision=None,
+        cancel_requested_at=None,
+        created_at='2026-06-23T00:00:00Z',
+        updated_at='2026-06-23T00:00:00Z',
+        workspace_path=str(workspace),
+    )
+
+    submission = FakeProviderAdapter(latency_seconds=0).start(
+        job,
+        context=None,
+        now='2026-06-23T00:00:00Z',
+    )
+
+    output = workspace / 'workflow_smoke_output.txt'
+    assert output.is_file()
+    assert 'deterministic fake worker wrote declared project-root evidence' in output.read_text(
+        encoding='utf-8'
+    )
+    assert 'changed_files: workflow_smoke_output.txt' in submission.reply
+
+
+def test_fake_worker_writes_declared_workspace_change_from_runtime_context(tmp_path) -> None:
+    workspace = tmp_path / 'context-workspace'
+    request = MessageEnvelope(
+        project_id='proj-1',
+        to_agent='worker',
+        from_actor='loop_runner',
+        body=(
+            'Loop: lp1\n'
+            'Role: worker\n'
+            'Task: task-1\n\n'
+            'Task packet and execution contract evidence:\n'
+            'allowed_change_paths: workflow_smoke_output.txt\n'
+        ),
+        task_id='task-1',
+        reply_to=None,
+        message_type='ask',
+        delivery_scope=DeliveryScope.SINGLE,
+    )
+    job = JobRecord(
+        job_id='job-1',
+        submission_id=None,
+        agent_name='loop-lp1-coder-1',
+        provider='fake',
+        request=request,
+        status=JobStatus.QUEUED,
+        terminal_decision=None,
+        cancel_requested_at=None,
+        created_at='2026-06-23T00:00:00Z',
+        updated_at='2026-06-23T00:00:00Z',
+        workspace_path=None,
+    )
+
+    FakeProviderAdapter(latency_seconds=0).start(
+        job,
+        context=ProviderRuntimeContext(
+            agent_name='loop-lp1-coder-1',
+            workspace_path=str(workspace),
+            backend_type='fake',
+            runtime_ref='runtime',
+            session_ref='session',
+        ),
+        now='2026-06-23T00:00:00Z',
+    )
+
+    assert (workspace / 'workflow_smoke_output.txt').is_file()

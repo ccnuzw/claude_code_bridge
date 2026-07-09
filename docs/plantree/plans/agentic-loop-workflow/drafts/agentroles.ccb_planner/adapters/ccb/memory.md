@@ -4,6 +4,10 @@ Use reply-visible artifacts as the durable boundary. Prefer producing
 `task-packet.md`, `readiness.json`, and `candidate-questions.jsonl` sections for
 the supervisor/runner to import or review.
 
+The active command surface is closed. Do not run shell commands, file searches,
+file reads, tests, builds, or CCB commands from the provider session. Base your
+reply on the controller-provided intake, compact artifacts, and prompt context.
+
 The supervisor/runner imports only exact fenced sections. Return
 `**task-packet.md**` followed by a fenced markdown block and `**readiness.json**`
 followed by a fenced JSON object. Do not use alternate section names, unfenced

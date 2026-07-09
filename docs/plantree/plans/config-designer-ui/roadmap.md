@@ -6,18 +6,18 @@ Date: 2026-06-06
 
 - Confirmed current config authority is complete replacement by source layer:
   built-in default, then user config, then project config.
-- Confirmed current built-in default already includes a managed Neovim tool
-  window.
+- Confirmed current built-in default should expose the supported rich files
+  surface, not standalone editor tooling.
 - Confirmed current `ccb-config` skill already prefers `version = 2`
   `[windows]` topology.
 - Updated inherited `ccb-config` skill sources so generated windows topology
-  includes `[tool_windows.neovim]` by default.
+  uses the `rich` layout alias by default.
 - Cleaned the inherited `ccb-config` skill scope so it is config-only, shows a
   numbered option menu, and treats workflow memory as a separate follow-up.
 - Reorganized the config option menu into Basic, Agent Advanced, Workspace
   Advanced, Provider Startup Advanced, Runtime Advanced, and Output groups.
-- Documented that the built-in no-config default includes the managed Neovim
-  tool window.
+- Documented that the built-in no-config default includes the rich files
+  surface.
 - Added language-following rules so `ccb-config` presents menus, questions, and
   explanations in the user's language while keeping CCB syntax literal.
 - Accepted the single-authority config writing rule in
@@ -72,7 +72,7 @@ Phase 1 is complete when:
 - `ccb-config` skill can list supported config knobs clearly.
 - The skill writes only `.ccb/ccb.config` or an explicitly requested
   `~/.ccb/ccb.config`; workflow memory remains a separate follow-up.
-- Generated windows topology includes the managed Neovim tool window by
+- Generated windows topology includes the rich files surface by
   default and validates with the current loader.
 
 Phase 2 is complete when:

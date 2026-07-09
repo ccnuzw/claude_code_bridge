@@ -379,6 +379,18 @@ Date: 2026-06-24
 - First config slice is implemented in the current worktree: project config can
   parse, validate, record, and render `loop.capacity` and
   `loop.role_profiles`; focused config-loader tests pass.
+- Config v3 is now a shaped follow-up lane: keep `version = 2` for static
+  manual layouts, add opt-in `version = 3` for dynamic workflow roles,
+  provider/model settings, required rolepack validation, migration dry-run,
+  enhanced control-panel-ready JSON contracts, local Web/TUI editing surfaces,
+  and visible opened-project runtime proof. See
+  [topics/config-v3-dynamic-workflow.md](topics/config-v3-dynamic-workflow.md).
+- Config v2 static control panel is now shaped as a separate companion UI
+  lane: keep `version = 2` `[windows]` as static topology authority, but make
+  common edits through a visual split builder, template picker, pane inspector,
+  folded overlays, compact preview, and digest-aware validate/dry-run/apply
+  flow. See
+  [topics/config-v2-static-control-panel.md](topics/config-v2-static-control-panel.md).
 - First command/state slice is implemented in the current worktree:
   `ccb loop capacity ensure/status/release --json` writes and reads
   deterministic loop capacity state under `.ccb/runtime/loops` through the
@@ -1160,15 +1172,19 @@ Still outside the candidate:
 
 ## Next
 
-1. Decide whether to promote the minimum production-candidate gate from
+1. Implement the first config v3 source slice: schema/version dispatch, v2
+   regression protection, v3 workflow role models, required role/profile
+   validation, `ccb config validate` reporting, and control-panel-ready JSON
+   contracts before any runtime behavior changes.
+2. Decide whether to promote the minimum production-candidate gate from
    [goals/minimum-production-candidate-goal.md](goals/minimum-production-candidate-goal.md)
    into the regular pre-release workflow smoke, then define the opt-in
    Codex/Claude real-provider second gate.
-2. Continue richer live reflow beyond the proven same-window continuous,
+3. Continue richer live reflow beyond the proven same-window continuous,
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
-3. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex and
+4. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex and
    Claude opt-in real-provider movement are proven, and shared-source
    single-agent movement is proven with fake providers; the low-level kernel
    and user-facing command now move multiple source-window agents in one
@@ -1177,35 +1193,35 @@ Still outside the candidate:
    capacity-based split targets, and batch execution-node placement is proven
    for `--loop-id/--node-id`; next evaluate transactions that mix moved panes
    with newly created agents in one target.
-4. Extend the shrink/release proof from single-agent and batch fake-provider
+5. Extend the shrink/release proof from single-agent and batch fake-provider
    source-wrapper/CI smokes to opt-in real-provider tolerance where useful.
-5. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
+6. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.
-6. Split the next runner/topology slice around the simplified contract:
+7. Split the next runner/topology slice around the simplified contract:
    topology mounts/releases/reflows agents; orchestrator coordinates ordinary
    collaboration through `ask`; only stable outputs are imported through
    task/round artifacts. Execute this through
    [goals/mount-topology-ask-first-landing-goal.md](goals/mount-topology-ask-first-landing-goal.md).
-7. Define the v1 team spec format for planner group, orchestrator, execution
+8. Define the v1 team spec format for planner group, orchestrator, execution
    node, recovery node, and monitor behavior.
-8. Define context-purity budgets for each role, including what may enter
+9. Define context-purity budgets for each role, including what may enter
    `frontdesk`, planner group, orchestrator, execution nodes, monitor, runtime
    artifacts, and long-term plan-tree.
-9. Define the v1 clarification command surface and artifact schema for
+10. Define the v1 clarification command surface and artifact schema for
    candidate questions, broker review, user display, raw answers, normalized
    answers, deferred questions, and planner wakeup.
-10. Define the v1 `task_detailer` detail packet schema and import bridge:
+11. Define the v1 `task_detailer` detail packet schema and import bridge:
    `detail-packet.manifest.json`, `detail-readiness.json`, source-evidence
    entries, clarification sidecars, and detail review handoff fields.
-11. Define the v1 execution-node and round-verification artifact schemas,
+12. Define the v1 execution-node and round-verification artifact schemas,
    including node check plans, non-convergence reports, branch freeze records,
    partial loop reports, verification contracts, and round verification plans.
-12. Map the simplified ask-first design to existing CCB communication
+13. Map the simplified ask-first design to existing CCB communication
    primitives: agent-to-agent `ask` for normal collaboration, programmatic ask
    for runner gates and smokes, message bureau records for diagnostics, and
    script imports for authority transitions.
-13. Identify the first implementation slice that can run with one planner, one
+14. Identify the first implementation slice that can run with one planner, one
    orchestrator, one execution node, and deterministic monitoring before
    enabling dynamic multi-node fanout.
 

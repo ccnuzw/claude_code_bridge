@@ -75,6 +75,7 @@ CODEBUDDY_RUNTIME_SPEC = _provider_runtime_spec("codebuddy")
 QWEN_RUNTIME_SPEC = _provider_runtime_spec("qwen")
 CURSOR_RUNTIME_SPEC = _provider_runtime_spec("cursor")
 CRUSH_RUNTIME_SPEC = _provider_runtime_spec("crush")
+GROK_RUNTIME_SPEC = _provider_runtime_spec("grok")
 KIRO_RUNTIME_SPEC = _provider_runtime_spec("kiro")
 PI_RUNTIME_SPEC = _provider_runtime_spec("pi")
 ZAI_RUNTIME_SPEC = _provider_runtime_spec("zai")
@@ -135,6 +136,10 @@ CRUSH_CLIENT_SPEC = _client_spec(
     provider_key="crush",
     session_filename=".crush-session",
 )
+GROK_CLIENT_SPEC = _client_spec(
+    provider_key="grok",
+    session_filename=".grok-session",
+)
 KIRO_CLIENT_SPEC = _client_spec(
     provider_key="kiro",
     session_filename=".kiro-session",
@@ -163,6 +168,7 @@ RUNTIME_SPECS_BY_PROVIDER = {
     "qwen": QWEN_RUNTIME_SPEC,
     "cursor": CURSOR_RUNTIME_SPEC,
     "crush": CRUSH_RUNTIME_SPEC,
+    "grok": GROK_RUNTIME_SPEC,
     "kiro": KIRO_RUNTIME_SPEC,
     "pi": PI_RUNTIME_SPEC,
     "zai": ZAI_RUNTIME_SPEC,
@@ -183,6 +189,7 @@ CLIENT_SPECS_BY_PROVIDER = {
     "qwen": QWEN_CLIENT_SPEC,
     "cursor": CURSOR_CLIENT_SPEC,
     "crush": CRUSH_CLIENT_SPEC,
+    "grok": GROK_CLIENT_SPEC,
     "kiro": KIRO_CLIENT_SPEC,
     "pi": PI_CLIENT_SPEC,
     "zai": ZAI_CLIENT_SPEC,
@@ -228,6 +235,8 @@ __all__ = [
     "DROID_RUNTIME_SPEC",
     "GEMINI_CLIENT_SPEC",
     "GEMINI_RUNTIME_SPEC",
+    "GROK_CLIENT_SPEC",
+    "GROK_RUNTIME_SPEC",
     "KIMI_CLIENT_SPEC",
     "KIMI_RUNTIME_SPEC",
     "KIRO_CLIENT_SPEC",

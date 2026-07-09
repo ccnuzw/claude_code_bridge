@@ -1,7 +1,7 @@
 # Phase 1-6 Deployment Readiness Supervision
 
 Date: 2026-07-07
-Status: ACTIVE / DEPLOYMENT READINESS BLOCKED
+Status: ACTIVE / P4 FULLFLOW RETEST PASS / PRODUCTION DEFAULT NOT ENABLED
 
 ## Purpose
 
@@ -15,24 +15,381 @@ testing must prove that the visible entry path, frontdesk handoff, planner and
 orchestrator activation, execution/review, UI visibility, and dynamic lifecycle
 cleanup work together under realistic use.
 
+## Operator-Facing Acceptance Standard
+
+Deployment readiness must be proven from a real opened project that the user or
+supervisor can inspect. A script may materialize the root, start `ccb_test`,
+drive checkpoint commands, and normalize evidence, but the final acceptance
+cannot rely only on hidden background script output.
+
+Required shape for future acceptance runs:
+
+- Run from `/home/bfly/yunwei/test_ccb2` using
+  `/home/bfly/yunwei/ccb_source/ccb_test`.
+- Use a fresh test project root under `/home/bfly/yunwei/test_ccb2`, not
+  `ccb_source` and not a reused consumed root.
+- For real-provider acceptance, inherit the current system provider
+  environment unless the test explicitly says it is an isolated-provider
+  source smoke. Do not export lab-local `HOME` or `CCB_SOURCE_HOME` for those
+  real-provider runs.
+- Use a root-local `AGENT_ROLES_STORE` so RolePack installation and role
+  lookup are auditable without mutating the user/global role store.
+- Open the project visibly so the user/supervisor can inspect frontdesk,
+  planner, orchestrator, task_detailer, worker/reviewer, and
+  `ccb_round_reviewer` panes or UI/sidebar state.
+- Start from frontdesk intake for operator-facing workflow tests. Frontdesk
+  must classify and hand off; the user must not be required to manually create
+  the plan, planner task, route, or dynamic worker topology for the happy path.
+- Evidence must include task authority, route authority, round result,
+  dynamic-agent release/retain state, cleanup state, and enough UI/pane
+  evidence to diagnose whether the visible workflow actually moved.
+- B7 or similar normalized rows are reporting artifacts, not substitutes for
+  the live opened-project inspection. If rows claim pass while visible
+  workflow state or raw authority disagrees, the row is a normalizer bug.
+
 ## Gate Status
 
-Deployment readiness is blocked until an independent audit lane approves the
-evidence. `talk2` may supervise, inspect raw evidence, and submit repair work,
-but `talk2` must not self-approve deployment readiness. The final verdict must
-come from `reviewer2` or from an explicit owner decision that names the
-self-approval exception.
+Deployment readiness remains blocked until real opened-project evidence proves
+the gate. Per the user's 2026-07-08 direction, validation and evidence audit no
+longer go through CCB workers or reviewers: `talk2` now executes the real
+project tests and audits the evidence directly. CCB workers/reviewers should be
+used only for concrete source-code modification tasks when a bug fix is needed.
 
 The read-only audit artifacts are current blockers for this page:
 
-- reviewer2 `job_7c18b7d9e333`: BLOCKER B1, because the previous review
+- reviewer2 `job_7c18b7d9e333`: historical BLOCKER B1, because the previous review
   procedure gave `talk2` both execution supervision and final reviewer power.
   The same audit also raised HIGH findings for module-level coverage,
   sequence13 contradiction handling, and fixed JSON/JSONL evidence rows.
-- reviewer1 `job_50c72bc31578`: HIGH findings requiring frontdesk-started
+- reviewer1 `job_50c72bc31578`: historical HIGH findings requiring frontdesk-started
   L1-L4 regression, module-level integration gates, final deployment verdict
   ownership, route/complexity mix, stricter UI evidence, and positive
   busy-retain evidence.
+
+The user's 2026-07-08 direction supersedes future worker/reviewer validation
+ownership: `talk2` runs validation directly and only delegates concrete source
+modification tasks. Historical reviewer findings remain useful checklist input,
+but they are no longer the execution path for deployment-readiness evidence.
+
+## 2026-07-08 Talk2 Checkpoint And Dispatch Queue
+
+Talk2 local source verification is green after the latest frontdesk/detailer,
+sequence29 B7, loop runner, and phase2 test-isolation repairs:
+
+- `python -m pytest -q` -> `3902 passed, 2 skipped`;
+- `python -m pytest test/test_v2_phase2_entrypoint.py -m
+  provider_blackbox -q` -> `21 passed`;
+- `python -m pytest test/test_v2_phase2_entrypoint.py -q` -> `77 passed`;
+- py_compile on touched source/tests passed;
+- `git diff --check` passed.
+- reviewer1 `job_8657be7ac70f` accepted source/doc readiness for the next
+  real-provider validation lanes, with no blocking source/doc repair required.
+  Its HIGH finding is tracked as technical debt: Phase 6B L1-L4 harness
+  specifics are still coupled into `role_output_import.py`.
+
+This checkpoint is not deployment readiness. It only says the current source
+tree is ready for the next direct real-provider evidence round. The next
+work must stay aligned with the Phase 1-6 acceptance goal and must not narrow
+success to script-only evidence.
+
+Self-run validation queue:
+
+1. L1-L4 route mix rerun: **DONE for the current source tree**. `talk2`
+   directly ran fresh root
+   `/home/bfly/yunwei/test_ccb2/deploy-l1-l4-frontdesk-sequence38-talk2-selfrun-20260708124814`
+   from `/home/bfly/yunwei/test_ccb2` with
+   `/home/bfly/yunwei/ccb_source/ccb_test`, inherited provider environment,
+   and root-local `AGENT_ROLES_STORE`. B7 report:
+   `/home/bfly/yunwei/test_ccb2/deploy-l1-l4-frontdesk-sequence38-talk2-selfrun-20260708124814/phase6b-real-provider-l1-l4-sequence38-talk2-selfrun-20260708124814-b7.md`
+   reports `Status: pass`. Frontdesk handed off to planner, planner produced
+   the five-task route mix, L1/L2 direct execution ended `done/pass` with
+   dynamic coder/reviewer release `released_count=2` and `retained_count=0`,
+   L3 stopped at `detail_ready`, L4 macro stopped at `replan_required`, and
+   L4 blocked stopped at `blocked`. Post-B7 cleanup was run and final
+   root-local `ps` showed `ccbd_state: unmounted` with all resident roles
+   stopped.
+   Latest post-fix fullflow retest:
+   `/home/bfly/yunwei/test_ccb2/deploy-fullflow-talk2-selfrun-20260708202901`
+   with B7
+   `/home/bfly/yunwei/test_ccb2/deploy-fullflow-talk2-selfrun-20260708202901/phase6b-real-provider-l1-l4-deploy-fullflow-talk2-selfrun-20260708202901-b7.md`
+   also reports `Status: pass`. This run reproduced and then proved the L3
+   detail-ready stop-contract repair: task_detailer job
+   `job_7b0e141d22cb` returned complete detail artifacts plus
+   `controller_expected_stop: detail_ready`; the repaired importer settled the
+   task as `detail_ready`, while L4 macro/blocker settled as
+   `replan_required` and `blocked`. L1/L2 direct execution again released
+   dynamic coder/reviewer nodes with `released_count=2`, `retained_count=0`,
+   `dynamic_unload_ok=true`, and `runtime_residue=false`. Post-B7 cleanup
+   stopped the project-local ccbd/tmux/provider processes.
+2. Dynamic lifecycle rerun: **DONE for the current source tree**. `talk2`
+   directly ran fresh root
+   `/home/bfly/yunwei/test_ccb2/deploy-p1-dynamic-lifecycle-talk2-20260708161320`
+   from `/home/bfly/yunwei/test_ccb2` with
+   `/home/bfly/yunwei/ccb_source/ccb_test`, inherited provider environment,
+   and root-local `AGENT_ROLES_STORE`. B7 report:
+   `/home/bfly/yunwei/test_ccb2/deploy-p1-dynamic-lifecycle-talk2-20260708161320/p1-dynamic-lifecycle-b7.md`
+   reports `status: pass`. Three real direct-execution rounds, including L3
+   post-detail execution, ended `done/pass` with clean dynamic release.
+   Positive real-provider busy-retain, resident-role survival, UI/sidebar
+   text snapshots, and explicit timeout diagnostics are recorded in
+   [../history/phase1-6-deployment-readiness-p1-dynamic-lifecycle-20260708.md](../history/phase1-6-deployment-readiness-p1-dynamic-lifecycle-20260708.md).
+3. Frontdesk pressure and audit: **DONE for the P2 macro-intake pressure
+   lane**. `talk2` directly ran fresh root
+   `/home/bfly/yunwei/test_ccb2/deploy-p2-frontdesk-pressure-talk2-20260708170920`
+   from `/home/bfly/yunwei/test_ccb2` with
+   `/home/bfly/yunwei/ccb_source/ccb_test`, inherited provider environment,
+   and root-local `AGENT_ROLES_STORE`. B7 report:
+   `/home/bfly/yunwei/test_ccb2/deploy-p2-frontdesk-pressure-talk2-20260708170920/phase6b-real-provider-l1-l4-p2-frontdesk-pressure-talk2-20260708170920-b7.md`
+   reports `Status: pass`. One natural-language frontdesk macro-intake
+   produced five route-mix tasks; frontdesk returned Intake Evidence only,
+   dispatcher created exactly one handoff marker, planner received one
+   silence ask and returned a fenced `task-set.json`, L1/L2 ended `done/pass`
+   with dynamic release `released_count=2` and `retained_count=0`, L3 ended
+   `detail_ready`, L4 macro ended `replan_required`, and L4 blocked ended
+   `blocked`. Evidence summary:
+   [../history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](../history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md).
+   This closes the macro-intake pressure lane; five independent user messages
+   into frontdesk remain an optional stricter P2-B shape if later required.
+
+Historical target shape for the completed L1-L4 lane:
+
+- Use a fresh opened project under
+   `/home/bfly/yunwei/test_ccb2`, `/home/bfly/yunwei/ccb_source/ccb_test`,
+   inherited provider environment, and root-local `AGENT_ROLES_STORE`. Start
+   from frontdesk intake and prove planner/orchestrator route mix for
+   `direct_execution`, `needs_detail`, `macro_adjustment_request`, and
+   `blocked`, with raw task authority, route authority, B7 rows, cleanup, and
+   visible project/UI evidence.
+
+## Production Target Work Queue
+
+This queue is aligned to
+[../goals/phase1-6-acceptance-goal.zh.md](../goals/phase1-6-acceptance-goal.zh.md)
+and extends the accepted bounded Phase 6A/6B claim into a deployment-readiness
+target. It does not redefine production readiness as a smaller script-only
+pass.
+
+### P0. Freeze Current Baseline And Evidence Paths
+
+Purpose: prevent future runs from mixing stale delegated artifacts, consumed
+roots, or global role stores into the production-readiness claim.
+
+Current baseline artifact:
+[../history/phase1-6-deployment-readiness-p0-baseline-20260708.md](../history/phase1-6-deployment-readiness-p0-baseline-20260708.md).
+
+Required evidence:
+
+- `git status --short` inventory before each validation round.
+- `/home/bfly/yunwei/ccb_source/ccb_test --diagnose` from
+  `/home/bfly/yunwei/test_ccb2`.
+- Fresh root path under `/home/bfly/yunwei/test_ccb2`, command log, B7 path,
+  and final cleanup path recorded before execution.
+- Explicit provider-home policy: inherited system provider environment for
+  real-provider runs; no lab-local `HOME` or `CCB_SOURCE_HOME`.
+- Root-local `AGENT_ROLES_STORE`.
+
+Reject if: root is reused, `ccb_source` is used as runtime root, role lookup
+falls back to `/home/bfly/.roles/installed`, or evidence only exists in an
+agent summary without raw files.
+
+### P1. Dynamic Lifecycle, Busy Retain, UI, And Observer Lane
+
+Purpose: close Phase 5 and module-level Dynamic Lifecycle evidence at
+deployment standard, beyond the L1/L2 dynamic release already observed in
+sequence38.
+
+Status: complete/pass for the current source tree. Evidence:
+[../history/phase1-6-deployment-readiness-p1-dynamic-lifecycle-20260708.md](../history/phase1-6-deployment-readiness-p1-dynamic-lifecycle-20260708.md).
+
+Execution runbook:
+[phase1-6-p1-dynamic-lifecycle-runbook-20260708.md](phase1-6-p1-dynamic-lifecycle-runbook-20260708.md).
+
+Required cases:
+
+- Two repeated direct-execution rounds in one fresh opened project, each ending
+  with dynamic coder/reviewer `released_count=2`, `retained_count=0`, observed
+  topology `agents=[]`, and final `ps` showing only resident roles.
+- A positive `retained_busy` case: while a provider ask is active, release or
+  reload must retain the busy agent; after terminal idle proof, the same agent
+  must release cleanly.
+- Resident survival: frontdesk, planner, orchestrator, task_detailer, and
+  `ccb_round_reviewer` remain reachable after dynamic release.
+- UI/sidebar evidence: visible project socket/tmux belongs to the fresh root,
+  agent switching across resident roles succeeds, and no UI attaches to
+  `ccb_source`.
+- Observer evidence: a real provider job longer than the old 10 second window
+  reaches terminal without default timeout; explicit diagnostic timeout still
+  times out when configured.
+
+Reject if: any dynamic residue is hidden by cleanup, busy agents are killed,
+sidebar evidence is a free-form claim without project-local proof, or observer
+timeouts are treated as pass.
+
+### P2. Frontdesk Pressure And Complexity Lane
+
+Purpose: prove the operator-facing entry path works for varied task shapes,
+and that frontdesk stays a thin intake/handoff role.
+
+Status: complete/pass for the current source tree's macro-intake pressure
+shape. Evidence:
+[../history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](../history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md).
+
+Required cases:
+
+- At least five fresh frontdesk-entry tasks across complexity levels:
+  simple direct execution, code/test direct execution, needs-detail,
+  macro-adjustment, blocked or partial.
+- Every case starts with a natural-language ask to `frontdesk`; user does not
+  manually create the plan, task, route, or dynamic topology.
+- Frontdesk produces intake/blocked evidence and exactly one planner handoff
+  path; it must not write project artifacts, run tests, edit code, or submit a
+  second planner path through legacy role-output import.
+- Valid non-success outcomes (`detail_ready`, `replan_required`, `blocked`,
+  `partial`) are classified as `valid_non_success`, not pass and not system
+  failure.
+
+Reject if: frontdesk directly implements, asks for a plan slug on an empty
+project, duplicates planner handoff, or pressure rows are created by a
+supervisor script instead of frontdesk intake.
+
+### P3. Module-Level Acceptance Audit
+
+Purpose: satisfy the Phase 1-6 goal's "全部完成后的模块级验收" layer instead of
+assuming that phase tests compose automatically.
+
+Status: complete as `PASS_WITH_LIMITS` for the current source tree. Evidence:
+[../history/phase1-6-deployment-readiness-p3-module-audit-20260708.md](../history/phase1-6-deployment-readiness-p3-module-audit-20260708.md).
+
+Required module verdicts:
+
+- Plan/Task Document: task packet, execution contract, orchestration notes,
+  detail artifacts, and round summary are linked with digest/job/import
+  traceability.
+- Orchestration: route and outcome match for direct, detail, macro, blocked,
+  and partial/rework observations.
+- Mount Topology: desired/observed topology reconcile, mount schema has no
+  communication DSL, drift and release semantics are visible.
+- Ask Collaboration: ask failures and retries are classified; provider replies
+  do not mutate authority.
+- Dynamic Lifecycle: release, busy-retain, park/resume, resident survival, and
+  final `ps`/config/observed topology agree.
+- Evidence/Reporting: every row has a classification, B7 explains
+  non-success, and final claims match raw evidence.
+
+Reject if: a module is marked pass based only on focused unit tests or old
+Phase 6B acceptance evidence without current direct validation coverage.
+
+Audit result:
+
+- Plan/Task Document, Mount Topology, and Evidence/Reporting have current
+  P1/P2 direct evidence sufficient for this deployment-readiness lane.
+- Orchestration, Ask Collaboration, and Dynamic Lifecycle pass with explicit
+  limits where the current P1/P2 lanes did not rerun every accepted historical
+  branch, such as reviewer-rework stability, full live ask-failure injection,
+  and every park/resume/reflow case.
+- L5 partial and Phase 6A reviewer-rework are treated as bounded historical
+  supplement, not current P1/P2 direct evidence.
+- P4 must preserve these limits and must not translate P3 into
+  production/default enablement.
+
+### P4. Final Deployment-Readiness Report
+
+Purpose: produce the production-target equivalent of the final acceptance
+report without widening claims beyond evidence.
+
+Status: complete. Report:
+[../history/phase1-6-deployment-readiness-report-20260708.md](../history/phase1-6-deployment-readiness-report-20260708.md).
+P4 decision: the current source tree is ready to enter P5 packaging and
+deployment-gate validation, but production/default enablement remains blocked
+until P5 completes.
+Latest P4 addendum: the report now includes the
+`deploy-fullflow-talk2-selfrun-20260708202901` post-fix real-provider retest
+and the task-detailer stop-contract source proof.
+
+Required artifact:
+
+```text
+docs/plantree/plans/agentic-loop-workflow/history/
+  phase1-6-deployment-readiness-report-<YYYYMMDD>.md
+```
+
+The report must include: current Phase 1-6 status, L1-L4 sequence38 result,
+P1/P2 validation results, module-level verdicts, failure taxonomy, first
+stable complexity breakpoint, unresolved blockers, explicit production
+non-goals, and next release priorities.
+
+Reject if: the report claims default production enablement while UI/sidebar,
+busy-retain, pressure, or packaging evidence is missing.
+
+### P5. Source Packaging And Deployment Gate
+
+Purpose: prepare the source tree for deployment-grade handling after runtime
+evidence is sufficient.
+
+Status: complete for source packaging preflight. Record:
+[../history/phase1-6-deployment-readiness-p5-packaging-gate-20260708.md](../history/phase1-6-deployment-readiness-p5-packaging-gate-20260708.md).
+P5 decision: source-wrapper smoke, source tests, npm dry-run, and local-prefix
+install smoke pass after fixing deterministic fake-provider command-surface
+and workspace-promotion blockers. Release publication, global install/update,
+main-branch switch, and production/default enablement remain explicit
+package-owner decisions.
+
+Required checks:
+
+- `python -m py_compile` on touched source/tests/scripts.
+- Focused pytest for changed surfaces plus relevant integration test bundles.
+- `git diff --check` clean.
+- Worktree/branch hygiene documented: keep `ccb_source` source work isolated
+  from runtime test roots; use worktrees for workflow branches when returning
+  the main GitHub checkout to the main branch.
+- Install/update smoke or release-packaging checks selected according to the
+  actual deployment path.
+
+Reject if: source changes are untracked or undocumented, generated runtime
+artifacts are mixed into source packaging, or deployment depends on the
+currently open test root.
+
+### 2026-07-08 Dispatch Result
+
+The delegated worker round did not reach workflow validation. It is classified
+as `BLOCKER / worker_prompt_delivery_unreliable`, not as L1-L4, lifecycle, or
+frontdesk evidence.
+
+- worker2 `job_b9c256184ba3` failed with a zero-byte artifact and snapshot
+  reason `codex_prompt_delivery_failed` /
+  `delivery_failure_kind=delivery_anchor_missing`. Partial root
+  `/home/bfly/yunwei/test_ccb2/deploy-l1-l4-frontdesk-sequence30-worker2-20260708105306`
+  contains setup/frontdesk-entry evidence only; no complete B7 rows, cleanup,
+  or terminal route-mix evidence exists.
+- worker3 `job_856bafb7d5f8` failed with the same zero-byte artifact and
+  delivery-anchor shape. Partial root
+  `/home/bfly/yunwei/test_ccb2/deploy-runtime-ui-dynamic-lifecycle-worker3-fresh-20260708105425`
+  contains setup/resident preflight evidence only; no dynamic unload,
+  busy-retain, UI/sidebar B7, or cleanup evidence exists.
+- worker1 `job_17897f7f6452` failed with the same zero-byte artifact and
+  delivery-anchor shape. Partial root
+  `/home/bfly/yunwei/test_ccb2/deploy-frontdesk-bootstrap-pressure-worker1-20260708105432`
+  contains bootstrap request evidence only; no frontdesk pressure rows exist.
+- reviewer2 `job_433e016931e7` completed the read-only acceptance gate at
+  [./phase1-6-deployment-readiness-acceptance-gate-20260708.md](./phase1-6-deployment-readiness-acceptance-gate-20260708.md).
+  The gate says deployment readiness is `BLOCKED / NOT READY` and lists the
+  required evidence for the next valid round.
+
+Runtime refresh status: `ccb restart worker1` failed with
+`role_digest_changed_fresh_restart_unsupported` after the worker lanes failed,
+and `ccb reload --dry-run` returned `plan_class: no_change` /
+`reload_namespace_patch_status: no_op`. Ordinary restart and additive reload
+are therefore not enough to restore the worker panes. Do not submit another
+full delegated evidence round. The active validation path is direct
+`talk2` execution; worker reruns are only relevant again if a future source
+modification task explicitly requires CCB collaboration runtime validation.
+The worker collaboration runtime must be explicitly rebuilt/refreshed or prompt
+delivery otherwise proven reliable before it can provide useful delegated work.
+`ccb repair retry` and `ccb repair resubmit` are not used for this blocker
+because they are real re-execution commands, not dry-run diagnostics, and would
+re-enter the same unreliable worker delivery path. Additional worker probes are
+also held for the same reason: another zero-byte artifact would add noise
+without proving deployment-readiness behavior.
 
 ## Current 2026-07-07 Retake State
 
@@ -669,18 +1026,19 @@ For each worker reply, `talk2` performs evidence triage only:
 6. Do not mark the active goal complete until deployment-readiness evidence
    covers frontdesk entry, route mix, dynamic release, UI/sidebar visibility,
    and observer behavior.
-7. Submit the completed evidence packet to the independent deployment audit
-   lane. `talk2` must not issue the final deployment-readiness verdict.
+7. Record the completed evidence packet and direct `talk2` audit result in
+   this supervision topic and `implementation-status.md`; do not use
+   worker/reviewer artifacts as validation authority.
 
 ## Evidence Audit Matrix
 
-Use this matrix when worker artifacts arrive. A summary claim is not enough;
+Use this matrix when direct validation evidence is produced. A summary claim is not enough;
 each item needs direct current-state evidence from the fresh test root or
 source tree.
 
 | Requirement | Acceptable evidence | Reject if |
 | :--- | :--- | :--- |
-| Fresh real-provider root | Root path under `/home/bfly/yunwei/test_ccb2`, created for the worker lane, with command log and project-local `.ccb` anchor. | Root reused from sequence/repeat history, missing command log, or source checkout used as runtime root. |
+| Fresh real-provider root | Root path under `/home/bfly/yunwei/test_ccb2`, created for the validation lane, with command log and project-local `.ccb` anchor. | Root reused from sequence/repeat history, missing command log, or source checkout used as runtime root. |
 | Inherited provider environment | Command log or env print shows no lab-local `HOME` or `CCB_SOURCE_HOME` export; provider profiles inherit system auth/config. | Fresh provider home is forced for real-provider test or login churn is caused by test harness. |
 | Project-local role store | `AGENT_ROLES_STORE=$ROOT/roles` and installed rolepacks include frontdesk, planner, orchestrator, task_detailer, coder, code_reviewer, and round_reviewer. | Command resolves roles from `/home/bfly/.roles/installed` and fails or silently uses a global role drift. |
 | Frontdesk starts the workflow | User-facing ask targets `frontdesk` with natural language; frontdesk produces intake evidence and a planner handoff without manual planner ask as the first step. | Frontdesk asks for plan slug, requests supervisor to start planner manually, receives a hard-coded slug/task id, or no planner job is submitted. |
@@ -1081,3 +1439,13 @@ artifact text `Project stopped before this request completed.` It is classified
 as `invalid_worker_evidence`: no fresh root, command log, rows, release
 evidence, or UI/lifecycle evidence was produced. The dynamic-unload/UI
 real-provider lane remains open and needs a fresh worker3 rerun.
+
+## 2026-07-08 Strict Acceptance Gate Applied
+
+Future direct validation rounds must be audited by `talk2` against the strict
+acceptance checklist at
+[./phase1-6-deployment-readiness-acceptance-gate-20260708.md](./phase1-6-deployment-readiness-acceptance-gate-20260708.md).
+That gate supersedes informal summary claims and requires raw evidence from
+fresh `/home/bfly/yunwei/test_ccb2` roots, visible opened project/UI/pane
+evidence, B7 rows, task/route/round authority, release/retain/cleanup evidence,
+and consistency with the Phase 1-6 acceptance goal.

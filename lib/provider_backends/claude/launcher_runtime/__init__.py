@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .env import (
     build_claude_env_prefix,
+    claude_user_api_env,
     claude_user_base_url,
     local_tcp_listener_available,
     should_drop_claude_base_url,
@@ -22,6 +23,7 @@ __all__ = [
     'build_claude_env_prefix',
     'build_runtime_launcher',
     'build_session_payload',
+    'claude_user_api_env',
     'build_start_cmd',
     'claude_history_state',
     'claude_user_base_url',

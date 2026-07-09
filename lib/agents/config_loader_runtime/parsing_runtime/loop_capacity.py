@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from agents.config_loader_runtime.role_lookup import RoleLookupError, load_installed_role_manifest
@@ -25,7 +26,7 @@ _LOOP_ROLE_PROFILE_KEYS = {
 }
 
 
-def parse_loop_capacity(raw_loop: Any) -> LoopCapacityConfig:
+def parse_loop_capacity(raw_loop: Any, *, project_root: Path | None = None) -> LoopCapacityConfig:
     if raw_loop is None:
         return LoopCapacityConfig()
     loop = expect_mapping(raw_loop, field_name='loop')
@@ -33,7 +34,7 @@ def parse_loop_capacity(raw_loop: Any) -> LoopCapacityConfig:
     if unknown_loop:
         raise ConfigValidationError(f'loop contains unknown fields: {", ".join(unknown_loop)}')
     capacity = _parse_capacity(loop.get('capacity'))
-    role_profiles = _parse_role_profiles(loop.get('role_profiles'))
+    role_profiles = _parse_role_profiles(loop.get('role_profiles'), project_root=project_root)
     try:
         return LoopCapacityConfig(
             role_profiles=role_profiles,
@@ -72,7 +73,7 @@ def _parse_capacity(raw_capacity: Any) -> dict[str, object]:
     return parsed
 
 
-def _parse_role_profiles(raw_profiles: Any) -> dict[str, LoopRoleProfileSpec]:
+def _parse_role_profiles(raw_profiles: Any, *, project_root: Path | None = None) -> dict[str, LoopRoleProfileSpec]:
     if raw_profiles is None:
         return {}
     profiles = expect_mapping(raw_profiles, field_name='loop.role_profiles')
@@ -89,7 +90,7 @@ def _parse_role_profiles(raw_profiles: Any) -> dict[str, LoopRoleProfileSpec]:
             )
         role = expect_string(profile.get('role'), field_name=f'loop.role_profiles.{raw_name}.role')
         try:
-            load_installed_role_manifest(role)
+            load_installed_role_manifest(role, project_root=project_root)
         except RoleLookupError as exc:
             raise ConfigValidationError(str(exc)) from exc
         try:

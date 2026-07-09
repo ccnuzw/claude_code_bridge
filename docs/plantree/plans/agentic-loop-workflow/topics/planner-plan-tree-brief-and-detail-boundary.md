@@ -35,6 +35,25 @@ docs/plantree/plans/<plan>/
 `README.md` remains the discoverability entrypoint. `brief.md` is the planner's
 main editable planning surface for active work.
 
+## Long-Lived Context Exception
+
+`planner` is one of the two deliberate long-lived context holders in the
+workflow, alongside `frontdesk`. This is an exception for macro planning state,
+not permission to accumulate implementation detail.
+
+Planner's retained context should stay limited to coarse plan shape: current
+objective, roadmap/TODO state, accepted constraints, decisions, open questions,
+brief summaries, readiness state, and stable evidence links. It should consume
+`task_detailer`, worker, reviewer, and round-review outputs through compact
+imported artifacts. It should not keep raw task-local clarification threads,
+source-evidence bodies, worker logs, or review transcripts as conversational
+memory.
+
+This boundary keeps planner useful across many tasks without forcing
+orchestrator, detailer, workers, or reviewers to become long-lived memory
+owners. Those roles are expected to be fresh per activation and to rehydrate
+from planner/task artifacts only.
+
 ## Brief Schema
 
 The brief should stay compact and link-rich.

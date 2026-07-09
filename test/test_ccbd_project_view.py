@@ -126,7 +126,7 @@ def _config_with_tool_window() -> ProjectConfig:
         cmd_enabled=False,
         layout_spec=base.layout_spec,
         windows=base.windows,
-        tool_windows=(ToolWindowSpec(name='neovim', order=0, command='ccb-nvim'),),
+        tool_windows=(ToolWindowSpec(name='files', order=0, command='ccb-workbench files'),),
         entry_window='main',
     )
 
@@ -1873,10 +1873,10 @@ def test_project_view_includes_tool_window_without_agent_row(tmp_path: Path) -> 
 
     view = service.build_response()['view']
 
-    assert [window['name'] for window in view['windows']] == ['main', 'ops', 'neovim']
+    assert [window['name'] for window in view['windows']] == ['main', 'ops', 'files']
     tool = view['windows'][2]
     assert tool['kind'] == 'tool'
-    assert tool['label'] == 'neovim'
+    assert tool['label'] == 'files'
     assert tool['show_in_sidebar'] is True
     assert tool['agents'] == []
     assert [agent['name'] for agent in view['agents']] == ['agent1', 'agent2', 'agent3']

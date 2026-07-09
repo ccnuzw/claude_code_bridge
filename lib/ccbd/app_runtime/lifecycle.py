@@ -6,6 +6,7 @@ from time import monotonic
 from agents.models import AgentState, RuntimeBindingSource, normalize_runtime_binding_source
 from ccbd.models import CcbdShutdownReport, CcbdStartupReport, cleanup_summaries_from_objects
 from ccbd.reload_drain_auto_retry import tick_reload_drain_auto_retry
+from ccbd.frontdesk_session_observer import observe_frontdesk_session
 from ccbd.services.lifecycle import build_lifecycle, current_socket_inode
 from ccbd.stop_flow import build_shutdown_runtime_snapshots
 from runtime_accelerator.lifecycle import maybe_start_runtime_accelerator, stop_runtime_accelerator
@@ -582,6 +583,7 @@ def _heartbeat_failures(app) -> tuple[str, ...]:
         ('health_monitor', app.health_monitor.check_all),
         ('runtime_supervision', app.runtime_supervision.reconcile_once),
         ('dispatcher_runtime_views', app.dispatcher.reconcile_runtime_views),
+        ('frontdesk_session_observer', lambda: observe_frontdesk_session(app)),
         ('dispatcher_tick', app.dispatcher.tick),
         ('dispatcher_poll_completions', app.dispatcher.poll_completions),
         ('reload_drain_auto_retry', lambda: tick_reload_drain_auto_retry(app)),

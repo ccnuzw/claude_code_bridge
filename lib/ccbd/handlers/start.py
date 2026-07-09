@@ -20,6 +20,7 @@ def build_start_handler(app):
             )
             app.persist_start_policy(
                 auto_permission=auto_permission,
+                recovery_restore=restore,
                 source='start_command',
             )
         return summary.to_record()

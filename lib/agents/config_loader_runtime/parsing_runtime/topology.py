@@ -18,6 +18,8 @@ from agents.models import (
 
 from ..common import ConfigValidationError
 
+_UNSUPPORTED_LEGACY_NEOVIM_TOOL_NAMES = {'neovim', 'nvim'}
+
 
 _SIDEBAR_TOPOLOGY_FIELDS = {'mode', 'width', 'bottom_height', 'position'}
 _SIDEBAR_VIEW_FIELDS = {'agents_height', 'comms_height', 'tips_height', 'comms_limit', 'comms_compact', 'tips_enabled', 'tips'}
@@ -168,6 +170,7 @@ def parse_tool_windows(raw_tool_windows: Any) -> tuple[ToolWindowSpec, ...]:
                 f'tool_windows.{raw_name} contains unknown fields: {", ".join(unknown)}'
             )
         command = expect_string(spec.get('command'), field_name=f'tool_windows.{raw_name}.command')
+        _reject_legacy_neovim_tool_window(raw_name, command=command)
         label = None
         if spec.get('label') is not None:
             label = expect_string(spec.get('label'), field_name=f'tool_windows.{raw_name}.label')
@@ -187,6 +190,15 @@ def parse_tool_windows(raw_tool_windows: Any) -> tuple[ToolWindowSpec, ...]:
         except AgentValidationError as exc:
             raise ConfigValidationError(str(exc)) from exc
     return tuple(tools)
+
+
+def _reject_legacy_neovim_tool_window(raw_name: str, *, command: str) -> None:
+    name = str(raw_name or '').strip().lower()
+    command_words = str(command or '').replace('"', ' ').replace("'", ' ').split()
+    if name in _UNSUPPORTED_LEGACY_NEOVIM_TOOL_NAMES or 'ccb-nvim' in command_words:
+        raise ConfigValidationError(
+            'managed Neovim tool windows are no longer supported; use the rich layout alias instead'
+        )
 
 
 def agents_from_topology_windows(

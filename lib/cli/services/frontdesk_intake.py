@@ -19,6 +19,7 @@ from .ask import submit_ask
 from .role_output_import import (
     frontdesk_intake_missing_fields,
     planner_contract_for_frontdesk_text,
+    planner_expected_task_ids_for_frontdesk_text,
     planner_from_frontdesk_intake_message,
     planner_required_output_for_contract,
     planner_script_write_rules_for_contract,
@@ -86,7 +87,7 @@ def frontdesk_intake(context, command, services=None) -> dict[str, object]:
             task_id=activation_id,
             compact=True,
             silence=True,
-            artifact_request=True,
+            inline_request=True,
         ),
     )
     job = _single_job(summary.jobs, target='planner')
@@ -279,6 +280,15 @@ def _new_activation(
     intake_sha256: str,
 ) -> dict[str, object]:
     planner_contract = planner_contract_for_frontdesk_text(intake_text)
+    expected_task_ids = planner_expected_task_ids_for_frontdesk_text(intake_text)
+    script_write_rules = planner_script_write_rules_for_contract(
+        planner_contract,
+        expected_task_ids=expected_task_ids,
+    )
+    required_next_output = planner_required_output_for_contract(
+        planner_contract,
+        expected_task_ids=expected_task_ids,
+    )
     return {
         'schema_version': 1,
         'record_type': 'ccb_loop_frontdesk_planner_activation',
@@ -303,8 +313,9 @@ def _new_activation(
             'preview': intake_text.strip()[:400],
         },
         'planner_contract': planner_contract,
-        'required_next_output': planner_required_output_for_contract(planner_contract),
-        'script_write_rules': planner_script_write_rules_for_contract(planner_contract),
+        'required_next_output': required_next_output,
+        'script_write_rules': script_write_rules,
+        'expected_task_ids': list(expected_task_ids),
         'status': 'pending_planner_submit',
         'created_at': _utc_now(),
     }

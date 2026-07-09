@@ -605,6 +605,9 @@ def _native_cli_prompt(provider: str, argv: list[str]) -> str | None:
     if provider == "copilot" and "-p" in argv:
         index = argv.index("-p")
         return argv[index + 1] if index + 1 < len(argv) else ""
+    if provider == "grok" and "-p" in argv:
+        index = argv.index("-p")
+        return argv[index + 1] if index + 1 < len(argv) else ""
     if provider == "crush" and "run" in argv:
         return _last_positional(argv, options_with_values={"--data-dir", "--cwd", "--model"})
     if provider == "kiro" and "chat" in argv and "--no-interactive" in argv:
@@ -957,6 +960,7 @@ def main(argv: list[str]) -> int:
         "qwen",
         "cursor",
         "crush",
+        "grok",
         "kiro",
         "pi",
         "zai",
@@ -968,7 +972,7 @@ def main(argv: list[str]) -> int:
 
     if provider == "mimo" and _mimo_run_prompt(argv[1:]) is not None:
         return _handle_mimo_run_cli(argv[1:], delay_s)
-    if provider in {"qwen", "cursor", "copilot", "crush", "kiro", "pi", "zai"} and _native_cli_prompt(provider, argv[1:]) is not None:
+    if provider in {"qwen", "cursor", "copilot", "crush", "grok", "kiro", "pi", "zai"} and _native_cli_prompt(provider, argv[1:]) is not None:
         return _handle_native_cli_run(provider, argv[1:], delay_s)
 
     # Provider-specific initialization.
