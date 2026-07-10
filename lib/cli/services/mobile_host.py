@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import subprocess
@@ -129,6 +130,8 @@ def start_or_replace_mobile_host_service(
             if process_exists_fn(old_pid) and _managed_mobile_host_process(
                 old_pid,
                 state,
+                script_root=script_root,
+                listen=listen,
                 state_dir=paths.state_dir,
                 process_cmdline_fn=process_cmdline_fn,
             ):
@@ -193,6 +196,8 @@ def start_or_replace_mobile_host_service(
             if not _managed_mobile_host_process(
                 owner.pid,
                 state,
+                script_root=script_root,
+                listen=listen,
                 state_dir=paths.state_dir,
                 process_cmdline_fn=process_cmdline_fn,
             ):
@@ -559,20 +564,57 @@ def _managed_mobile_host_process(
     pid: int,
     state: dict[str, object] | None,
     *,
+    script_root: Path,
+    listen: str,
     state_dir: Path,
     process_cmdline_fn: Callable[[int], str] | None,
 ) -> bool:
     cmdline = (process_cmdline_fn or _process_cmdline)(pid)
-    if MOBILE_HOST_SERVE_COMMAND not in cmdline:
+    if MOBILE_HOST_SERVE_COMMAND in cmdline:
+        if str(state_dir) in cmdline:
+            return True
+        return bool(
+            state is not None
+            and str(state.get('command_kind') or '') == 'ccb_mobile_host_serve'
+            and _state_matches_mobile_host_state_dir(state, state_dir=state_dir)
+        )
+    return _legacy_mobile_gateway_process(
+        cmdline,
+        script_root=script_root,
+        listen=listen,
+    )
+
+
+def _legacy_mobile_gateway_process(
+    cmdline: str,
+    *,
+    script_root: Path,
+    listen: str,
+) -> bool:
+    """Recognize the pre-service foreground mobile gateway for safe takeover."""
+    try:
+        tokens = shlex.split(cmdline)
+    except ValueError:
         return False
-    if str(state_dir) in cmdline:
-        return True
-    if (
-        state is not None
-        and str(state.get('command_kind') or '') == 'ccb_mobile_host_serve'
-        and _state_matches_mobile_host_state_dir(state, state_dir=state_dir)
+    expected_script = str((Path(script_root) / 'ccb.py').expanduser().resolve())
+    script_index = next(
+        (
+            index
+            for index, token in enumerate(tokens)
+            if token.endswith('ccb.py') and str(Path(token).expanduser().resolve()) == expected_script
+        ),
+        None,
+    )
+    if script_index is None or tokens[script_index + 1 : script_index + 3] not in (
+        ['install', 'mobile'],
+        ['update', 'mobile'],
     ):
-        return True
+        return False
+    for index, token in enumerate(tokens[script_index + 3 :], start=script_index + 3):
+        if token == '--listen':
+            return index + 1 < len(tokens) and tokens[index + 1] == listen
+        if token.startswith('--listen='):
+            return token.split('=', 1)[1] == listen
     return False
 
 

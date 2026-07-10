@@ -414,6 +414,67 @@ def test_mobile_host_service_refuses_external_port_owner(tmp_path: Path) -> None
     assert 'pid=333' in str(excinfo.value)
 
 
+def test_mobile_host_service_replaces_legacy_foreground_gateway(tmp_path: Path) -> None:
+    source_root = tmp_path / 'source'
+    legacy_command = (
+        f'python {source_root / "ccb.py"} install mobile '
+        '--listen 127.0.0.1:8787 --route-provider lan'
+    )
+    alive = {333}
+    killed: list[int] = []
+
+    def _terminate(pid: int, **_kwargs) -> bool:
+        killed.append(pid)
+        alive.discard(pid)
+        return True
+
+    result = start_or_replace_mobile_host_service(
+        script_root=source_root,
+        listen='127.0.0.1:8787',
+        public_url=None,
+        route_provider='lan',
+        state_dir=tmp_path / 'mobile',
+        process_exists_fn=lambda pid: pid in alive,
+        process_cmdline_fn=lambda pid: legacy_command if pid == 333 else '',
+        terminate_pid_tree_fn=_terminate,
+        port_owner_fn=lambda _listen: (
+            PortOwner(pid=333, command=legacy_command) if 333 in alive else None
+        ),
+        spawn_fn=lambda *_args, **_kwargs: _FakeProcess(222),
+        health_check_fn=lambda _url: True,
+    )
+
+    assert killed == [333]
+    assert result.status == 'replaced'
+    assert result.replaced_pid == 333
+
+
+def test_mobile_host_service_refuses_legacy_gateway_from_other_source(tmp_path: Path) -> None:
+    source_root = tmp_path / 'source'
+    external_command = (
+        f'python {tmp_path / "other" / "ccb.py"} install mobile '
+        '--listen 127.0.0.1:8787 --route-provider lan'
+    )
+    killed: list[int] = []
+
+    with pytest.raises(MobileHostServiceError, match='non-CCB process'):
+        start_or_replace_mobile_host_service(
+            script_root=source_root,
+            listen='127.0.0.1:8787',
+            public_url=None,
+            route_provider='lan',
+            state_dir=tmp_path / 'mobile',
+            process_exists_fn=lambda _pid: True,
+            process_cmdline_fn=lambda _pid: external_command,
+            terminate_pid_tree_fn=lambda pid, **_kwargs: killed.append(pid) or True,
+            port_owner_fn=lambda _listen: PortOwner(pid=333, command=external_command),
+            spawn_fn=lambda *_args, **_kwargs: _FakeProcess(222),
+            health_check_fn=lambda _url: True,
+        )
+
+    assert killed == []
+
+
 def test_mobile_host_service_refuses_truncated_managed_command_from_other_state_dir(tmp_path: Path) -> None:
     state_dir = tmp_path / 'mobile'
     other_state_dir = tmp_path / 'other-mobile'
