@@ -18,26 +18,26 @@ ROW_SCHEMA = "ccb.single_lane.evidence_row.v1"
 REPORT_SCHEMA = "ccb.single_lane.evidence_report.v1"
 EXECUTION_MODE = "deterministic_fixture"
 
-CASE_REQUIREMENTS: tuple[tuple[str, str, int, str], ...] = (
-    ("one-group-pass", "success", 1, "single_unit"),
-    ("two-group-parallel-pass", "success", 2, "parallel"),
-    ("three-group-serial-pass", "success", 3, "serial"),
-    ("four-group-mixed-dag-pass", "success", 4, "mixed_dag"),
-    ("reviewer-rework-pass", "reviewer_rework", 2, "parallel"),
-    ("worker-failure-partial", "worker_failure", 2, "parallel"),
-    ("reviewer-failure-replan", "reviewer_failure", 2, "serial"),
-    ("round-failure-blocked", "round_failure", 1, "single_unit"),
-    ("unknown-submission-restart-replay", "restart_replay", 2, "parallel"),
-    ("merge-conflict-replan", "merge_conflict", 2, "parallel"),
-    ("root-test-failure-rollback", "root_test_failure", 2, "serial"),
-    ("release-busy-bounded", "release_busy", 1, "single_unit"),
-    ("release-persistent-failure", "release_failure", 1, "single_unit"),
-    ("missing-node-evidence", "missing_evidence", 2, "parallel"),
-    ("provider-fake-success", "fake_success", 1, "single_unit"),
-    ("duplicate-ask", "duplicate_ask", 1, "single_unit"),
-    ("duplicate-integration", "duplicate_integration", 2, "serial"),
-    ("process-runtime-leak", "runtime_leak", 1, "single_unit"),
-    ("artifact-digest-mismatch", "digest_mismatch", 1, "single_unit"),
+CASE_REQUIREMENTS: tuple[tuple[str, str, int, str, str], ...] = (
+    ("one-group-pass", "success", 1, "single_unit", "pass"),
+    ("two-group-parallel-pass", "success", 2, "parallel", "pass"),
+    ("three-group-serial-pass", "success", 3, "serial", "pass"),
+    ("four-group-mixed-dag-pass", "success", 4, "mixed_dag", "pass"),
+    ("reviewer-rework-pass", "reviewer_rework", 2, "parallel", "pass"),
+    ("worker-failure-partial", "worker_failure", 2, "parallel", "valid_non_success"),
+    ("reviewer-failure-replan", "reviewer_failure", 2, "serial", "valid_non_success"),
+    ("round-failure-blocked", "round_failure", 1, "single_unit", "valid_non_success"),
+    ("unknown-submission-restart-replay", "restart_replay", 2, "parallel", "pass"),
+    ("merge-conflict-replan", "merge_conflict", 2, "parallel", "valid_non_success"),
+    ("root-test-failure-rollback", "root_test_failure", 2, "serial", "valid_non_success"),
+    ("release-busy-bounded", "release_busy", 1, "single_unit", "valid_non_success"),
+    ("release-persistent-failure", "release_failure", 1, "single_unit", "system_failure"),
+    ("missing-node-evidence", "missing_evidence", 2, "parallel", "test_design_failure"),
+    ("provider-fake-success", "fake_success", 1, "single_unit", "system_failure"),
+    ("duplicate-ask", "duplicate_ask", 1, "single_unit", "system_failure"),
+    ("duplicate-integration", "duplicate_integration", 2, "serial", "system_failure"),
+    ("process-runtime-leak", "runtime_leak", 1, "single_unit", "system_failure"),
+    ("artifact-digest-mismatch", "digest_mismatch", 1, "single_unit", "system_failure"),
 )
 REQUIRED_CASE_IDS = tuple(item[0] for item in CASE_REQUIREMENTS)
 CASE_BY_ID = {item[0]: item for item in CASE_REQUIREMENTS}
@@ -194,7 +194,12 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, source_commit: str) -> d
     missing_case_ids = [row["case_id"] for row in rows if row["classification"] == "test_design_failure"]
     system_failure_case_ids = [row["case_id"] for row in rows if row["classification"] == "system_failure"]
     non_success_case_ids = [row["case_id"] for row in rows if row["classification"] == "valid_non_success"]
-    overall = _overall_classification(counts)
+    mismatch_case_ids = [row["case_id"] for row in rows if not row["classification_matches_expected"]]
+    overall = _overall_classification(
+        rows,
+        manifest_valid=not manifest_issues,
+        mismatch_case_ids=mismatch_case_ids,
+    )
     return {
         "schema": REPORT_SCHEMA,
         "record_type": "ccb_single_lane_evidence_report",
@@ -204,7 +209,7 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, source_commit: str) -> d
         "live_execution_claimed": False,
         "classification": overall,
         "pass": overall == "pass",
-        "complete": not missing_case_ids,
+        "complete": all(row["observed"] for row in rows) and not manifest_issues,
         "summary": {
             "required_case_count": len(REQUIRED_CASE_IDS),
             "observed_case_count": sum(row["observed"] for row in rows),
@@ -215,6 +220,7 @@ def normalize_manifest(raw_manifest: dict[str, Any], *, source_commit: str) -> d
             "missing_or_incomplete_case_ids": missing_case_ids,
             "system_failure_case_ids": system_failure_case_ids,
             "valid_non_success_case_ids": non_success_case_ids,
+            "classification_mismatch_case_ids": mismatch_case_ids,
         },
         "artifact_digests": {
             "input_sha256": sha256_value(manifest),
@@ -229,6 +235,13 @@ def normalize_case(raw_case: dict[str, Any], *, source_commit: str) -> dict[str,
     requirement = CASE_BY_ID.get(str(case_id))
     diagnostics: list[dict[str, str]] = []
     missing, malformed = _validate_case_shape(raw_case)
+    if missing or malformed:
+        return _invalid_case_row(
+            raw_case,
+            source_commit=source_commit,
+            missing=missing,
+            malformed=malformed,
+        )
     diagnostics.extend(_diagnostics("missing_evidence", missing))
     diagnostics.extend(_diagnostics("malformed_evidence", malformed))
 
@@ -308,6 +321,8 @@ def normalize_case(raw_case: dict[str, Any], *, source_commit: str) -> dict[str,
         "execution_mode": EXECUTION_MODE,
         "observed": True,
         "classification": classification,
+        "expected_classification": requirement[4] if requirement else "system_failure",
+        "classification_matches_expected": bool(requirement and classification == requirement[4]),
         "complete": not missing and not malformed,
         "diagnostics": diagnostics,
         "task": {
@@ -366,20 +381,22 @@ def markdown_b7(report: dict[str, Any]) -> str:
         f"- Input SHA-256: `{report['artifact_digests']['input_sha256']}`",
         f"- Rows JSONL SHA-256: `{report['artifact_digests']['rows_jsonl_sha256']}`",
         "",
-        "| Case | Groups | Shape | Result | Release | Classification |",
-        "| :--- | ---: | :--- | :--- | :--- | :--- |",
+        "| Case | Groups | Shape | Result | Release | Classification | Expected | Match |",
+        "| :--- | ---: | :--- | :--- | :--- | :--- | :--- | :---: |",
     ]
     for row in report["rows"]:
-        selection = _dict(row.get("bundle", {}).get("adaptive_selection"))
+        selection = _dict(_dict(row.get("bundle")).get("adaptive_selection"))
         topology = _dict(row.get("topology_release"))
         lines.append(
-            "| {case} | {groups} | {shape} | {result} | {release} | {classification} |".format(
+            "| {case} | {groups} | {shape} | {result} | {release} | {classification} | {expected} | {match} |".format(
                 case=_md(row["case_id"]),
                 groups=selection.get("workgroup_count", "?"),
                 shape=_md(selection.get("execution_shape", "unknown")),
                 result=_md(_dict(row.get("round")).get("result", "unknown")),
                 release=_md(topology.get("release_status", "unknown")),
                 classification=row["classification"],
+                expected=row["expected_classification"],
+                match="yes" if row["classification_matches_expected"] else "no",
             )
         )
     failures = [row for row in report["rows"] if row["classification"] in {"system_failure", "test_design_failure"}]
@@ -430,6 +447,12 @@ def _manifest_issues(manifest: dict[str, Any]) -> list[str]:
         issues.append("campaign_id must be a non-empty string")
     if not isinstance(manifest.get("cases"), list):
         issues.append("cases must be a list")
+    else:
+        for index, case in enumerate(manifest["cases"]):
+            if not isinstance(case, dict):
+                issues.append(f"cases[{index}] must be an object")
+            elif not isinstance(case.get("case_id"), str) or not case.get("case_id"):
+                issues.append(f"cases[{index}].case_id must be a non-empty string")
     return issues
 
 
@@ -464,6 +487,56 @@ def _validate_case_shape(raw_case: Any) -> tuple[list[str], list[str]]:
             continue
         missing.extend(f"nodes[{index}].{key}" for key in sorted(NESTED_KEYS["node"] - set(node)))
         malformed.extend(f"nodes[{index}] has unknown field {key}" for key in sorted(set(node) - NESTED_KEYS["node"]))
+        if "dependencies" in node:
+            _validate_string_list(node.get("dependencies"), f"nodes[{index}].dependencies", malformed)
+        if "intent_records" in node:
+            _validate_object_list(node.get("intent_records"), f"nodes[{index}].intent_records", malformed)
+        if "jobs" in node:
+            _validate_object_list(node.get("jobs"), f"nodes[{index}].jobs", malformed)
+        for intent_index, intent in enumerate(node.get("intent_records", []) if isinstance(node.get("intent_records"), list) else []):
+            if isinstance(intent, dict):
+                if set(intent) != {"purpose", "attempt", "state"}:
+                    malformed.append(f"nodes[{index}].intent_records[{intent_index}] fields are invalid")
+                if not isinstance(intent.get("purpose"), str) or not isinstance(intent.get("state"), str):
+                    malformed.append(f"nodes[{index}].intent_records[{intent_index}] purpose and state must be strings")
+                if not isinstance(intent.get("attempt"), int) or isinstance(intent.get("attempt"), bool):
+                    malformed.append(f"nodes[{index}].intent_records[{intent_index}].attempt must be an integer")
+        for job_index, job in enumerate(node.get("jobs", []) if isinstance(node.get("jobs"), list) else []):
+            if isinstance(job, dict):
+                if not {"purpose", "attempt", "job_id", "status"} <= set(job) <= {
+                    "purpose",
+                    "attempt",
+                    "job_id",
+                    "status",
+                    "submission_history",
+                }:
+                    malformed.append(f"nodes[{index}].jobs[{job_index}] fields are invalid")
+                for field in ("purpose", "job_id", "status"):
+                    if not isinstance(job.get(field), str):
+                        malformed.append(f"nodes[{index}].jobs[{job_index}].{field} must be a string")
+                if not isinstance(job.get("attempt"), int) or isinstance(job.get("attempt"), bool):
+                    malformed.append(f"nodes[{index}].jobs[{job_index}].attempt must be an integer")
+                if "submission_history" in job:
+                    _validate_string_list(
+                        job.get("submission_history"),
+                        f"nodes[{index}].jobs[{job_index}].submission_history",
+                        malformed,
+                    )
+        if not isinstance(node.get("node_id"), str) or not re.fullmatch(r"node-[0-9]{3}", node.get("node_id", "")):
+            malformed.append(f"nodes[{index}].node_id must use node-NNN format")
+        for field in ("workspace", "branch"):
+            _validate_text(node.get(field), f"nodes[{index}].{field}", malformed)
+        for field in ("base_commit", "head_commit"):
+            _validate_commit(node.get(field), f"nodes[{index}].{field}", malformed)
+        _validate_digest(node.get("tree_digest"), f"nodes[{index}].tree_digest", malformed)
+        if node.get("review_result") not in ("pass", "failed", "not_run"):
+            malformed.append(f"nodes[{index}].review_result is invalid")
+        if node.get("reviewed_tree_digest") is not None:
+            _validate_digest(node.get("reviewed_tree_digest"), f"nodes[{index}].reviewed_tree_digest", malformed)
+        if node.get("reviewed_commit") is not None:
+            _validate_commit(node.get("reviewed_commit"), f"nodes[{index}].reviewed_commit", malformed)
+        if not isinstance(node.get("integrated"), bool):
+            malformed.append(f"nodes[{index}].integrated must be boolean")
     for index, artifact in enumerate(raw_case.get("artifacts", []) if isinstance(raw_case.get("artifacts"), list) else []):
         if not isinstance(artifact, dict):
             malformed.append(f"artifacts[{index}] must be an object")
@@ -472,6 +545,9 @@ def _validate_case_shape(raw_case: Any) -> tuple[list[str], list[str]]:
         malformed.extend(
             f"artifacts[{index}] has unknown field {key}" for key in sorted(set(artifact) - NESTED_KEYS["artifact"])
         )
+        _validate_text(artifact.get("name"), f"artifacts[{index}].name", malformed)
+        _validate_text(artifact.get("path"), f"artifacts[{index}].path", malformed)
+        _validate_digest(artifact.get("sha256"), f"artifacts[{index}].sha256", malformed)
     if not isinstance(raw_case.get("nodes"), list):
         malformed.append("nodes must be a list")
     if not isinstance(raw_case.get("artifacts"), list):
@@ -486,17 +562,86 @@ def _validate_case_shape(raw_case: Any) -> tuple[list[str], list[str]]:
             malformed.append("task.revision must be a positive integer")
         if not isinstance(task.get("task_id"), str) or not task.get("task_id"):
             malformed.append("task.task_id must be a non-empty string")
+        _validate_digest(task.get("digest"), "task.digest", malformed)
     bundle = raw_case.get("bundle")
     if isinstance(bundle, dict):
         if not isinstance(bundle.get("revision"), int) or isinstance(bundle.get("revision"), bool) or bundle.get("revision", 0) < 1:
             malformed.append("bundle.revision must be a positive integer")
+        _validate_digest(bundle.get("digest"), "bundle.digest", malformed)
         selection = bundle.get("selection")
         if isinstance(selection, dict):
             count = selection.get("workgroup_count")
             if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 4:
                 malformed.append("bundle.selection.workgroup_count must be an integer from one to four")
-            if selection.get("execution_shape") not in {"single_unit", "parallel", "serial", "mixed_dag"}:
+            if selection.get("execution_shape") not in ("single_unit", "parallel", "serial", "mixed_dag"):
                 malformed.append("bundle.selection.execution_shape is invalid")
+            if selection.get("complexity") not in ("atomic", "bounded", "complex", "very_complex"):
+                malformed.append("bundle.selection.complexity is invalid")
+            if selection.get("cutability") not in ("none", "limited", "high"):
+                malformed.append("bundle.selection.cutability is invalid")
+            _validate_text(selection.get("rationale"), "bundle.selection.rationale", malformed)
+    dependency_readiness = raw_case.get("dependency_readiness")
+    if isinstance(dependency_readiness, dict):
+        _validate_string_list(
+            dependency_readiness.get("ready_node_ids"),
+            "dependency_readiness.ready_node_ids",
+            malformed,
+        )
+        _validate_string_list(
+            dependency_readiness.get("blocked_node_ids"),
+            "dependency_readiness.blocked_node_ids",
+            malformed,
+        )
+        _validate_object_list(
+            dependency_readiness.get("observations"),
+            "dependency_readiness.observations",
+            malformed,
+        )
+        for index, observation in enumerate(
+            dependency_readiness.get("observations", [])
+            if isinstance(dependency_readiness.get("observations"), list)
+            else []
+        ):
+            if isinstance(observation, dict):
+                if set(observation) != {"node_id", "dependencies", "ready"}:
+                    malformed.append(f"dependency_readiness.observations[{index}] fields are invalid")
+                _validate_text(
+                    observation.get("node_id"),
+                    f"dependency_readiness.observations[{index}].node_id",
+                    malformed,
+                )
+                _validate_string_list(
+                    observation.get("dependencies"),
+                    f"dependency_readiness.observations[{index}].dependencies",
+                    malformed,
+                )
+                if not isinstance(observation.get("ready"), bool):
+                    malformed.append(f"dependency_readiness.observations[{index}].ready must be boolean")
+    integration = raw_case.get("integration")
+    if isinstance(integration, dict):
+        _validate_string_list(integration.get("order"), "integration.order", malformed)
+        _validate_object_list(integration.get("checks"), "integration.checks", malformed)
+        _validate_text(integration.get("worktree"), "integration.worktree", malformed)
+        _validate_commit(integration.get("base_commit"), "integration.base_commit", malformed)
+        _validate_commit(integration.get("head_commit"), "integration.head_commit", malformed)
+        _validate_digest(integration.get("tree_digest"), "integration.tree_digest", malformed)
+        _validate_checks(integration.get("checks"), "integration.checks", malformed)
+        if not isinstance(integration.get("conflict"), bool):
+            malformed.append("integration.conflict must be boolean")
+        if integration.get("status") not in ("passed", "partial", "conflict", "failed"):
+            malformed.append("integration.status is invalid")
+    root = raw_case.get("root")
+    if isinstance(root, dict):
+        _validate_object_list(root.get("checks"), "root.checks", malformed)
+        for field in ("pre_digest", "post_digest"):
+            _validate_digest(root.get(field), f"root.{field}", malformed)
+        if root.get("rollback_digest") is not None:
+            _validate_digest(root.get("rollback_digest"), "root.rollback_digest", malformed)
+        if root.get("promotion") not in ("promoted", "not_promoted"):
+            malformed.append("root.promotion is invalid")
+        if root.get("rollback") not in ("not_required", "restored"):
+            malformed.append("root.rollback is invalid")
+        _validate_checks(root.get("checks"), "root.checks", malformed)
     topology = raw_case.get("topology_release")
     if isinstance(topology, dict):
         for name in ("released_count", "retained_count"):
@@ -504,39 +649,192 @@ def _validate_case_shape(raw_case: Any) -> tuple[list[str], list[str]]:
                 malformed.append(f"topology_release.{name} must be a non-negative integer")
         if not isinstance(topology.get("release_incomplete"), bool):
             malformed.append("topology_release.release_incomplete must be boolean")
+        for name in ("desired", "observed"):
+            topology_value = topology.get(name)
+            if not isinstance(topology_value, dict):
+                malformed.append(f"topology_release.{name} must be an object")
+            else:
+                _validate_string_list(
+                    topology_value.get("agents"),
+                    f"topology_release.{name}.agents",
+                    malformed,
+                )
+        _validate_string_list(topology.get("drained_agents"), "topology_release.drained_agents", malformed)
+        _validate_digest(topology.get("desired_digest"), "topology_release.desired_digest", malformed)
+        _validate_digest(topology.get("observed_digest"), "topology_release.observed_digest", malformed)
+        if topology.get("release_status") not in ("released", "retained_busy", "failed"):
+            malformed.append("topology_release.release_status is invalid")
     round_evidence = raw_case.get("round")
-    if isinstance(round_evidence, dict) and not isinstance(round_evidence.get("script_owned_import"), bool):
-        malformed.append("round.script_owned_import must be boolean")
+    if isinstance(round_evidence, dict):
+        if not isinstance(round_evidence.get("script_owned_import"), bool):
+            malformed.append("round.script_owned_import must be boolean")
+        if round_evidence.get("result") not in ("pass", "partial", "blocked", "replan_required"):
+            malformed.append("round.result is invalid")
+        if round_evidence.get("round_review_result") not in ("pass", "failed", "not_run"):
+            malformed.append("round.round_review_result is invalid")
+        for field in ("task_status", "round_reviewer_job", "provider_prose"):
+            _validate_text(
+                round_evidence.get(field),
+                f"round.{field}",
+                malformed,
+                allow_empty=field == "provider_prose",
+            )
+    residue = raw_case.get("runtime_residue")
+    if isinstance(residue, dict):
+        _validate_object_list(residue.get("processes"), "runtime_residue.processes", malformed)
+        _validate_object_list(residue.get("runtime_files"), "runtime_residue.runtime_files", malformed)
+        busy = residue.get("bounded_retained_busy")
+        if busy is not None:
+            if not isinstance(busy, dict):
+                malformed.append("runtime_residue.bounded_retained_busy must be an object or null")
+            else:
+                _validate_string_list(
+                    busy.get("agent_ids"),
+                    "runtime_residue.bounded_retained_busy.agent_ids",
+                    malformed,
+                )
+                if busy.get("reason") != "retained_busy" or busy.get("bounded") is not True:
+                    malformed.append("runtime_residue.bounded_retained_busy contract is invalid")
+                for field in ("retry_attempt", "max_retries"):
+                    if not isinstance(busy.get(field), int) or isinstance(busy.get(field), bool):
+                        malformed.append(f"runtime_residue.bounded_retained_busy.{field} must be an integer")
+        for name in ("processes", "runtime_files"):
+            for index, item in enumerate(residue.get(name, []) if isinstance(residue.get(name), list) else []):
+                if isinstance(item, dict):
+                    if set(item) != {"kind", "agent_id", "state"}:
+                        malformed.append(f"runtime_residue.{name}[{index}] fields are invalid")
+                    for field in ("kind", "agent_id", "state"):
+                        _validate_text(item.get(field), f"runtime_residue.{name}[{index}].{field}", malformed)
+        if not isinstance(residue.get("captured_before_cleanup"), bool):
+            malformed.append("runtime_residue.captured_before_cleanup must be boolean")
     node_count = len(raw_case.get("nodes", [])) if isinstance(raw_case.get("nodes"), list) else 0
     artifacts = raw_case.get("artifacts") if isinstance(raw_case.get("artifacts"), list) else []
     artifact_names = {item.get("name") for item in artifacts if isinstance(item, dict)}
     if not {"task", "bundle", "round"} <= artifact_names:
         missing.append("artifacts must include task, bundle, and round evidence")
-    integration = raw_case.get("integration")
     if isinstance(integration, dict) and not integration.get("checks"):
         missing.append("integration.checks must include command evidence")
-    root = raw_case.get("root")
     if isinstance(root, dict) and not root.get("checks"):
         missing.append("root.checks must include command evidence")
     ui = raw_case.get("ui_placement")
     if isinstance(ui, dict):
         if not ui.get("socket"):
             missing.append("ui_placement.socket is missing")
-        if not isinstance(ui.get("placements"), list) or len(ui.get("placements", [])) != 2 * node_count:
-            missing.append("ui_placement.placements must cover every dynamic worker and reviewer")
+        elif not isinstance(ui.get("socket"), str):
+            malformed.append("ui_placement.socket must be a string")
+        _validate_string_list(ui.get("windows"), "ui_placement.windows", malformed)
+        _validate_object_list(ui.get("placements"), "ui_placement.placements", malformed)
+        _validate_string_list(ui.get("sidebar_agents"), "ui_placement.sidebar_agents", malformed)
+        for index, placement in enumerate(ui.get("placements", []) if isinstance(ui.get("placements"), list) else []):
+            if isinstance(placement, dict):
+                if set(placement) != {"agent_id", "window", "pane"}:
+                    malformed.append(f"ui_placement.placements[{index}] fields are invalid")
+                if any(not isinstance(placement.get(field), str) for field in ("agent_id", "window", "pane")):
+                    malformed.append(f"ui_placement.placements[{index}] fields must be strings")
+        if not isinstance(ui.get("placements"), list) or len(ui.get("placements", [])) != 2 * node_count + 2:
+            missing.append("ui_placement.placements must cover orchestrator, workgroups, and round reviewer")
     freshness = raw_case.get("immaculate_freshness")
     if isinstance(freshness, dict):
-        expected = 2 * node_count + 1
+        expected = 2 * node_count + 2
+        _validate_object_list(freshness.get("activations"), "immaculate_freshness.activations", malformed)
+        _validate_object_list(
+            freshness.get("provider_sessions"),
+            "immaculate_freshness.provider_sessions",
+            malformed,
+        )
+        for index, activation in enumerate(
+            freshness.get("activations", []) if isinstance(freshness.get("activations"), list) else []
+        ):
+            if isinstance(activation, dict):
+                if set(activation) != {"activation_id", "immaculate"}:
+                    malformed.append(f"immaculate_freshness.activations[{index}] fields are invalid")
+                if not isinstance(activation.get("activation_id"), str):
+                    malformed.append(f"immaculate_freshness.activations[{index}].activation_id must be a string")
+                if not isinstance(activation.get("immaculate"), bool):
+                    malformed.append(f"immaculate_freshness.activations[{index}].immaculate must be boolean")
+        for index, session in enumerate(
+            freshness.get("provider_sessions", [])
+            if isinstance(freshness.get("provider_sessions"), list)
+            else []
+        ):
+            if isinstance(session, dict):
+                if set(session) != {"session_id", "reused"}:
+                    malformed.append(f"immaculate_freshness.provider_sessions[{index}] fields are invalid")
+                if not isinstance(session.get("session_id"), str):
+                    malformed.append(f"immaculate_freshness.provider_sessions[{index}].session_id must be a string")
+                if not isinstance(session.get("reused"), bool):
+                    malformed.append(f"immaculate_freshness.provider_sessions[{index}].reused must be boolean")
         if not isinstance(freshness.get("activations"), list) or len(freshness.get("activations", [])) != expected:
-            missing.append("immaculate_freshness.activations must cover every dynamic role and round reviewer")
+            missing.append("immaculate_freshness.activations must cover every dynamic role")
         if not isinstance(freshness.get("provider_sessions"), list) or len(freshness.get("provider_sessions", [])) != expected:
-            missing.append("immaculate_freshness.provider_sessions must cover every dynamic role and round reviewer")
+            missing.append("immaculate_freshness.provider_sessions must cover every dynamic role")
+    authority = raw_case.get("authority_log")
+    if isinstance(authority, dict):
+        for name in ("events", "asks", "integrations"):
+            _validate_object_list(authority.get(name), f"authority_log.{name}", malformed)
+        _validate_string_list(authority.get("legacy_files"), "authority_log.legacy_files", malformed)
+        for index, ask in enumerate(authority.get("asks", []) if isinstance(authority.get("asks"), list) else []):
+            if isinstance(ask, dict) and not isinstance(ask.get("intent_key"), str):
+                malformed.append(f"authority_log.asks[{index}].intent_key must be a string")
+        for index, integration_event in enumerate(
+            authority.get("integrations", []) if isinstance(authority.get("integrations"), list) else []
+        ):
+            if isinstance(integration_event, dict) and not isinstance(integration_event.get("node_id"), str):
+                malformed.append(f"authority_log.integrations[{index}].node_id must be a string")
+    missing_paths = {path.removeprefix("case.") for path in missing}
+    malformed = [
+        message
+        for message in malformed
+        if not any(message.startswith(f"{path} ") or message.startswith(f"{path}[") for path in missing_paths)
+    ]
     return missing, malformed
+
+
+def _validate_string_list(value: Any, path: str, malformed: list[str]) -> None:
+    if not isinstance(value, list):
+        malformed.append(f"{path} must be a list")
+    elif any(not isinstance(item, str) for item in value):
+        malformed.append(f"{path} must contain only strings")
+    elif len(value) != len(set(value)):
+        malformed.append(f"{path} must contain unique strings")
+
+
+def _validate_object_list(value: Any, path: str, malformed: list[str]) -> None:
+    if not isinstance(value, list):
+        malformed.append(f"{path} must be a list")
+    elif any(not isinstance(item, dict) for item in value):
+        malformed.append(f"{path} must contain only objects")
+
+
+def _validate_text(value: Any, path: str, malformed: list[str], *, allow_empty: bool = False) -> None:
+    if not isinstance(value, str) or (not allow_empty and not value):
+        malformed.append(f"{path} must be a {'string' if allow_empty else 'non-empty string'}")
+
+
+def _validate_digest(value: Any, path: str, malformed: list[str]) -> None:
+    if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
+        malformed.append(f"{path} must be a lowercase SHA-256 digest")
+
+
+def _validate_commit(value: Any, path: str, malformed: list[str]) -> None:
+    if not isinstance(value, str) or not COMMIT_RE.fullmatch(value):
+        malformed.append(f"{path} must be a full lowercase Git commit")
+
+
+def _validate_checks(value: Any, path: str, malformed: list[str]) -> None:
+    for index, check in enumerate(value if isinstance(value, list) else []):
+        if not isinstance(check, dict):
+            continue
+        if set(check) != {"command", "status"}:
+            malformed.append(f"{path}[{index}] fields are invalid")
+        _validate_text(check.get("command"), f"{path}[{index}].command", malformed)
+        if check.get("status") not in ("passed", "failed", "not_run"):
+            malformed.append(f"{path}[{index}].status is invalid")
 
 
 def _semantic_checks(
     *,
-    requirement: tuple[str, str, int, str] | None,
+    requirement: tuple[str, str, int, str, str] | None,
     scenario: Any,
     bundle: dict[str, Any],
     nodes: list[Any],
@@ -553,7 +851,7 @@ def _semantic_checks(
     selection = _dict(bundle.get("selection"))
     node_ids = [node.get("node_id") for node in nodes if isinstance(node, dict)]
     if requirement:
-        _, expected_scenario, expected_count, expected_shape = requirement
+        _, expected_scenario, expected_count, expected_shape, _expected_classification = requirement
         if scenario != expected_scenario:
             failures.append(f"fixture requires scenario {expected_scenario}")
         if selection.get("workgroup_count") != expected_count or len(nodes) != expected_count:
@@ -633,9 +931,9 @@ def _pass_failures(
         failures.append("pass requires successful project-root checks")
     if round_evidence.get("round_review_result") != "pass" or not round_evidence.get("script_owned_import"):
         failures.append("pass requires round review and script-owned result import")
-    expected_agents = 2 * len(nodes)
+    expected_agents = 2 * len(nodes) + 2
     if len(ui.get("placements", [])) != expected_agents:
-        failures.append("pass requires UI placement for every dynamic worker and reviewer")
+        failures.append("pass requires UI placement for orchestrator, workgroups, and round reviewer")
     else:
         placement_agents = [item.get("agent_id") for item in ui.get("placements", []) if isinstance(item, dict)]
         placement_panes = [item.get("pane") for item in ui.get("placements", []) if isinstance(item, dict)]
@@ -644,7 +942,7 @@ def _pass_failures(
             failures.append("pass requires unique UI placement for the exact desired dynamic agents")
         if set(ui.get("sidebar_agents", [])) != set(desired_agents):
             failures.append("pass requires every desired dynamic agent in sidebar evidence")
-    if not _freshness_valid(freshness, expected_agents + 1):
+    if not _freshness_valid(freshness, expected_agents):
         failures.append("pass requires unique immaculate activations and provider sessions")
     return failures
 
@@ -704,11 +1002,15 @@ def _runtime_residue_checks(residue: dict[str, Any], topology: dict[str, Any]) -
 def _release_checks(topology: dict[str, Any], nodes: list[Any], residue_checks: dict[str, Any]) -> dict[str, bool]:
     desired_agents = _dict(topology.get("desired")).get("agents", [])
     observed_agents = _dict(topology.get("observed")).get("agents", [])
-    expected_count = 2 * len(nodes)
+    expected_count = 2 * len(nodes) + 2
     bounded_busy = residue_checks["bounded_busy_valid"]
     return {
-        "desired_count_matches": isinstance(desired_agents, list) and len(desired_agents) in {0, expected_count},
+        "desired_count_matches": isinstance(desired_agents, list) and len(desired_agents) == expected_count,
         "released_count_matches": topology.get("released_count") == expected_count - topology.get("retained_count", -1),
+        "drained_agents_match_released": (
+            isinstance(topology.get("drained_agents"), list)
+            and set(topology.get("drained_agents", [])) == set(desired_agents) - set(observed_agents)
+        ),
         "observed_empty_or_bounded_busy": observed_agents == [] or bounded_busy,
         "release_complete_or_bounded_busy": (
             topology.get("release_status") == "released" and topology.get("retained_count") == 0
@@ -840,6 +1142,8 @@ def _missing_case_row(case_id: str, source_commit: str, message: str, *, system:
         "execution_mode": EXECUTION_MODE,
         "observed": False,
         "classification": "system_failure" if system else "test_design_failure",
+        "expected_classification": requirement[4],
+        "classification_matches_expected": False,
         "complete": False,
         "diagnostics": [_diagnostic("malformed_evidence" if system else "missing_evidence", message)],
         "task": None,
@@ -856,6 +1160,29 @@ def _missing_case_row(case_id: str, source_commit: str, message: str, *, system:
         "authority_checks": None,
         "artifact_digests": None,
     }
+
+
+def _invalid_case_row(
+    raw_case: dict[str, Any],
+    *,
+    source_commit: str,
+    missing: list[str],
+    malformed: list[str],
+) -> dict[str, Any]:
+    case_id = str(raw_case.get("case_id") or "unknown")
+    requirement = CASE_BY_ID.get(case_id)
+    if requirement is None:
+        return _missing_case_row(REQUIRED_CASE_IDS[0], source_commit, f"unknown case id: {case_id}", system=True)
+    row = _missing_case_row(case_id, source_commit, "invalid evidence row", system=bool(malformed))
+    row["observed"] = True
+    row["scenario"] = _text_or_unknown(raw_case.get("scenario"))
+    row["diagnostics"] = [
+        *_diagnostics("missing_evidence", missing),
+        *_diagnostics("malformed_evidence", malformed),
+    ]
+    row["classification"] = "system_failure" if malformed else "test_design_failure"
+    row["classification_matches_expected"] = row["classification"] == row["expected_classification"]
+    return row
 
 
 def _with_manifest_failure(row: dict[str, Any], issues: list[str]) -> dict[str, Any]:
@@ -931,13 +1258,20 @@ def _diagnostics(code: str, messages: Iterable[str]) -> list[dict[str, str]]:
     return [_diagnostic(code, message) for message in messages]
 
 
-def _overall_classification(counts: Counter[str]) -> str:
-    if counts["system_failure"]:
-        return "system_failure"
-    if counts["test_design_failure"]:
+def _overall_classification(
+    rows: list[dict[str, Any]],
+    *,
+    manifest_valid: bool,
+    mismatch_case_ids: list[str],
+) -> str:
+    if not manifest_valid:
         return "test_design_failure"
-    if counts["valid_non_success"]:
-        return "valid_non_success"
+    if any(not row["observed"] and row["classification"] == "test_design_failure" for row in rows):
+        return "test_design_failure"
+    if mismatch_case_ids:
+        return "system_failure"
+    if any(not row["observed"] for row in rows):
+        return "system_failure"
     return "pass"
 
 

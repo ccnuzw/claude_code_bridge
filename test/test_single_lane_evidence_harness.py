@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+from jsonschema import Draft202012Validator
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
@@ -57,6 +60,12 @@ def _case(manifest: dict, case_id: str) -> dict:
     return next(case for case in manifest["cases"] if case["case_id"] == case_id)
 
 
+def _schema_validator() -> Draft202012Validator:
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
 def test_fixture_matrix_is_deterministic_and_covers_required_shapes() -> None:
     first = fixtures.build_fixture_manifest()
     second = fixtures.build_fixture_manifest()
@@ -66,8 +75,14 @@ def test_fixture_matrix_is_deterministic_and_covers_required_shapes() -> None:
     assert first["execution_mode"] == "deterministic_fixture"
     assert len(first["cases"]) == 19
 
-    rows = _rows(_report(first))
+    report = _report(first)
+    rows = _rows(report)
     assert {case_id: row["classification"] for case_id, row in rows.items()} == EXPECTED_CLASSIFICATIONS
+    assert report["classification"] == "pass"
+    assert report["pass"] is True
+    assert report["complete"] is True
+    assert report["summary"]["classification_mismatch_case_ids"] == []
+    assert all(row["classification_matches_expected"] for row in rows.values())
     assert rows["one-group-pass"]["bundle"]["adaptive_selection"]["workgroup_count"] == 1
     assert rows["two-group-parallel-pass"]["bundle"]["adaptive_selection"]["execution_shape"] == "parallel"
     assert rows["three-group-serial-pass"]["bundle"]["adaptive_selection"]["execution_shape"] == "serial"
@@ -145,6 +160,21 @@ def test_missing_case_and_missing_field_are_test_design_failures() -> None:
     assert {item["code"] for item in row["diagnostics"]} == {"missing_evidence"}
 
 
+def test_duplicate_case_is_system_failure_and_non_object_extra_case_invalidates_manifest() -> None:
+    manifest = fixtures.build_fixture_manifest()
+    manifest["cases"].append(deepcopy(_case(manifest, "one-group-pass")))
+    duplicate_report = _report(manifest)
+    duplicate = _rows(duplicate_report)["one-group-pass"]
+    assert duplicate["classification"] == "system_failure"
+    assert duplicate_report["classification"] == "system_failure"
+
+    manifest = fixtures.build_fixture_manifest()
+    manifest["cases"].append("not-an-evidence-row")
+    invalid_report = _report(manifest)
+    assert invalid_report["classification"] == "test_design_failure"
+    assert invalid_report["pass"] is False
+
+
 def test_malformed_data_is_system_failure() -> None:
     manifest = fixtures.build_fixture_manifest()
     case = _case(manifest, "one-group-pass")
@@ -153,6 +183,61 @@ def test_malformed_data_is_system_failure() -> None:
     row = _rows(_report(manifest))["one-group-pass"]
     assert row["classification"] == "system_failure"
     assert "malformed_evidence" in {item["code"] for item in row["diagnostics"]}
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("nodes", 0, "jobs"), None),
+        (("nodes", 0, "dependencies"), "node-999"),
+        (("nodes", 0, "base_commit"), "not-a-commit"),
+        (("nodes", 0, "jobs", 0, "submission_history"), "unknown"),
+        (("task", "digest"), "not-a-digest"),
+        (("integration", "checks"), "passed"),
+        (("integration", "checks", 0, "status"), "green"),
+        (("dependency_readiness", "ready_node_ids"), [{"node_id": "node-001"}]),
+        (("topology_release", "retained_count"), "0"),
+        (("runtime_residue", "bounded_retained_busy"), []),
+        (("runtime_residue", "processes"), [{"kind": "provider", "agent_id": [], "state": "running"}]),
+        (("authority_log", "asks"), [{"intent_key": ["not", "hashable"]}]),
+        (("immaculate_freshness", "activations"), [{"activation_id": {}, "immaculate": True}] * 4),
+        (("ui_placement", "placements", 0, "pane"), None),
+        (("round", "result"), []),
+        (("artifacts",), None),
+    ],
+)
+def test_malformed_nested_evidence_never_crashes_and_emits_schema_valid_failure(
+    path: tuple,
+    value: object,
+) -> None:
+    manifest = fixtures.build_fixture_manifest()
+    case = _case(manifest, "one-group-pass")
+    target = case
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    report = _report(manifest)
+    row = _rows(report)["one-group-pass"]
+    assert row["classification"] == "system_failure"
+    assert row["classification_matches_expected"] is False
+    assert "malformed_evidence" in {item["code"] for item in row["diagnostics"]}
+    _schema_validator().validate(report)
+
+
+def test_unexpected_negative_result_fails_the_campaign_even_when_evidence_is_complete() -> None:
+    manifest = fixtures.build_fixture_manifest()
+    case = _case(manifest, "one-group-pass")
+    fixtures._round_failure(case)
+
+    report = _report(manifest)
+    row = _rows(report)["one-group-pass"]
+    assert row["classification"] == "valid_non_success"
+    assert row["expected_classification"] == "pass"
+    assert row["classification_matches_expected"] is False
+    assert report["classification"] == "system_failure"
+    assert report["complete"] is True
+    assert report["summary"]["classification_mismatch_case_ids"] == ["one-group-pass"]
 
 
 def test_authority_drift_duplicate_actions_and_legacy_dispatch_are_system_failures() -> None:
@@ -183,9 +268,10 @@ def test_bounded_busy_is_valid_non_success_but_unbounded_residue_fails() -> None
     rows = _rows(_report())
     busy = rows["release-busy-bounded"]
     assert busy["classification"] == "valid_non_success"
-    assert busy["topology_release"]["released_count"] == 1
+    assert busy["topology_release"]["released_count"] == 3
     assert busy["topology_release"]["retained_count"] == 1
     assert busy["runtime_residue"]["checks"]["bounded_busy_valid"] is True
+    assert busy["topology_release"]["checks"]["drained_agents_match_released"] is True
 
     leak = rows["process-runtime-leak"]
     assert leak["classification"] == "system_failure"
@@ -242,6 +328,30 @@ def test_schema_declares_strict_versioned_row_and_report() -> None:
     assert report_schema["properties"]["schema"]["const"] == harness.REPORT_SCHEMA
 
 
+def test_normalized_report_and_every_row_validate_against_draft_2020_12_schema() -> None:
+    report = _report()
+    validator = _schema_validator()
+
+    validator.validate(report)
+    for row in report["rows"]:
+        validator.validate(row)
+
+
+def test_dynamic_control_roles_are_in_topology_ui_freshness_and_release_evidence() -> None:
+    manifest = fixtures.build_fixture_manifest()
+    case = _case(manifest, "four-group-mixed-dag-pass")
+    dynamic_agents = case["topology_release"]["desired"]["agents"]
+
+    assert len(dynamic_agents) == 10
+    assert dynamic_agents[0].endswith("-orchestrator")
+    assert dynamic_agents[-1].endswith("-ccb-round-reviewer")
+    assert set(case["ui_placement"]["sidebar_agents"]) == set(dynamic_agents)
+    assert {item["agent_id"] for item in case["ui_placement"]["placements"]} == set(dynamic_agents)
+    assert len(case["immaculate_freshness"]["activations"]) == len(dynamic_agents)
+    assert case["topology_release"]["released_count"] == len(dynamic_agents)
+    assert set(case["topology_release"]["drained_agents"]) == set(dynamic_agents)
+
+
 def test_normalization_does_not_mutate_input_or_authority_files(tmp_path: Path) -> None:
     manifest = fixtures.build_fixture_manifest()
     original = deepcopy(manifest)
@@ -257,7 +367,7 @@ def test_normalization_does_not_mutate_input_or_authority_files(tmp_path: Path) 
     assert hashlib.sha256(authority.read_bytes()).hexdigest() == before
 
 
-def test_cli_writes_evidence_without_mutating_authority_and_returns_nonzero(tmp_path: Path) -> None:
+def test_cli_writes_passing_campaign_without_mutating_authority(tmp_path: Path) -> None:
     manifest_path = tmp_path / "matrix.json"
     fixtures.write_fixture(manifest_path)
     project = tmp_path / "project"
@@ -284,15 +394,18 @@ def test_cli_writes_evidence_without_mutating_authority_and_returns_nonzero(tmp_
         text=True,
     )
 
-    assert completed.returncode == 3
+    assert completed.returncode == 0
     assert authority.read_bytes() == before
-    assert json.loads(completed.stdout)["classification"] == "system_failure"
+    assert json.loads(completed.stdout)["classification"] == "pass"
     assert (output / "single_lane_evidence_report.v1.json").is_file()
     assert (output / "single_lane_evidence_rows.v1.jsonl").is_file()
     assert (output / "single_lane_evidence_b7.v1.md").is_file()
     report = json.loads((output / "single_lane_evidence_report.v1.json").read_text(encoding="utf-8"))
-    assert report["pass"] is False
+    assert report["pass"] is True
+    assert report["complete"] is True
+    assert report["summary"]["classification_mismatch_case_ids"] == []
     assert report["summary"]["missing_or_incomplete_case_ids"] == ["missing-node-evidence"]
+    _schema_validator().validate(report)
 
 
 def test_cli_refuses_to_write_inside_ccb_authority_state(tmp_path: Path) -> None:

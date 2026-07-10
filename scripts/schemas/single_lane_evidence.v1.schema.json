@@ -229,12 +229,14 @@
           "properties": {
             "desired_count_matches": {"type": "boolean"},
             "released_count_matches": {"type": "boolean"},
+            "drained_agents_match_released": {"type": "boolean"},
             "observed_empty_or_bounded_busy": {"type": "boolean"},
             "release_complete_or_bounded_busy": {"type": "boolean"}
           },
           "required": [
             "desired_count_matches",
             "released_count_matches",
+            "drained_agents_match_released",
             "observed_empty_or_bounded_busy",
             "release_complete_or_bounded_busy"
           ],
@@ -399,7 +401,8 @@
         },
         "missing_or_incomplete_case_ids": {"items": {"type": "string"}, "type": "array", "uniqueItems": true},
         "system_failure_case_ids": {"items": {"type": "string"}, "type": "array", "uniqueItems": true},
-        "valid_non_success_case_ids": {"items": {"type": "string"}, "type": "array", "uniqueItems": true}
+        "valid_non_success_case_ids": {"items": {"type": "string"}, "type": "array", "uniqueItems": true},
+        "classification_mismatch_case_ids": {"items": {"type": "string"}, "type": "array", "uniqueItems": true}
       },
       "required": [
         "required_case_count",
@@ -407,7 +410,8 @@
         "classification_counts",
         "missing_or_incomplete_case_ids",
         "system_failure_case_ids",
-        "valid_non_success_case_ids"
+        "valid_non_success_case_ids",
+        "classification_mismatch_case_ids"
       ],
       "type": "object"
     },
@@ -442,6 +446,8 @@
         "execution_mode": {"const": "deterministic_fixture"},
         "observed": {"type": "boolean"},
         "classification": {"$ref": "#/$defs/classification"},
+        "expected_classification": {"$ref": "#/$defs/classification"},
+        "classification_matches_expected": {"type": "boolean"},
         "complete": {"type": "boolean"},
         "diagnostics": {"items": {"$ref": "#/$defs/diagnostic"}, "type": "array"},
         "task": {"oneOf": [{"$ref": "#/$defs/task"}, {"type": "null"}]},
@@ -467,6 +473,8 @@
         "execution_mode",
         "observed",
         "classification",
+        "expected_classification",
+        "classification_matches_expected",
         "complete",
         "diagnostics",
         "task",
@@ -507,7 +515,7 @@
           "required": ["input_sha256", "rows_jsonl_sha256"],
           "type": "object"
         },
-        "rows": {"items": {"$ref": "#/$defs/row"}, "type": "array"}
+        "rows": {"items": {"$ref": "#/$defs/row"}, "maxItems": 19, "minItems": 19, "type": "array"}
       },
       "required": [
         "schema",

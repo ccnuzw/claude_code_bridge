@@ -26,7 +26,10 @@ FIXTURE_SOURCE_COMMIT = "f7c4f5bcfa5abbbf5a18055fe667fb644bd5396f"
 
 
 def build_fixture_manifest() -> dict[str, Any]:
-    cases = [_base_case(case_id, scenario, count, shape) for case_id, scenario, count, shape in CASE_REQUIREMENTS]
+    cases = [
+        _base_case(case_id, scenario, count, shape)
+        for case_id, scenario, count, shape, _expected in CASE_REQUIREMENTS
+    ]
     by_id = {case["case_id"]: case for case in cases}
 
     _reviewer_rework(by_id["reviewer-rework-pass"])
@@ -63,7 +66,19 @@ def _base_case(case_id: str, scenario: str, count: int, shape: str) -> dict[str,
     dependencies = _dependencies(count, shape)
     nodes = [_node(case_id, index + 1, dependencies[index]) for index in range(count)]
     node_ids = [node["node_id"] for node in nodes]
-    dynamic_agents = [agent for node_id in node_ids for agent in (f"loop-{case_id}-{node_id}-worker", f"loop-{case_id}-{node_id}-reviewer")]
+    execution_agents = [
+        agent
+        for node_id in node_ids
+        for agent in (
+            f"loop-{case_id}-{node_id}-coder",
+            f"loop-{case_id}-{node_id}-code-reviewer",
+        )
+    ]
+    dynamic_agents = [
+        f"loop-{case_id}-orchestrator",
+        *execution_agents,
+        f"loop-{case_id}-ccb-round-reviewer",
+    ]
     pre_manifest = {"README.md": "base\n"}
     integration_manifest = {"README.md": "base\n", **{f"work/{node_id}.txt": f"accepted {node_id}\n" for node_id in node_ids}}
     selection = {
@@ -87,7 +102,7 @@ def _base_case(case_id: str, scenario: str, count: int, shape: str) -> dict[str,
         _artifact("bundle", f"raw/{case_id}/bundle.json", bundle_semantic),
         _artifact("round", f"raw/{case_id}/round.json", {"result": "pass", "task_status": "done"}),
     ]
-    asks = [
+    asks = [{"intent_key": "1:bundle:orchestrator:1", "job_id": f"job-{case_id}-orchestrator-1"}] + [
         {"intent_key": f"1:{node['node_id']}:worker:1", "job_id": f"job-{case_id}-{node['node_id']}-worker-1"}
         for node in nodes
     ] + [
@@ -97,12 +112,16 @@ def _base_case(case_id: str, scenario: str, count: int, shape: str) -> dict[str,
     placements = [
         {
             "agent_id": agent,
-            "window": "ccb-exec-1" if index < 6 else "ccb-exec-2",
+            "window": (
+                "ccb-plan"
+                if "orchestrator" in agent or "round-reviewer" in agent
+                else "ccb-exec-1" if index - 1 < 6 else "ccb-exec-2"
+            ),
             "pane": f"%{index + 10}",
         }
         for index, agent in enumerate(dynamic_agents)
     ]
-    activation_count = len(dynamic_agents) + 1
+    activation_count = len(dynamic_agents)
     return {
         "case_id": case_id,
         "scenario": scenario,
@@ -166,7 +185,7 @@ def _base_case(case_id: str, scenario: str, count: int, shape: str) -> dict[str,
         },
         "ui_placement": {
             "socket": f"/fixtures/{case_id}/tmux.sock",
-            "windows": ["ccb-exec-1"] + (["ccb-exec-2"] if len(dynamic_agents) > 6 else []),
+            "windows": ["ccb-plan", "ccb-exec-1"] + (["ccb-exec-2"] if len(execution_agents) > 6 else []),
             "placements": placements,
             "sidebar_agents": dynamic_agents,
         },
@@ -301,15 +320,16 @@ def _root_failure_rollback(case: dict[str, Any]) -> None:
 
 
 def _bounded_busy(case: dict[str, Any]) -> None:
-    agent_id = case["topology_release"]["desired"]["agents"][0]
+    desired_agents = case["topology_release"]["desired"]["agents"]
+    agent_id = next(agent for agent in desired_agents if "-coder" in agent)
     observed = {"agents": [agent_id], "owner": case["case_id"]}
     case["topology_release"].update(
         {
             "observed": observed,
             "observed_digest": sha256_value(observed),
-            "released_count": 1,
+            "released_count": len(desired_agents) - 1,
             "retained_count": 1,
-            "drained_agents": case["topology_release"]["desired"]["agents"][1:],
+            "drained_agents": [agent for agent in desired_agents if agent != agent_id],
             "release_incomplete": True,
             "release_status": "retained_busy",
         }
