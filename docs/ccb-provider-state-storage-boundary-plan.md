@@ -329,6 +329,11 @@ Rules:
 
 - `.ccb/agents/<agent>/provider-state/<provider>/home` remains the default
   managed session boundary.
+- Managed Grok may copy inherited system `.grok/auth.json` and `.grok/config.toml`
+  into `.ccb/agents/<agent>/provider-state/grok/home/.grok/` when profile
+  inheritance is enabled. This is credential/config projection only; Grok
+  sessions, active-session state, logs, and runtime output remain agent-scoped
+  under the managed home.
 - `.ccb/provider-profiles/` must not silently become a long-lived runtime home
   unless the user explicitly configures that path as an external provider home.
 - `.ccb/shared-cache/` contains only rebuildable cache and never conversation

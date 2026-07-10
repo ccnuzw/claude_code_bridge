@@ -32,6 +32,7 @@ from provider_backends.claude.launcher_runtime.home import (
 from provider_backends.codex import launcher as codex_launcher
 from provider_backends.droid import launcher as droid_launcher
 from provider_backends.gemini import launcher as gemini_launcher
+from provider_backends.grok import home as grok_home
 from provider_backends.mimo import launcher as mimo_launcher
 from provider_backends.opencode import launcher as opencode_launcher
 from provider_backends.agy import launcher as agy_launcher
@@ -1657,6 +1658,7 @@ def test_provider_start_parts_respect_env_override(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv('CURSOR_START_CMD', '/tmp/stub-cursor --profile test')
     monkeypatch.setenv('COPILOT_START_CMD', '/tmp/stub-copilot --profile test')
     monkeypatch.setenv('CRUSH_START_CMD', '/tmp/stub-crush --profile test')
+    monkeypatch.setenv('GROK_START_CMD', '/tmp/stub-grok --profile test')
     monkeypatch.setenv('KIRO_START_CMD', '/tmp/stub-kiro --profile test')
     monkeypatch.setenv('PI_START_CMD', '/tmp/stub-pi --profile test')
     monkeypatch.setenv('ZAI_START_CMD', '/tmp/stub-zai --profile test')
@@ -1669,6 +1671,7 @@ def test_provider_start_parts_respect_env_override(monkeypatch: pytest.MonkeyPat
     assert runtime_launch._provider_start_parts('cursor') == ['/tmp/stub-cursor', '--profile', 'test']
     assert runtime_launch._provider_start_parts('copilot') == ['/tmp/stub-copilot', '--profile', 'test']
     assert runtime_launch._provider_start_parts('crush') == ['/tmp/stub-crush', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('grok') == ['/tmp/stub-grok', '--profile', 'test']
     assert runtime_launch._provider_start_parts('kiro') == ['/tmp/stub-kiro', '--profile', 'test']
     assert runtime_launch._provider_start_parts('pi') == ['/tmp/stub-pi', '--profile', 'test']
     assert runtime_launch._provider_start_parts('zai') == ['/tmp/stub-zai', '--profile', 'test']
@@ -1690,6 +1693,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     monkeypatch.delenv('CURSOR_START_CMD', raising=False)
     monkeypatch.delenv('COPILOT_START_CMD', raising=False)
     monkeypatch.delenv('CRUSH_START_CMD', raising=False)
+    monkeypatch.delenv('GROK_START_CMD', raising=False)
     monkeypatch.delenv('KIRO_START_CMD', raising=False)
     monkeypatch.delenv('PI_START_CMD', raising=False)
     monkeypatch.delenv('ZAI_START_CMD', raising=False)
@@ -1704,6 +1708,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     assert runtime_launch._provider_start_parts('cursor') == ['agent']
     assert runtime_launch._provider_start_parts('copilot') == ['copilot']
     assert runtime_launch._provider_start_parts('crush') == ['crush']
+    assert runtime_launch._provider_start_parts('grok') == ['grok']
     assert runtime_launch._provider_start_parts('kiro') == ['kiro-cli']
     assert runtime_launch._provider_start_parts('pi') == ['pi']
     assert runtime_launch._provider_start_parts('zai') == ['zai']
@@ -1716,6 +1721,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
         ('cursor', 'agent', 'HOME'),
         ('copilot', 'copilot', 'COPILOT_HOME'),
         ('crush', 'crush', None),
+        ('grok', 'grok', 'HOME'),
         ('kiro', 'kiro-cli', 'HOME'),
         ('pi', 'pi', None),
         ('zai', 'zai', 'HOME'),
@@ -1766,6 +1772,8 @@ def test_native_cli_launcher_builds_provider_state_payload(
     visible_parts = shlex.split(visible_cmd)
     if provider == 'crush':
         assert visible_parts == [default_executable, '--data-dir', str(state_dir / 'data'), '--demo']
+    elif provider == 'grok':
+        assert visible_parts == [default_executable, '--no-auto-update', '--cwd', str(plan.workspace_path), '--demo']
     elif provider == 'pi':
         assert f'PI_CODING_AGENT_DIR={shlex.quote(str(state_dir / "home"))}' in start_cmd
         assert f'PI_CODING_AGENT_SESSION_DIR={shlex.quote(str(state_dir / "sessions"))}' in start_cmd
@@ -1787,6 +1795,37 @@ def test_native_cli_launcher_builds_provider_state_payload(
         ]
     else:
         assert visible_parts == [default_executable, '--demo']
+
+
+def test_grok_launcher_projects_system_login_into_managed_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / 'source-home'
+    source_grok = source_home / '.grok'
+    source_grok.mkdir(parents=True)
+    (source_grok / 'auth.json').write_text('{"token":"system-login"}\n', encoding='utf-8')
+    (source_grok / 'config.toml').write_text('model = "grok-test"\n', encoding='utf-8')
+    monkeypatch.setattr(grok_home, 'current_provider_source_home', lambda: source_home)
+
+    project_root = tmp_path / 'repo-grok-login-projection'
+    (project_root / '.ccb').mkdir(parents=True)
+    agent_name = 'grok1'
+    command = ParsedStartCommand(project=None, agent_names=(agent_name,), restore=True, auto_permission=False)
+    ctx = _context(project_root, command)
+    spec = _spec(agent_name, provider='grok')
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    plan.workspace_path.mkdir(parents=True, exist_ok=True)
+    runtime_dir = ctx.paths.agent_provider_runtime_dir(agent_name, 'grok')
+    launcher = build_default_runtime_launcher_map(include_optional=True)['grok']
+
+    prepared = launcher.prepare_launch_context(ctx, spec, plan, runtime_dir, {})
+    start_cmd = launcher.build_start_cmd(command, spec, runtime_dir, 'sess-grok', prepared_state=prepared)
+
+    managed_home = ctx.paths.agent_provider_state_dir(agent_name, 'grok') / 'home'
+    assert (managed_home / '.grok' / 'auth.json').read_text(encoding='utf-8') == '{"token":"system-login"}\n'
+    assert (managed_home / '.grok' / 'config.toml').read_text(encoding='utf-8') == 'model = "grok-test"\n'
+    assert f'HOME={shlex.quote(str(managed_home))}' in start_cmd
 
 
 def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypatch, tmp_path: Path) -> None:

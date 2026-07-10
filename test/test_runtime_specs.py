@@ -14,6 +14,8 @@ from provider_core.runtime_specs import (
     CURSOR_RUNTIME_SPEC,
     DEEPSEEK_CLIENT_SPEC,
     DEEPSEEK_RUNTIME_SPEC,
+    GROK_CLIENT_SPEC,
+    GROK_RUNTIME_SPEC,
     KIMI_CLIENT_SPEC,
     KIMI_RUNTIME_SPEC,
     KIRO_CLIENT_SPEC,
@@ -76,6 +78,9 @@ def test_runtime_specs_use_provider_native_names() -> None:
     assert CRUSH_RUNTIME_SPEC.provider_key == "crush"
     assert CRUSH_RUNTIME_SPEC.idle_timeout_env == "CCB_CRUSH_RUNTIME_IDLE_TIMEOUT_S"
     assert CRUSH_CLIENT_SPEC.session_filename == ".crush-session"
+    assert GROK_RUNTIME_SPEC.provider_key == "grok"
+    assert GROK_RUNTIME_SPEC.idle_timeout_env == "CCB_GROK_RUNTIME_IDLE_TIMEOUT_S"
+    assert GROK_CLIENT_SPEC.session_filename == ".grok-session"
     assert KIRO_RUNTIME_SPEC.provider_key == "kiro"
     assert KIRO_RUNTIME_SPEC.idle_timeout_env == "CCB_KIRO_RUNTIME_IDLE_TIMEOUT_S"
     assert KIRO_CLIENT_SPEC.session_filename == ".kiro-session"
@@ -90,5 +95,6 @@ def test_runtime_specs_use_provider_native_names() -> None:
     assert CLIENT_SPECS_BY_PROVIDER["cursor"] is CURSOR_CLIENT_SPEC
     assert RUNTIME_SPECS_BY_PROVIDER["copilot"] is COPILOT_RUNTIME_SPEC
     assert CLIENT_SPECS_BY_PROVIDER["crush"] is CRUSH_CLIENT_SPEC
+    assert CLIENT_SPECS_BY_PROVIDER["grok"] is GROK_CLIENT_SPEC
     assert RUNTIME_SPECS_BY_PROVIDER["kiro"] is KIRO_RUNTIME_SPEC
     assert CLIENT_SPECS_BY_PROVIDER["pi"] is PI_CLIENT_SPEC

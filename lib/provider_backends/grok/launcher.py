@@ -2,33 +2,118 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from provider_backends.native_cli_support import NativeCliLaunchConfig, build_native_cli_runtime_launcher
+from agents.models import AgentSpec
+from cli.context import CliContext
+from cli.models import ParsedStartCommand
+from provider_backends.native_cli_support.launcher import (
+    NativeCliLaunchConfig,
+    build_session_payload as native_build_session_payload,
+    build_start_cmd as native_build_start_cmd,
+    prepare_launch_context as native_prepare_launch_context,
+)
 from provider_core.contracts import ProviderRuntimeLauncher
+from provider_profiles import load_resolved_provider_profile
+from workspace.models import WorkspacePlan
 
-
-def build_runtime_launcher() -> ProviderRuntimeLauncher:
-    # NOTE: home_env is intentionally None. grok reads its auth/config from the
-    # real ~/.grok (auth.json); redirecting HOME into a CCB-managed state dir
-    # would leave the interactive pane unauthenticated.
-    return build_native_cli_runtime_launcher(
-        NativeCliLaunchConfig(
-            provider="grok",
-            home_env=None,
-            visible_args_builder=_grok_visible_args,
-        )
-    )
+from .home import materialize_grok_home
 
 
 def _grok_visible_args(prepared_state: dict[str, object]) -> tuple[str, ...]:
-    workspace = _path_from_prepared(prepared_state, "workspace_path")
-    return ("--cwd", str(workspace))
+    return ('--cwd', str(_path_from_prepared(prepared_state, 'workspace_path')))
+
+
+_GROK_LAUNCH_CONFIG = NativeCliLaunchConfig(
+    provider='grok',
+    home_env='HOME',
+    visible_args=('--no-auto-update',),
+    visible_args_builder=_grok_visible_args,
+)
+
+
+def build_runtime_launcher() -> ProviderRuntimeLauncher:
+    return ProviderRuntimeLauncher(
+        provider='grok',
+        launch_mode='simple_tmux',
+        prepare_launch_context=prepare_launch_context,
+        build_start_cmd=build_start_cmd,
+        build_session_payload=build_session_payload,
+    )
+
+
+def prepare_launch_context(
+    context: CliContext,
+    spec: AgentSpec,
+    plan: WorkspacePlan,
+    runtime_dir: Path,
+    prepared_state: dict[str, object],
+) -> dict[str, object]:
+    return native_prepare_launch_context(_GROK_LAUNCH_CONFIG, context, spec, plan, runtime_dir, prepared_state)
+
+
+def build_start_cmd(
+    command: ParsedStartCommand,
+    spec: AgentSpec,
+    runtime_dir,
+    launch_session_id: str,
+    *,
+    prepared_state: dict[str, object] | None = None,
+) -> str:
+    launch_context = prepared_state or {}
+    home_dir = _path_or_none(launch_context.get('grok_home'))
+    if home_dir is not None:
+        materialize_grok_home(home_dir, profile=load_resolved_provider_profile(Path(runtime_dir)))
+    return native_build_start_cmd(
+        _GROK_LAUNCH_CONFIG,
+        command,
+        spec,
+        runtime_dir,
+        launch_session_id,
+        prepared_state=prepared_state,
+    )
+
+
+def build_session_payload(
+    context: CliContext,
+    spec: AgentSpec,
+    plan: WorkspacePlan,
+    runtime_dir,
+    run_cwd,
+    pane_id: str,
+    pane_title_marker: str,
+    start_cmd: str,
+    launch_session_id: str,
+    prepared_state: dict[str, object],
+) -> dict[str, object]:
+    return native_build_session_payload(
+        _GROK_LAUNCH_CONFIG,
+        context,
+        spec,
+        plan,
+        runtime_dir,
+        run_cwd,
+        pane_id,
+        pane_title_marker,
+        start_cmd,
+        launch_session_id,
+        prepared_state,
+    )
+
+
+def _path_or_none(value: object) -> Path | None:
+    raw = str(value or '').strip()
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser()
+    except Exception:
+        return None
 
 
 def _path_from_prepared(prepared_state: dict[str, object], key: str) -> Path:
-    raw = str(prepared_state.get(key) or "").strip()
+    raw = str(prepared_state.get(key) or '').strip()
     if not raw:
-        raise RuntimeError(f"grok launch requires {key} in prepared_state")
+        raise RuntimeError(f'grok launch requires {key} in prepared_state')
     return Path(raw).expanduser()
 
 
-__all__ = ["build_runtime_launcher"]
+__all__ = ['build_runtime_launcher', 'build_session_payload', 'build_start_cmd', 'prepare_launch_context']
