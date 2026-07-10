@@ -1225,6 +1225,14 @@ Sequencing gate: Decisions 022-025 authorize the single-lane release target,
 not concurrent roadmap lanes. Complete these items in order; do not start
 multi-lane scheduler source changes in parallel.
 
+2026-07-10 checkpoint: item 1 planning/contracts are frozen by `ce4f7590`.
+Item 2 foundation is landed by `34027943`, including strict bundle import and
+validation, canonical work packets, deterministic one-node compatibility
+evidence, and a multi-node pre-bind pause. Item 2 remains in progress until
+the one-node engine uses node state exclusively and the normal post-worker
+orchestrator call is removed. See
+[history/single-lane-multi-workgroup-g1-foundation-20260710.md](history/single-lane-multi-workgroup-g1-foundation-20260710.md).
+
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from
    [topics/single-lane-multi-workgroup-modification-and-test-plan.md](topics/single-lane-multi-workgroup-modification-and-test-plan.md).

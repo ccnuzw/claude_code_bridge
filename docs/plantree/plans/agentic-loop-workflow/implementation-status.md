@@ -42,6 +42,25 @@ are required evidence, but they are not sufficient by themselves; if hidden
 script output contradicts visible project state or raw task/loop authority,
 the normalizer is the bug.
 
+## 2026-07-10 G1 Orchestration Bundle Foundation
+
+Commit `34027943` lands the first G1 implementation slice: strict
+one-to-four-node orchestration-bundle validation, script-owned task artifact
+import, canonical work packets and digests, deterministic ordering, explicit
+orchestrator fenced-candidate import, a deterministic one-node compatibility
+bundle, and canonical `nodes.node-001` pending/final evidence. Multi-node
+bundles deliberately pause before loop binding or ask submission because the
+ready-frontier scheduler and Git integration kernel are not landed.
+
+Direct `talk2` verification passed the 209-test bundle/plan/loop/topology set
+and the non-Gemini repository gate (`3868 passed, 2 skipped, 124 deselected`).
+The unrestricted run had `3988 passed, 2 skipped, 4 failed`; all four failures
+are existing Gemini restart-timing blackbox cases and remain recorded rather
+than hidden. G1 is not complete: task-revision/capacity binding, sole
+node-state execution, node-keyed exact-once intent, and removal of the normal
+post-worker orchestrator call are still required. Evidence:
+[history/single-lane-multi-workgroup-g1-foundation-20260710.md](history/single-lane-multi-workgroup-g1-foundation-20260710.md).
+
 ## 2026-07-10 Visible Multi-Round Checkpoint
 
 `talk2` directly completed a three-task, three-loop real-provider run in the
