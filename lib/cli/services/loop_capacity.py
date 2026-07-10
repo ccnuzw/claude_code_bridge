@@ -13,6 +13,10 @@ from storage.atomic import atomic_write_json
 from .daemon import ping_local_state
 from .reload import reload_config
 from .reload_apply_diagnostics import reload_apply_summary
+from .loop_workgroup_topology import (
+    compile_project_workgroup_mount_demand,
+    compile_workgroup_mount_demand,
+)
 
 
 def loop_capacity(context, command) -> dict[str, object]:
@@ -29,6 +33,11 @@ def loop_capacity(context, command) -> dict[str, object]:
 def _ensure_capacity(context, command) -> dict[str, object]:
     loop_id = _normalize_loop_id(command.loop_id)
     loaded = load_project_config(context.project.project_root, include_loop_overlays=False)
+    if int(loaded.config.version) == 3:
+        raise RuntimeError(
+            'Config V3 workgroup capacity must use compile_project_workgroup_mount_demand; '
+            'loop capacity ensure --profile is V2 physical-capacity compatibility only'
+        )
     capacity = loaded.config.loop_capacity or LoopCapacityConfig()
     if not capacity.enabled:
         raise RuntimeError('loop capacity is disabled; configure [loop.capacity].enabled = true')
@@ -486,4 +495,8 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
-__all__ = ['loop_capacity']
+__all__ = [
+    'compile_project_workgroup_mount_demand',
+    'compile_workgroup_mount_demand',
+    'loop_capacity',
+]

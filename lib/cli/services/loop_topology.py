@@ -14,6 +14,10 @@ from storage.atomic import atomic_write_json
 
 from .agent_lifecycle import add_lifecycle_agents, agent_lifecycle
 from .layout import layout_command
+from .loop_effective_capacity import (
+    compile_project_effective_capacity_snapshot,
+    effective_capacity_digest,
+)
 
 TOPOLOGY_SCHEMA = 'ccb.loop.agent_mount_topology.v1'
 PROPOSAL_SCHEMA = 'ccb.loop.agent_mount_topology.proposal.v1'
@@ -31,8 +35,6 @@ LEGACY_TOPOLOGY_PROFILES = frozenset({
     'checker',
     'round_checker',
     'planner',
-    'orchestrator',
-    'task_detailer',
     'round_reviewer',
     'ccb_worker',
     'ccb_checker',
@@ -43,8 +45,10 @@ PLANNING_WINDOW = 'ccb-plan'
 EXECUTION_WINDOW_PREFIX = 'ccb-exec'
 TOPOLOGY_PROFILE_WINDOWS = {
     'ccb_frontdesk': USER_INTERACTION_WINDOW,
+    'task_detailer': USER_INTERACTION_WINDOW,
     'ccb_task_detailer': USER_INTERACTION_WINDOW,
     'ccb_planner': PLANNING_WINDOW,
+    'orchestrator': PLANNING_WINDOW,
     'ccb_orchestrator': PLANNING_WINDOW,
     'ccb_round_reviewer': PLANNING_WINDOW,
 }
@@ -135,12 +139,23 @@ def _commit(context, command) -> dict[str, object]:
         'release_policy': proposal.get('release_policy') or {'policy': 'auto', 'idle_only': True},
         'validation': validation,
     }
+    if 'capacity_digest' in proposal:
+        desired['capacity_digest'] = proposal.get('capacity_digest')
+    if 'owner' in proposal:
+        desired['owner'] = proposal.get('owner')
     if 'edges' in proposal:
         desired['edges'] = proposal.get('edges') or []
     if 'artifacts' in proposal:
         desired['artifacts'] = proposal.get('artifacts') or {}
     if 'gates' in proposal:
         desired['gates'] = proposal.get('gates') or []
+    for compatibility_field in (
+        'dispatch_compatibility',
+        'compatibility_mode',
+        'legacy_dispatch_compatibility',
+    ):
+        if compatibility_field in proposal:
+            desired[compatibility_field] = proposal.get(compatibility_field)
     atomic_write_json(_desired_path(context, loop_id), desired)
     _append_event(
         context,
@@ -236,6 +251,12 @@ def _release(context, command) -> dict[str, object]:
             'release_policy': _release_policy_record(command),
             'validation': {'agent_count': 0, 'present_agent_count': 0, 'profile_counts': {}, 'edge_count': 0},
         }
+    elif str(desired.get('topology_status') or '') == 'released' and not _desired_agents(
+        desired,
+        loop_id=loop_id,
+    ):
+        desired = json.loads(json.dumps(desired))
+        desired['release_policy'] = _release_policy_record(command)
     else:
         desired = json.loads(json.dumps(desired))
         desired['schema'] = TOPOLOGY_SCHEMA
@@ -305,6 +326,12 @@ def _reconcile_desired(context, loop_id: str, *, desired: Mapping[str, object]) 
     default_release_policy = _topology_release_policy(desired)
 
     try:
+        _validate_topology(
+            context,
+            desired,
+            loop_id=loop_id,
+            allow_stale_capacity=str(desired.get('topology_status') or '') == 'released',
+        )
         pending_adds: list[tuple[Mapping[str, object], str]] = []
         pending_alignments: list[tuple[str, Mapping[str, object], Mapping[str, object], str]] = []
         for name, agent in wanted.items():
@@ -433,6 +460,10 @@ def _write_observed(
     }
     if 'edges' in desired:
         observed['edges'] = list(desired.get('edges') or [])
+    if 'capacity_digest' in desired:
+        observed['capacity_digest'] = desired.get('capacity_digest')
+    if 'owner' in desired:
+        observed['owner'] = desired.get('owner')
     if error is not None:
         observed['error'] = error
     atomic_write_json(_observed_path(context, loop_id), observed)
@@ -505,6 +536,7 @@ def _add_agent_command(agent: Mapping[str, object], *, target_state: str) -> Sim
         model=_optional_text(agent.get('model')),
         thinking=_optional_text(agent.get('thinking')),
         workspace_mode=None,
+        workspace_group=_optional_text(agent.get('workspace_group')),
         window_name=_optional_text(agent.get('window_name')),
         window_class=_optional_text(agent.get('window_class')),
         loop_id=_optional_text(agent.get('loop_id')),
@@ -726,33 +758,78 @@ def _transition_action(current_state: str, target_state: str) -> str | None:
     return None
 
 
-def _validate_topology(context, payload: Mapping[str, object], *, loop_id: str) -> dict[str, object]:
+def _validate_topology(
+    context,
+    payload: Mapping[str, object],
+    *,
+    loop_id: str,
+    allow_stale_capacity: bool = False,
+) -> dict[str, object]:
     loaded = load_project_config(context.project.project_root, include_loop_overlays=False)
-    capacity = loaded.config.loop_capacity or LoopCapacityConfig()
-    agents = _desired_agents(payload, validate=True, loop_id=loop_id)
+    config_version = int(loaded.config.version)
+    snapshot = None
+    allowed_legacy_profiles: frozenset[str] = frozenset()
+    if config_version == 2:
+        snapshot = compile_project_effective_capacity_snapshot(context.project.project_root)
+        allowed_legacy_profiles = frozenset(
+            str(profile)
+            for logical, profile in snapshot['profile_aliases'].items()
+            if logical in {'coder', 'code_reviewer'} and str(profile) in LEGACY_TOPOLOGY_PROFILES
+        )
+    agents = _desired_agents(
+        payload,
+        validate=True,
+        loop_id=loop_id,
+        allowed_legacy_profiles=allowed_legacy_profiles,
+    )
     windows = _window_dicts(payload)
     _validate_mount_placement(agents, windows=windows)
-    if agents and not capacity.enabled:
-        raise ValueError('loop topology requires [loop.capacity].enabled = true')
     default_release_policy = _topology_release_policy(payload)
     for agent in agents:
         _agent_release_policy(agent, default_policy=default_release_policy)
     profile_counts = Counter(str(agent.get('profile') or '') for agent in agents if str(agent.get('desired_state') or 'present') in ACTIVE_DESIRED_STATES)
-    if sum(profile_counts.values()) > capacity.max_nodes:
-        raise ValueError(f'loop topology exceeds max_nodes={capacity.max_nodes}: requested {sum(profile_counts.values())}')
-    known_profiles = capacity.role_profiles
+    capacity_digest = None
+    if config_version == 3:
+        _validate_mount_owner(payload, loop_id=loop_id, required=not allow_stale_capacity)
+        snapshot = compile_project_effective_capacity_snapshot(context.project.project_root)
+        capacity_digest = effective_capacity_digest(snapshot)
+        supplied_digest = str(payload.get('capacity_digest') or '')
+        if not supplied_digest and not allow_stale_capacity:
+            raise ValueError('Config V3 mount topology requires canonical capacity_digest')
+        if supplied_digest and supplied_digest != capacity_digest and not allow_stale_capacity:
+            raise ValueError(
+                f'Config V3 mount topology capacity_digest is stale: expected {capacity_digest}, got {supplied_digest}'
+            )
+        max_nodes = int(snapshot['limits']['max_active_dynamic_agents'])
+        known_profiles = snapshot['dynamic_profiles']
+        if sum(profile_counts.values()) > max_nodes:
+            raise ValueError(
+                f'loop topology exceeds max_active_dynamic_agents={max_nodes}: requested {sum(profile_counts.values())}'
+            )
+    else:
+        _validate_mount_owner(payload, loop_id=loop_id, required=False)
+        capacity = loaded.config.loop_capacity or LoopCapacityConfig()
+        if agents and not capacity.enabled:
+            raise ValueError('loop topology requires [loop.capacity].enabled = true')
+        if sum(profile_counts.values()) > capacity.max_nodes:
+            raise ValueError(
+                f'loop topology exceeds max_nodes={capacity.max_nodes}: requested {sum(profile_counts.values())}'
+            )
+        known_profiles = capacity.role_profiles
     for profile, count in sorted(profile_counts.items()):
         spec = known_profiles.get(profile)
         if spec is None:
             known = ', '.join(sorted(known_profiles)) or '<none>'
             raise ValueError(f'unknown loop topology profile {profile!r}; configured profiles: {known}')
-        if count > spec.max_instances:
-            raise ValueError(f'loop topology profile {profile} exceeds max_instances={spec.max_instances}: requested {count}')
+        maximum = int(spec['max_instances']) if isinstance(spec, Mapping) else int(spec.max_instances)
+        if count > maximum:
+            raise ValueError(f'loop topology profile {profile} exceeds max_instances={maximum}: requested {count}')
     _validate_no_mount_dispatch_dsl(payload)
     _validate_edges(payload, agents, configured_agents=set(getattr(loaded.config, 'agents', {}) or {}))
-    return {
+    validation = {
         'topology_validation_status': 'valid',
         'loop_id': loop_id,
+        'config_version': config_version,
         'agent_count': len(agents),
         'present_agent_count': sum(profile_counts.values()),
         'profile_counts': dict(sorted(profile_counts.items())),
@@ -761,9 +838,18 @@ def _validate_topology(context, payload: Mapping[str, object], *, loop_id: str) 
         'config_source_kind': loaded.source_kind,
         'config_source': str(loaded.source_path) if loaded.source_path is not None else None,
     }
+    if capacity_digest is not None:
+        validation['capacity_digest'] = capacity_digest
+    return validation
 
 
-def _desired_agents(payload: Mapping[str, object], *, validate: bool = False, loop_id: str | None = None) -> list[dict[str, object]]:
+def _desired_agents(
+    payload: Mapping[str, object],
+    *,
+    validate: bool = False,
+    loop_id: str | None = None,
+    allowed_legacy_profiles: frozenset[str] = frozenset(),
+) -> list[dict[str, object]]:
     agents: list[dict[str, object]] = []
     seen: set[str] = set()
     seen_nodes: set[str] = set()
@@ -790,17 +876,27 @@ def _desired_agents(payload: Mapping[str, object], *, validate: bool = False, lo
             agent['id'] = name
             agent['profile'] = profile
             agent['desired_state'] = state
-            agent['loop_id'] = str(agent.get('loop_id') or loop_id or '')
+            explicit_loop_id = _optional_text(agent.get('loop_id'))
+            if validate and explicit_loop_id is not None and loop_id is not None and explicit_loop_id != loop_id:
+                raise ValueError(
+                    f'topology agent {name} loop_id={explicit_loop_id} does not match topology loop_id={loop_id}'
+                )
+            agent['loop_id'] = str(explicit_loop_id or loop_id or '')
             agent['node_id'] = node_id
             lifecycle = _optional_text(agent.get('lifecycle'))
             if lifecycle is not None:
                 agent['lifecycle'] = lifecycle
             if _optional_text(agent.get('lifetime')) is None:
                 agent['lifetime'] = _lifetime_for_lifecycle(lifecycle)
-            if validate and _topology_profile_key(agent) in LEGACY_TOPOLOGY_PROFILES:
+            profile_key = _topology_profile_key(agent)
+            if (
+                validate
+                and profile_key in LEGACY_TOPOLOGY_PROFILES
+                and profile_key not in allowed_legacy_profiles
+            ):
                 raise ValueError(
                     f'legacy workflow profile alias {profile!r} is not supported in topology; '
-                    'use ccb_frontdesk, ccb_task_detailer, ccb_planner, ccb_orchestrator, '
+                    'use ccb_frontdesk, task_detailer, ccb_task_detailer, ccb_planner, orchestrator, ccb_orchestrator, '
                     'ccb_round_reviewer, coder, or code_reviewer'
                 )
             explicit_window = _optional_text(agent.get('window_name'))
@@ -921,6 +1017,25 @@ def _validate_no_mount_dispatch_dsl(payload: Mapping[str, object]) -> None:
         raise ValueError(
             'mount topology does not accept topology dispatch gates; '
             'use ask-first orchestration, or set dispatch_compatibility="legacy" for legacy graph dispatch'
+        )
+
+
+def _validate_mount_owner(payload: Mapping[str, object], *, loop_id: str, required: bool) -> None:
+    raw_owner = payload.get('owner')
+    if raw_owner is None:
+        if required:
+            raise ValueError('Config V3 mount topology requires loop-scoped owner')
+        return
+    if not isinstance(raw_owner, Mapping):
+        raise ValueError('mount topology owner must be an object')
+    if set(raw_owner) != {'kind', 'loop_id'}:
+        raise ValueError('mount topology owner fields must be exactly kind and loop_id')
+    if str(raw_owner.get('kind') or '') != 'loop':
+        raise ValueError('mount topology owner kind must be loop')
+    owner_loop_id = _normalize_named_value(raw_owner.get('loop_id'), field_name='mount topology owner loop_id')
+    if owner_loop_id != loop_id:
+        raise ValueError(
+            f'mount topology owner loop_id={owner_loop_id} does not match topology loop_id={loop_id}'
         )
 
 

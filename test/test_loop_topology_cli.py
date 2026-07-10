@@ -824,6 +824,58 @@ def test_loop_topology_batches_missing_workflow_agents_before_mounted_reload(
     assert apply_windows[0]['ccb-exec-2'] == ('wf-coder-4', 'wf-code-reviewer-4')
 
 
+def test_loop_topology_passes_node_workspace_group_to_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    proposal = _proposal()
+    proposal['nodes'][0]['agents'][0]['workspace_group'] = 'coder_pool'  # type: ignore[index]
+    proposal['nodes'][0]['agents'][1]['workspace_group'] = 'review_pool'  # type: ignore[index]
+    proposal_path = project_root / 'workspace-groups.json'
+    _write_json(proposal_path, proposal)
+    commands: list[SimpleNamespace] = []
+    original_add = loop_topology_module.add_lifecycle_agents
+
+    def capture(context, staged, *, action: str):
+        commands.extend(staged)
+        return original_add(context, staged, action=action)
+
+    monkeypatch.setattr(loop_topology_module, 'add_lifecycle_agents', capture)
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(proposal_path),
+            '--proposal-id',
+            'workspace-groups',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'workspace-groups', '--apply', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert committed['reconcile']['loop_topology_status'] == 'reconciled'
+    assert {command.workspace_group for command in commands} == {'coder_pool', 'review_pool'}
+    records = {
+        name: json.loads(
+            (project_root / '.ccb' / 'runtime' / 'agents' / name / 'lifecycle.json').read_text(encoding='utf-8')
+        )
+        for name in ('loop-round1-coder-1', 'loop-round1-code_reviewer-1')
+    }
+    assert records['loop-round1-coder-1']['workspace_group'] == 'coder_pool'
+    assert records['loop-round1-code_reviewer-1']['workspace_group'] == 'review_pool'
+
+
 def test_loop_topology_execution_window_growth_remains_append_patchable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1865,6 +1917,107 @@ def test_loop_topology_release_retries_transient_failure_and_clears_dynamic_agen
     loaded = load_project_config(project_root, include_loop_overlays=True).config
     assert 'loop-round1-coder-1' not in loaded.agents
     assert 'loop-round1-code_reviewer-1' not in loaded.agents
+
+
+def test_loop_topology_release_replay_is_idempotent_after_full_unload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    proposal_path = project_root / 'graph.json'
+    _write_json(proposal_path, _proposal())
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(proposal_path),
+            '--proposal-id',
+            'proposal1',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, _committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'proposal1', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, first, stderr = _run_phase2(
+        ['loop', 'topology', 'release', '--loop-id', 'round1', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    first_desired = json.loads(Path(first['desired_path']).read_text(encoding='utf-8'))
+
+    result, replay, stderr = _run_phase2(
+        ['loop', 'topology', 'release', '--loop-id', 'round1', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    replay_desired = json.loads(Path(replay['desired_path']).read_text(encoding='utf-8'))
+    assert replay['loop_topology_status'] == 'released'
+    assert replay['released_count'] == 0
+    assert replay['retained_count'] == 0
+    assert replay['agent_count'] == 0
+    assert replay_desired['revision'] == first_desired['revision']
+
+
+def test_loop_topology_release_persistent_failure_stays_failed_and_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    proposal_path = project_root / 'graph.json'
+    _write_json(proposal_path, _proposal())
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(proposal_path),
+            '--proposal-id',
+            'proposal1',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, _committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'proposal1', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    calls = 0
+
+    def always_fail(_context, _names, *, policy: str):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError(f'persistent release failure ({policy})')
+
+    monkeypatch.setattr(loop_topology_module, '_release_agents', always_fail)
+    result, payload, stderr = _run_phase2(
+        ['loop', 'topology', 'release', '--loop-id', 'round1', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 1
+    assert payload == {}
+    assert calls == 2
+    assert 'persistent release failure' in stderr
+    observed_path = project_root / '.ccb' / 'runtime' / 'loops' / 'round1' / 'agent_mount_topology.observed.json'
+    observed = json.loads(observed_path.read_text(encoding='utf-8'))
+    assert observed['last_reconcile_status'] == 'failed'
+    assert observed['error'] == 'persistent release failure (auto)'
+    assert {agent['observed_state'] for agent in observed['agents']} == {'present'}
 
 
 def test_loop_topology_partial_reconcile_failure_writes_observed_and_recovers(
