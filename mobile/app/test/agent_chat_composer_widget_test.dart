@@ -276,7 +276,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(ValueKey('conversation-working-glow-$placeholderId')),
+        find.byKey(ValueKey('conversation-working-beat-$placeholderId')),
         findsOneWidget,
       );
       expect(

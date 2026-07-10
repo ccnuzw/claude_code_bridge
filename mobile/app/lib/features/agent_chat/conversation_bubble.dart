@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/ccb_mobile_localizations.dart';
 import '../../models/ccb_conversation_item.dart';
+import '../../widgets/working_attention_beat.dart';
 import 'conversation_item_presentation.dart';
 
 const double _minLimitedConversationBodyHeight = 220;
@@ -287,88 +288,46 @@ class _ConversationBubbleSurface extends StatefulWidget {
       _ConversationBubbleSurfaceState();
 }
 
-class _ConversationBubbleSurfaceState extends State<_ConversationBubbleSurface>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1600),
-  );
-  late final Animation<double> _pulse = CurvedAnimation(
-    parent: _controller,
-    curve: Curves.easeInOut,
-  );
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _syncAnimation();
-  }
-
-  @override
-  void didUpdateWidget(_ConversationBubbleSurface oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _syncAnimation();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _syncAnimation() {
-    final shouldAnimate =
-        widget.isWorking && !_conversationWorkingAnimationDisabled(context);
-    if (shouldAnimate) {
-      if (!_controller.isAnimating) {
-        _controller.repeat(reverse: true);
-      }
-      return;
-    }
-    if (_controller.isAnimating) {
-      _controller.stop();
-    }
-    _controller.value = 0;
-  }
-
+class _ConversationBubbleSurfaceState
+    extends State<_ConversationBubbleSurface> {
   @override
   Widget build(BuildContext context) {
     if (!widget.isWorking) {
-      return _buildMaterial(context, pulse: 0);
+      return _buildMaterial(context);
     }
-    return AnimatedBuilder(
-      key: ValueKey('conversation-working-glow-${widget.itemId}'),
-      animation: _pulse,
-      child: widget.child,
-      builder: (context, child) {
-        final pulse = _pulse.value;
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: conversationWorkingBubbleGlow(
-              Theme.of(context).colorScheme,
-              pulse,
+    final accent = conversationWorkingBubbleAccent(
+      Theme.of(context).colorScheme,
+    );
+    return Stack(
+      clipBehavior: Clip.hardEdge,
+      children: [
+        _buildMaterial(context),
+        Positioned(
+          right: 5,
+          top: 7,
+          bottom: 7,
+          child: IgnorePointer(
+            child: WorkingAttentionBeat(
+              key: ValueKey('conversation-working-beat-${widget.itemId}'),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                child: const SizedBox(width: 3),
+              ),
             ),
           ),
-          child: _buildMaterial(
-            context,
-            pulse: pulse,
-            child: child ?? widget.child,
-          ),
-        );
-      },
+        ),
+      ],
     );
   }
 
-  Widget _buildMaterial(
-    BuildContext context, {
-    required double pulse,
-    Widget? child,
-  }) {
+  Widget _buildMaterial(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final borderSide =
         widget.isWorking
-            ? conversationWorkingBubbleBorderSide(colorScheme, pulse)
+            ? conversationWorkingBubbleBorderSide(colorScheme)
             : BorderSide(color: widget.borderColor, width: widget.borderWidth);
     return Material(
       key: ValueKey('conversation-item-${widget.itemId}'),
@@ -378,7 +337,7 @@ class _ConversationBubbleSurfaceState extends State<_ConversationBubbleSurface>
         side: borderSide,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: child ?? widget.child,
+      child: widget.child,
     );
   }
 }
@@ -391,39 +350,11 @@ Color conversationWorkingBubbleAccent(ColorScheme colorScheme) {
 }
 
 @visibleForTesting
-BorderSide conversationWorkingBubbleBorderSide(
-  ColorScheme colorScheme,
-  double pulse,
-) {
-  final clampedPulse = pulse.clamp(0.0, 1.0);
+BorderSide conversationWorkingBubbleBorderSide(ColorScheme colorScheme) {
   return BorderSide(
     color: conversationWorkingBubbleAccent(colorScheme),
-    width: 2.4 + (0.4 * clampedPulse),
+    width: 2.4,
   );
-}
-
-@visibleForTesting
-List<BoxShadow> conversationWorkingBubbleGlow(
-  ColorScheme colorScheme,
-  double pulse,
-) {
-  final clampedPulse = pulse.clamp(0.0, 1.0);
-  final accent = conversationWorkingBubbleAccent(colorScheme);
-  return [
-    BoxShadow(
-      color: accent.withValues(alpha: 0.16 + (0.10 * clampedPulse)),
-      blurRadius: 6 + (8 * clampedPulse),
-      spreadRadius: 0.5 + (1.4 * clampedPulse),
-    ),
-  ];
-}
-
-bool _conversationWorkingAnimationDisabled(BuildContext context) {
-  final mediaQuery = MediaQuery.maybeOf(context);
-  final isWidgetTest = WidgetsBinding.instance.runtimeType.toString().contains(
-    'Test',
-  );
-  return isWidgetTest || (mediaQuery?.disableAnimations ?? false);
 }
 
 class _ConversationWorkingStatus extends StatefulWidget {
@@ -463,8 +394,7 @@ class _ConversationWorkingStatusState
   void _syncTimer() {
     _timer?.cancel();
     _timer = null;
-    if (widget.startedAt == null ||
-        _conversationWorkingAnimationDisabled(context)) {
+    if (widget.startedAt == null || _workingElapsedTimerDisabled(context)) {
       return;
     }
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -506,6 +436,14 @@ class _ConversationWorkingStatusState
       ),
     );
   }
+}
+
+bool _workingElapsedTimerDisabled(BuildContext context) {
+  final mediaQuery = MediaQuery.maybeOf(context);
+  final isWidgetTest = WidgetsBinding.instance.runtimeType.toString().contains(
+    'Test',
+  );
+  return isWidgetTest || (mediaQuery?.disableAnimations ?? false);
 }
 
 String? _workingElapsedLabel(DateTime? startedAt) {

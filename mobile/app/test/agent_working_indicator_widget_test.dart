@@ -79,7 +79,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('project-working-row-pulse-proj')),
+        find.byKey(const ValueKey('project-working-row-beat-proj')),
         findsOneWidget,
       );
       expect(
@@ -104,7 +104,7 @@ void main() {
           final border = decoration.border;
           return border is Border &&
               border.top.width == 2.2 &&
-              border.top.color == projectWorkingRowBorder(accent, 0);
+              border.top.color == projectWorkingRowBorder(accent);
         }),
         isTrue,
       );
@@ -117,10 +117,17 @@ void main() {
         }),
         isTrue,
       );
-      expect(projectWorkingRowGlow(accent, 0), isNotEmpty);
+      expect(projectWorkingRowTint(colorScheme), isNot(Colors.transparent));
       expect(
-        projectWorkingRowTint(colorScheme, 0),
-        isNot(projectWorkingRowTint(colorScheme, 1)),
+        find.descendant(
+          of: find.byKey(const ValueKey('project-working-row-proj')),
+          matching: find.byType(AnimatedBuilder),
+        ),
+        findsNothing,
+      );
+      expect(
+        rowDecorations.any((decoration) => decoration.boxShadow != null),
+        isFalse,
       );
     },
   );

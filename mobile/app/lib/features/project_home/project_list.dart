@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/ccb_mobile_localizations.dart';
 import '../../models/ccb_agent.dart';
 import '../../models/ccb_project_view.dart';
+import '../../widgets/working_attention_beat.dart';
 
 class ProjectListScaffold extends StatelessWidget {
   const ProjectListScaffold({
@@ -176,51 +177,8 @@ class ProjectWorkingRowHighlight extends StatefulWidget {
       _ProjectWorkingRowHighlightState();
 }
 
-class _ProjectWorkingRowHighlightState extends State<ProjectWorkingRowHighlight>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1900),
-  );
-  late final Animation<double> _pulse = CurvedAnimation(
-    parent: _controller,
-    curve: Curves.easeInOut,
-  );
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _syncAnimation();
-  }
-
-  @override
-  void didUpdateWidget(ProjectWorkingRowHighlight oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _syncAnimation();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _syncAnimation() {
-    final shouldAnimate =
-        widget.hasWorkingAgents &&
-        !mobileWorkingAttentionAnimationDisabled(context);
-    if (shouldAnimate) {
-      if (!_controller.isAnimating) {
-        _controller.repeat(reverse: true);
-      }
-      return;
-    }
-    if (_controller.isAnimating) {
-      _controller.stop();
-    }
-    _controller.value = 0;
-  }
-
+class _ProjectWorkingRowHighlightState
+    extends State<ProjectWorkingRowHighlight> {
   @override
   Widget build(BuildContext context) {
     if (!widget.hasWorkingAgents) {
@@ -231,24 +189,28 @@ class _ProjectWorkingRowHighlightState extends State<ProjectWorkingRowHighlight>
       key: ValueKey('project-working-row-${widget.projectId}'),
       container: true,
       hint: 'Project has working agents',
-      child: AnimatedBuilder(
-        key: ValueKey('project-working-row-pulse-${widget.projectId}'),
-        animation: _pulse,
-        child: widget.child,
-        builder: (context, child) {
-          final pulse = _pulse.value;
-          final accent = projectWorkingRowAccent(colorScheme);
-          final borderColor = projectWorkingRowBorder(accent, pulse);
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              color: projectWorkingRowTint(colorScheme, pulse),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: borderColor, width: 2.2),
-              boxShadow: projectWorkingRowGlow(accent, pulse),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: projectWorkingRowTint(colorScheme),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: projectWorkingRowBorder(
+              projectWorkingRowAccent(colorScheme),
             ),
-            child: DecoratedBox(
+            width: 2.2,
+          ),
+        ),
+        child: Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            DecoratedBox(
               decoration: BoxDecoration(
-                border: Border(left: BorderSide(color: accent, width: 6)),
+                border: Border(
+                  left: BorderSide(
+                    color: projectWorkingRowAccent(colorScheme),
+                    width: 6,
+                  ),
+                ),
               ),
               child: Material(
                 color: Colors.transparent,
@@ -256,34 +218,45 @@ class _ProjectWorkingRowHighlightState extends State<ProjectWorkingRowHighlight>
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: child,
+                child: widget.child,
               ),
             ),
-          );
-        },
+            Positioned(
+              right: 3,
+              top: 8,
+              bottom: 8,
+              child: IgnorePointer(
+                child: WorkingAttentionBeat(
+                  key: ValueKey('project-working-row-beat-${widget.projectId}'),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: projectWorkingRowAccent(colorScheme),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                    child: const SizedBox(width: 3),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 @visibleForTesting
-Color projectWorkingRowTint(ColorScheme colorScheme, double pulse) {
-  final clampedPulse = pulse.clamp(0.0, 1.0);
+Color projectWorkingRowTint(ColorScheme colorScheme) {
   final accent = projectWorkingRowAccent(colorScheme);
-  final base =
-      colorScheme.brightness == Brightness.dark
-          ? Color.alphaBlend(
-            accent.withValues(alpha: 0.26),
-            colorScheme.surfaceContainerHighest,
-          )
-          : Color.alphaBlend(
-            accent.withValues(alpha: 0.20),
-            colorScheme.surfaceContainerLowest,
-          );
-  return Color.alphaBlend(
-    accent.withValues(alpha: 0.10 + (0.08 * clampedPulse)),
-    base,
-  );
+  return colorScheme.brightness == Brightness.dark
+      ? Color.alphaBlend(
+        accent.withValues(alpha: 0.28),
+        colorScheme.surfaceContainerHighest,
+      )
+      : Color.alphaBlend(
+        accent.withValues(alpha: 0.22),
+        colorScheme.surfaceContainerLowest,
+      );
 }
 
 @visibleForTesting
@@ -294,30 +267,8 @@ Color projectWorkingRowAccent(ColorScheme colorScheme) {
 }
 
 @visibleForTesting
-Color projectWorkingRowBorder(Color accent, double pulse) {
-  final clampedPulse = pulse.clamp(0.0, 1.0);
-  return accent.withValues(alpha: 0.86 + (0.14 * clampedPulse));
-}
-
-@visibleForTesting
-List<BoxShadow> projectWorkingRowGlow(Color accent, double pulse) {
-  final clampedPulse = pulse.clamp(0.0, 1.0);
-  return [
-    BoxShadow(
-      color: accent.withValues(alpha: 0.22 + (0.16 * clampedPulse)),
-      blurRadius: 8 + (4 * clampedPulse),
-      spreadRadius: 0.6 + clampedPulse,
-    ),
-  ];
-}
-
-@visibleForTesting
-bool mobileWorkingAttentionAnimationDisabled(BuildContext context) {
-  final mediaQuery = MediaQuery.maybeOf(context);
-  final isWidgetTest = WidgetsBinding.instance.runtimeType.toString().contains(
-    'Test',
-  );
-  return isWidgetTest || (mediaQuery?.disableAnimations ?? false);
+Color projectWorkingRowBorder(Color accent) {
+  return accent.withValues(alpha: 0.96);
 }
 
 class ProjectAttentionAvatar extends StatelessWidget {

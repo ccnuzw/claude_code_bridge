@@ -280,7 +280,7 @@ void main() {
     );
   });
 
-  testWidgets('working reply uses normal surface with active border and glow', (
+  testWidgets('working reply uses normal surface with active border and beat', (
     tester,
   ) async {
     final item = CcbConversationItem(
@@ -311,7 +311,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('conversation-working-glow-reply-working')),
+      find.byKey(const ValueKey('conversation-working-beat-reply-working')),
       findsOneWidget,
     );
     expect(find.byIcon(Icons.pending_rounded), findsOneWidget);
@@ -332,15 +332,21 @@ void main() {
     expect(shape.side.color, isNot(colorScheme.tertiary));
     expect(shape.side.width, 2.4);
 
+    expect(conversationWorkingBubbleBorderSide(colorScheme).width, 2.4);
     expect(
-      conversationWorkingBubbleBorderSide(colorScheme, 1).width,
-      greaterThan(conversationWorkingBubbleBorderSide(colorScheme, 0).width),
+      find.descendant(
+        of: find.byKey(const ValueKey('conversation-item-reply-working')),
+        matching: find.byType(AnimatedBuilder),
+      ),
+      findsNothing,
     );
     expect(
-      conversationWorkingBubbleGlow(colorScheme, 1).single.blurRadius,
-      greaterThan(
-        conversationWorkingBubbleGlow(colorScheme, 0).single.blurRadius,
-      ),
+      tester
+          .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+          .map((box) => box.decoration)
+          .whereType<BoxDecoration>()
+          .any((decoration) => decoration.boxShadow != null),
+      isFalse,
     );
   });
 
@@ -420,7 +426,7 @@ void main() {
       findsNothing,
     );
     expect(
-      find.byKey(const ValueKey('conversation-working-glow-reply-failed')),
+      find.byKey(const ValueKey('conversation-working-beat-reply-failed')),
       findsNothing,
     );
     expect(find.byIcon(Icons.pending_rounded), findsNothing);
