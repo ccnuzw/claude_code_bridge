@@ -54,6 +54,7 @@ def _spec(
     *,
     startup_args: tuple[str, ...] = (),
     provider_command_template: str | None = None,
+    restore_default: RestoreMode = RestoreMode.AUTO,
 ) -> AgentSpec:
     return AgentSpec(
         name=name,
@@ -62,7 +63,7 @@ def _spec(
         workspace_mode=WorkspaceMode.GIT_WORKTREE,
         workspace_root=None,
         runtime_mode=RuntimeMode.PANE_BACKED,
-        restore_default=RestoreMode.AUTO,
+        restore_default=restore_default,
         permission_default=PermissionMode.MANUAL,
         queue_policy=QueuePolicy.SERIAL_PER_AGENT,
         provider_command_template=provider_command_template,
@@ -2635,6 +2636,75 @@ def test_opencode_workspace_preparation_disables_config_when_memory_and_skills_d
 
     assert 'OPENCODE_CONFIG=' not in cmd
     assert not config_path.exists()
+
+
+def test_opencode_start_cmd_respects_explicit_session_without_auto_continue(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-opencode-explicit-session'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'opencode'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('OPENCODE_START_CMD', 'opencode')
+    spec = _spec('reviewer', provider='opencode', startup_args=('--session', 'ses_reviewer'))
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=True, auto_permission=False)
+    prepared = _prepare_opencode_workspace_for_test(spec, runtime_dir)
+
+    cmd = opencode_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'opencode-sess-explicit-session',
+        prepared_state=prepared,
+    )
+
+    assert cmd.endswith('opencode --session ses_reviewer')
+    assert ' --continue ' not in f' {cmd} '
+
+
+def test_opencode_start_cmd_respects_restore_fresh_without_auto_continue(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-opencode-fresh'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'opencode'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('OPENCODE_START_CMD', 'opencode')
+    spec = _spec('reviewer', provider='opencode', restore_default=RestoreMode.FRESH)
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=True, auto_permission=False)
+    prepared = _prepare_opencode_workspace_for_test(spec, runtime_dir)
+
+    cmd = opencode_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'opencode-sess-fresh',
+        prepared_state=prepared,
+    )
+
+    assert cmd.endswith('opencode')
+    assert ' --continue ' not in f' {cmd} '
+
+
+def test_opencode_start_cmd_respects_new_context_without_auto_continue(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-opencode-new-context'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'opencode'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('OPENCODE_START_CMD', 'opencode')
+    spec = _spec('reviewer', provider='opencode')
+    command = ParsedStartCommand(
+        project=None,
+        agent_names=('reviewer',),
+        restore=False,
+        auto_permission=False,
+        reset_context=True,
+    )
+    prepared = _prepare_opencode_workspace_for_test(spec, runtime_dir)
+
+    cmd = opencode_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'opencode-sess-new-context',
+        prepared_state=prepared,
+    )
+
+    assert cmd.endswith('opencode')
+    assert ' --continue ' not in f' {cmd} '
 
 
 

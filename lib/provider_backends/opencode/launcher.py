@@ -7,6 +7,7 @@ import shlex
 from pathlib import Path
 
 from agents.models import AgentSpec, normalize_agent_name
+from agents.policy import should_restore_provider_history
 from cli.context import CliContext
 from cli.models import ParsedStartCommand
 from provider_core.caller_env import (
@@ -49,6 +50,8 @@ _OPENCODE_SKIPPED_SIGNATURE_FIELDS = (
     'skill_path',
     'skill_sha256',
 )
+_OPENCODE_SESSION_FLAGS = {'--continue', '-c', '--session', '-s'}
+_OPENCODE_SESSION_PREFIXES = ('--continue=', '--session=')
 
 
 def build_runtime_launcher() -> ProviderRuntimeLauncher:
@@ -97,7 +100,7 @@ def build_start_cmd(
         **_opencode_memory_env(_path_or_none(launch_context.get('opencode_config_path')), profile),
     }
     cmd_parts = provider_start_parts('opencode')
-    if command.restore:
+    if _should_auto_continue(command, spec, cmd_parts):
         cmd_parts.append('--continue')
     cmd_parts.extend(spec.startup_args)
     cmd = ' '.join(shlex.quote(str(part)) for part in cmd_parts)
@@ -142,6 +145,24 @@ def build_session_payload(
         'start_dir': str(context.project.project_root),
         'start_cmd': start_cmd,
     }
+
+
+def _should_auto_continue(command: ParsedStartCommand, spec: AgentSpec, cmd_parts: list[str]) -> bool:
+    if not should_restore_provider_history(spec.restore_default, cli_restore=command.restore):
+        return False
+    return not (_has_opencode_session_selector(cmd_parts) or _has_opencode_session_selector(spec.startup_args))
+
+
+def _has_opencode_session_selector(parts: tuple[str, ...] | list[str]) -> bool:
+    for part in parts:
+        token = str(part or '').strip()
+        if not token:
+            continue
+        if token in _OPENCODE_SESSION_FLAGS:
+            return True
+        if token.startswith(_OPENCODE_SESSION_PREFIXES):
+            return True
+    return False
 
 
 def materialize_opencode_memory_config(

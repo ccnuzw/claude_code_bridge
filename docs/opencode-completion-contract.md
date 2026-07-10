@@ -63,6 +63,17 @@ OpenCode does not yet have a separate session-isolation contract.
 - `.ccb/agents/<agent>/memory.md` remains a CCB bundle input; CCB does not edit
   project `AGENTS.md` during OpenCode startup.
 
+### Managed Session Startup
+
+- CCB may inject OpenCode `--continue` only when the effective restore policy is
+  not fresh.
+- `ccb -n`, `--new-context`, and agent `restore = "fresh"` are fresh launches
+  and must not inject `--continue`.
+- Explicit OpenCode session selectors in the configured command or
+  `startup_args` are authoritative. If `opencode` is already launched with
+  `--session`, `-s`, `--continue`, or `-c`, CCB must not prepend another
+  automatic `--continue`.
+
 ### Non-Goals
 
 - Quiet terminal periods are not completion authority for `opencode`.
