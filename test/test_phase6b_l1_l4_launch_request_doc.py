@@ -1454,14 +1454,14 @@ def test_active_status_docs_do_not_treat_sequence10_as_pending() -> None:
     assert 'job_f4ee3f0cc58e' in combined
 
 
-def test_status_docs_record_final_bounded_phase6b_claim() -> None:
+def test_archived_phase6b_docs_preserve_final_bounded_claim_while_active_status_advances() -> None:
     status_text = _text(IMPLEMENTATION_STATUS)
     coverage_text = _text(CLAIM_COVERAGE_MATRIX)
     board_text = _text(ACTIVE_SUPERVISION_BOARD)
     evidence_index_text = _text(EVIDENCE_INDEX)
     final_report_text = _text(FINAL_ACCEPTANCE_REPORT)
 
-    for text in (status_text, coverage_text, board_text):
+    for text in (coverage_text, board_text):
         assert CONSUMED_REPEAT8_ROOT in text
         assert 'phase6b-real-provider-l1-l4-repeat8-b7-20260704.md' in text
         assert SOURCE_REAUDIT_ACCEPTANCE_JOB in text
@@ -1478,28 +1478,29 @@ def test_status_docs_record_final_bounded_phase6b_claim() -> None:
         assert 'phase6b-l1-l4-launch-request-sequence12-20260705.md' in text
         assert 'phase6b-real-provider-l1-l4-repeat12-b7-20260705.md' in text
 
-    for text in (status_text, coverage_text, board_text):
+    for text in (coverage_text, board_text):
         assert SOURCE_REPAIR_JOB in text
         assert SOURCE_REPAIR_REVIEW_JOB in text
 
-    for text in (status_text, coverage_text, board_text, evidence_index_text, final_report_text):
+    for text in (coverage_text, board_text, evidence_index_text, final_report_text):
         assert 'Phase 6B is claimable' in text
         assert 'initial real-provider' in text
         assert L0_REPEAT6_B7 in text
         assert L5_PARTIAL_REPEAT4_B7 in text
         assert 'production/default enablement' in text
-    for text in (status_text, coverage_text, board_text, evidence_index_text):
+    for text in (coverage_text, board_text, evidence_index_text):
         assert 'phase1-6-acceptance-report-20260705.md' in text
-    assert 'phase1-6-acceptance-report-20260704.md)\n   as the current Phase 1-6 reporting surface' not in status_text
+    assert 'phase1-6-acceptance-report-20260705.md' in status_text
+    assert 'The active release target is single-lane production closure' in status_text
+    assert 'The branch is not production-ready' in status_text
+    assert 'single-lane-r1-authority-runtime-closure-20260711.md' in status_text
     assert 'Phase 6B remains unclaimed' not in coverage_text
     assert 'Phase 6B remains unclaimed' not in board_text
     assert 'Phase 6B still needs fresh approval-to-run plus real-provider' not in board_text
     assert final_report_text.startswith('# Phase 1-6 Acceptance Report')
 
-    assert 'Sequence9 is consumed/non-reusable' in _flat(status_text)
     assert 'Sequence9 is consumed/non-reusable' in _flat(board_text)
     assert 'Sequence9 is consumed/non-reusable' in _flat(coverage_text)
-    assert 'no repeat9 evidence is claimable' in _flat(status_text)
     assert 'no repeat9 evidence is claimable' in _flat(coverage_text)
     assert 'Repeat9 is not claimable' in board_text
     assert 'Closed by talk2 final aggregation on 2026-07-05' in coverage_text
