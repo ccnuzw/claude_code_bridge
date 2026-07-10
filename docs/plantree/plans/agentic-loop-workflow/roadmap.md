@@ -105,6 +105,14 @@ Date: 2026-06-24
   [topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md)
   and
   [decisions/023-roadmap-graph-and-workflow-lanes.md](decisions/023-roadmap-graph-and-workflow-lanes.md).
+- Accepted the topology ownership and sequencing refinement: each future Lane
+  owns independent immaculate orchestrator activation and desired/observed
+  topology state, while one deterministic project Topology Controller owns
+  shared capacity, concrete agent binding, layout, reconcile, and safe
+  lane-scoped release. This is not authorization to implement parallel Lanes;
+  the immediate gate remains one complete, repeatable, visible real-provider
+  single-lane workflow. See
+  [decisions/024-project-topology-controller-and-single-lane-first.md](decisions/024-project-topology-controller-and-single-lane-first.md).
 - Accepted the orchestrator boundary: it is an ask-activated immaculate
   semantic planner that keeps work slicing, dependencies, logical role
   assignment, complete task packets, review/integration intent, and bounded
@@ -1199,6 +1207,12 @@ Still outside the candidate:
 - arbitrary Team Builder-style workflow authoring.
 
 ## Next
+
+Sequencing gate: Decisions 022-024 are design targets only. Before Roadmap
+Graph or multi-lane source work begins, finish and freeze the single-lane
+frontdesk-to-planner-to-execution-to-review-to-release production baseline,
+including visible real-provider operation, exact-once recovery, immutable
+activation context, authority import, and repeatability evidence.
 
 1. Implement the first config v3 source slice: schema/version dispatch, v2
    regression protection, v3 workflow role models, required role/profile

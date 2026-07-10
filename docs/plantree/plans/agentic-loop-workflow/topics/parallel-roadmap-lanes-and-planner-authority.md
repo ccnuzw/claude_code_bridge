@@ -159,6 +159,33 @@ rewrite dependencies, lower acceptance, shrink scope, or serialize a declared
 parallel branch silently. Capacity or conflict prevents admission and produces
 an explicit waiting reason.
 
+## Project-Unique Topology Controller
+
+Semantic orchestration is lane-scoped; physical topology authority is
+project-scoped.
+
+```text
+Lane A orchestrator -> bundle A -> topology intent A --+
+                                                    +-> project Topology Controller
+Lane B orchestrator -> bundle B -> topology intent B --+
+```
+
+Each lane keeps independently attributable desired/observed topology state.
+One project Topology Controller validates the combined physical resource view,
+binds logical roles to concrete agents, creates fresh immaculate activations,
+places them in role-class windows, reconciles mount state, and releases only
+matching lane-owned agents.
+
+The controller is deterministic program code, not an Agent. It cannot split
+tasks, write worker prompts, change roadmap priority, rewrite bundles, judge
+quality, or import semantic success. Dispatch remains a separate controller
+responsibility after topology returns concrete ready bindings.
+
+Project-wide uniqueness prevents capacity, agent-name, tmux, sidebar,
+workspace, and release races. It must use short reconcile transactions rather
+than one project lock held while providers work. See
+[Decision 024](../decisions/024-project-topology-controller-and-single-lane-first.md).
+
 ## Serial And Parallel Semantics
 
 | Condition | Scheduling result |
@@ -301,6 +328,9 @@ ambiguity.
 
 ## Implementation Sequence
 
+0. Close and freeze the current single-lane real-provider workflow baseline;
+   do not start multi-lane source changes before its visible end-to-end,
+   recovery, freshness, authority, release, and repeatability gates pass.
 1. Add Roadmap Graph schema, validator, revision, and cycle checks.
 2. Add lane registry, identity propagation, planner lease, and fencing tokens.
 3. Add scope claims and deterministic conflict admission.
@@ -332,6 +362,7 @@ ambiguity.
 ## Related
 
 - [../decisions/023-roadmap-graph-and-workflow-lanes.md](../decisions/023-roadmap-graph-and-workflow-lanes.md)
+- [../decisions/024-project-topology-controller-and-single-lane-first.md](../decisions/024-project-topology-controller-and-single-lane-first.md)
 - [planner-role-design.md](planner-role-design.md)
 - [state-and-script-contract.md](state-and-script-contract.md)
 - [plan-and-runtime-list-structure.md](plan-and-runtime-list-structure.md)

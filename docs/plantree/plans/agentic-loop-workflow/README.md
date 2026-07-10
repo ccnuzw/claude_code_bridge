@@ -415,6 +415,10 @@ recoverable workflow loops.
   decision that Plan Tree models serial/parallel roadmap branches and joins,
   Workflow Lane is the concurrent execution unit, one planner remains the
   default global graph writer, and multiple planners require disjoint scopes.
+- [decisions/024-project-topology-controller-and-single-lane-first.md](decisions/024-project-topology-controller-and-single-lane-first.md):
+  decision that lanes own independent immaculate orchestration and topology
+  state, one deterministic project Topology Controller owns physical runtime
+  reconciliation, and single-lane production closure precedes multi-lane code.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and

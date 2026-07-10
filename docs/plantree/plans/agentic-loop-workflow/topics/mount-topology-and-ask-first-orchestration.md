@@ -23,6 +23,12 @@ packets in one orchestration bundle, but controller code binds concrete mounted
 agents and submits those asks exactly once. This refinement does not put
 communication edges back into mount topology.
 
+Decision 024 fixes future multi-lane topology ownership: each lane keeps
+separate desired/observed topology and immaculate orchestrator activations,
+while one project-level deterministic Topology Controller arbitrates shared
+capacity, identities, windows, panes, workspaces, reconcile, and release. This
+is design-only until the single-lane production gate is closed.
+
 ## Layer Model
 
 | Layer | What It Owns | What It Must Not Own |

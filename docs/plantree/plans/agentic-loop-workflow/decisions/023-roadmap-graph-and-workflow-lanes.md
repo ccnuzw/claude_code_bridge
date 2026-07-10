@@ -104,6 +104,7 @@ moving global roadmap.
 ## Related
 
 - [022-semantic-orchestration-bundle-and-controller-execution.md](022-semantic-orchestration-bundle-and-controller-execution.md)
+- [024-project-topology-controller-and-single-lane-first.md](024-project-topology-controller-and-single-lane-first.md)
 - [../topics/parallel-roadmap-lanes-and-planner-authority.md](../topics/parallel-roadmap-lanes-and-planner-authority.md)
 - [../topics/planner-role-design.md](../topics/planner-role-design.md)
 - [../topics/state-and-script-contract.md](../topics/state-and-script-contract.md)
