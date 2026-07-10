@@ -322,6 +322,7 @@ def _copy_config(
         windows_explicit=config.windows_explicit,
         maintenance_heartbeat=config.maintenance_heartbeat,
         loop_capacity=config.loop_capacity,
+        workflow=config.workflow,
     )
 
 

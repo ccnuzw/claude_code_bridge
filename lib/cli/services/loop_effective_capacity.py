@@ -70,11 +70,10 @@ def build_effective_capacity_snapshot(
 def compile_project_effective_capacity_snapshot(project_root: Path) -> dict[str, object]:
     loaded = load_project_config(Path(project_root), include_loop_overlays=False)
     config = loaded.config
+    if int(config.version) == 3:
+        return _compile_v3_effective_capacity_snapshot(config)
     if int(config.version) != 2:
-        raise ValueError(
-            'effective capacity compiler requires an explicit Config V3 snapshot; '
-            f'unsupported config version: {config.version}'
-        )
+        raise ValueError(f'unsupported config version: {config.version}')
     capacity = config.loop_capacity or LoopCapacityConfig()
     resident_profiles = {
         str(name): _resident_profile_record(spec)
@@ -146,6 +145,12 @@ def normalize_effective_capacity_snapshot(snapshot: object) -> dict[str, object]
     resident_profiles = _normalize_profiles(snapshot.get('resident_profiles'), field='resident_profiles')
     dynamic_profiles = _normalize_profiles(snapshot.get('dynamic_profiles'), field='dynamic_profiles')
     aliases = _normalize_aliases(snapshot.get('profile_aliases'))
+    missing_alias_targets = sorted(set(aliases.values()) - set(dynamic_profiles))
+    if missing_alias_targets:
+        raise ValueError(
+            'profile_aliases target missing dynamic profile: '
+            + ', '.join(missing_alias_targets)
+        )
     return {
         'schema': EFFECTIVE_CAPACITY_SNAPSHOT_SCHEMA,
         'config_version': config_version,
@@ -315,6 +320,55 @@ def _v2_profile_aliases(dynamic_profiles: dict[str, dict[str, object]]) -> dict[
         if len(matches) == 1:
             aliases[logical_name] = matches[0]
     return aliases
+
+
+def _compile_v3_effective_capacity_snapshot(config) -> dict[str, object]:
+    workflow = getattr(config, 'workflow', None)
+    if workflow is None:
+        raise ValueError('Config V3 effective capacity requires workflow authority')
+    runtime = workflow.runtime
+    return build_effective_capacity_snapshot(
+        config_version=3,
+        workflow_profile=workflow.profile,
+        workflow_mode=workflow.mode,
+        max_workgroups=runtime.max_workgroups,
+        max_parallel_workgroups=runtime.max_parallel_workgroups,
+        max_active_dynamic_agents=runtime.max_active_dynamic_agents,
+        policies={
+            'node_rework': {'max_rounds': runtime.max_node_rework_rounds},
+            'workspace': {'mode': runtime.multi_workgroup_workspace},
+            'integration': {'mode': runtime.integration_policy},
+            'release': {
+                'default_lifetime': runtime.default_lifetime,
+                'policy': runtime.release_policy,
+                'idle_only': True,
+            },
+            'naming': {'template': runtime.name_template},
+            'execution_windows': {
+                'policy': f'{runtime.window_policy}:max_panes={runtime.execution_window_max_panes}'
+            },
+        },
+        resident_profiles={
+            name: _workflow_profile_record(spec)
+            for name, spec in sorted(workflow.resident.items())
+        },
+        dynamic_profiles={
+            name: _workflow_profile_record(spec)
+            for name, spec in sorted(workflow.dynamic.items())
+        },
+        profile_aliases=workflow.profile_aliases,
+    )
+
+
+def _workflow_profile_record(spec) -> dict[str, object]:
+    return {
+        'role_id': spec.role,
+        'provider': spec.provider,
+        'model': spec.model,
+        'workspace_mode': spec.workspace_mode.value,
+        'release_policy': 'resident' if spec.kind == 'resident' else spec.release_policy,
+        'max_instances': spec.max_instances,
+    }
 
 
 def _exact_mapping(value: object, keys: set[str], *, field: str) -> dict[str, object]:

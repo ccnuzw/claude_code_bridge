@@ -528,10 +528,12 @@ _COMMAND_HELP = {
           Legacy `ack` / `retry` / `resubmit` commands remain compatibility entrypoints.
     """,
     "config": """
-        usage: ccb config validate
+        usage: ccb config <validate|effective|migrate> ...
 
-        Config validation:
-          ccb config validate   Validate `.ccb/ccb.config` for the current project.
+        Config control plane:
+          ccb config validate [--json]                 Validate `.ccb/ccb.config`.
+          ccb config effective --json                  Show sanitized effective config authority.
+          ccb config migrate --to 3 --dry-run [--json] Preview V2-to-V3 mappings without writing.
     """,
     "reload": """
         usage: ccb reload [--dry-run]

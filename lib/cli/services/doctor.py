@@ -7,6 +7,7 @@ from provider_execution.registry import build_default_execution_registry
 
 from .daemon import ping_local_state
 from .daemon_runtime.policy import CONTROL_PLANE_RPC_TIMEOUT_S
+from .config_validate import validate_config_context
 from .doctor_runtime import (
     agent_summaries,
     ccbd_summary,
@@ -20,6 +21,7 @@ from .doctor_runtime import (
 
 def doctor_summary(context) -> dict:
     config = load_project_config(context.project.project_root).config
+    config_validation = validate_config_context(context)
     stores = doctor_stores(context)
     installation = installation_summary()
     catalog = build_default_provider_catalog()
@@ -48,6 +50,7 @@ def doctor_summary(context) -> dict:
             installation=installation,
         ),
         'requirements': requirements_summary(),
+        'config': config_validation.to_record(),
         'ccbd': ccbd_summary(local=local, stores=stores, errors=errors, remote=remote_ccbd),
         'agents': agents,
     }

@@ -215,6 +215,10 @@ class ParsedPsCommand:
 @dataclass(frozen=True)
 class ParsedConfigValidateCommand:
     project: str | None
+    action: str = 'validate'
+    json_output: bool = False
+    to_version: int | None = None
+    dry_run: bool = False
     kind: str = 'config-validate'
 
 

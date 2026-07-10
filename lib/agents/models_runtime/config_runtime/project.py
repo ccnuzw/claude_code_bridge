@@ -5,6 +5,7 @@ from typing import Any
 
 from ..names import SCHEMA_VERSION, AgentValidationError
 from .loop_capacity import LoopCapacityConfig
+from .workflow import CONFIG_SCHEMA_V2, CONFIG_SCHEMA_V3, WorkflowConfig
 from .maintenance import MaintenanceHeartbeatConfig
 from .topology import (
     SidebarSpec,
@@ -40,10 +41,17 @@ class ProjectConfig:
     windows_explicit: bool | None = None
     maintenance_heartbeat: MaintenanceHeartbeatConfig | None = None
     loop_capacity: LoopCapacityConfig | None = None
+    workflow: WorkflowConfig | None = None
 
     def __post_init__(self) -> None:
-        if self.version != SCHEMA_VERSION:
-            raise AgentValidationError(f'version must be {SCHEMA_VERSION}')
+        if self.version not in {CONFIG_SCHEMA_V2, CONFIG_SCHEMA_V3}:
+            raise AgentValidationError(
+                f'version must be {CONFIG_SCHEMA_V2} or {CONFIG_SCHEMA_V3}'
+            )
+        if self.version == CONFIG_SCHEMA_V2 and self.workflow is not None:
+            raise AgentValidationError('version 2 cannot carry workflow authority')
+        if self.version == CONFIG_SCHEMA_V3 and self.workflow is None:
+            raise AgentValidationError('version 3 requires workflow authority')
         explicit_windows = bool(self.windows_explicit) if self.windows_explicit is not None else self.windows is not None
         normalized_agents = normalize_agent_specs(self.agents, allow_empty=explicit_windows)
         defaults = normalize_default_agents(self.default_agents, normalized_agents=normalized_agents, allow_empty=explicit_windows)
@@ -93,7 +101,7 @@ class ProjectConfig:
         object.__setattr__(self, 'topology_signature', topology_signature(signature_payload))
 
     def to_record(self) -> dict[str, Any]:
-        return {
+        payload = {
             'schema_version': SCHEMA_VERSION,
             'record_type': 'project_config',
             'version': self.version,
@@ -125,6 +133,9 @@ class ProjectConfig:
             'topology_signature': self.topology_signature,
             'source_path': self.source_path,
         }
+        if self.workflow is not None:
+            payload['workflow'] = self.workflow.to_record()
+        return payload
 
 
 __all__ = ['ProjectConfig']

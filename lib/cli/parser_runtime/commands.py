@@ -1042,9 +1042,44 @@ def parse_doctor(tokens: list[str], *, project: str | None, error_type) -> Parse
 
 
 def parse_config(tokens: list[str], *, project: str | None, error_type) -> ParsedConfigValidateCommand:
-    if tokens != ['validate']:
-        raise error_type('config only supports: ccb config validate')
-    return ParsedConfigValidateCommand(project=project)
+    if not tokens:
+        raise error_type('config supports: validate, effective, migrate')
+    action = str(tokens[0]).strip().lower()
+    if action in {'validate', 'effective'}:
+        parser = argparse.ArgumentParser(prog=f'ccb config {action}', add_help=False)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(
+            parser,
+            tokens[1:],
+            error_message=f'invalid config {action} command',
+            error_type=error_type,
+        )
+        return ParsedConfigValidateCommand(
+            project=project,
+            action=action,
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'migrate':
+        parser = argparse.ArgumentParser(prog='ccb config migrate', add_help=False)
+        parser.add_argument('--to', dest='to_version', type=int, required=True)
+        parser.add_argument('--dry-run', dest='dry_run', action='store_true')
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(
+            parser,
+            tokens[1:],
+            error_message='invalid config migrate command',
+            error_type=error_type,
+        )
+        if not namespace.dry_run:
+            raise error_type('config migrate requires --dry-run; automatic writes are not supported')
+        return ParsedConfigValidateCommand(
+            project=project,
+            action='migrate',
+            json_output=bool(namespace.json_output),
+            to_version=int(namespace.to_version),
+            dry_run=True,
+        )
+    raise error_type('config supports: validate, effective, migrate')
 
 
 def parse_reload(tokens: list[str], *, project: str | None, error_type) -> ParsedReloadCommand:

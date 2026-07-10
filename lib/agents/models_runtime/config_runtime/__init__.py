@@ -5,6 +5,13 @@ from .loop_capacity import LoopCapacityConfig, LoopRoleProfileSpec
 from .maintenance import MaintenanceHeartbeatConfig
 from .project import ProjectConfig
 from .spec import AgentSpec
+from .workflow import (
+    CONFIG_SCHEMA_V2,
+    CONFIG_SCHEMA_V3,
+    WorkflowConfig,
+    WorkflowRoleSpec,
+    WorkflowRuntimePolicy,
+)
 
 __all__ = [
     'AgentApiSpec',
@@ -13,4 +20,9 @@ __all__ = [
     'LoopRoleProfileSpec',
     'MaintenanceHeartbeatConfig',
     'ProjectConfig',
+    'CONFIG_SCHEMA_V2',
+    'CONFIG_SCHEMA_V3',
+    'WorkflowConfig',
+    'WorkflowRoleSpec',
+    'WorkflowRuntimePolicy',
 ]

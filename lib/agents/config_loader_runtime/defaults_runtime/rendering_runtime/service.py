@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 
 from agents.models import LayoutLeaf, LayoutNode, normalize_agent_name, parse_layout_spec
@@ -15,6 +16,11 @@ def render_default_project_config_text() -> str:
 
 
 def render_project_config_text(config) -> str:
+    if int(getattr(config, 'version', 2)) == 3:
+        source_path = Path(str(getattr(config, 'source_path', '') or ''))
+        if not source_path.is_file():
+            raise ValueError('version 3 config rendering requires its original source_path')
+        return source_path.read_text(encoding='utf-8')
     loop_payload = loop_capacity_to_config_dict(getattr(config, 'loop_capacity', None))
     if getattr(config, 'windows_explicit', False):
         return _render_windows_config_text(config)

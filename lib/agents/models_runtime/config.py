@@ -7,6 +7,11 @@ from .config_runtime import (
     LoopRoleProfileSpec,
     MaintenanceHeartbeatConfig,
     ProjectConfig,
+    CONFIG_SCHEMA_V2,
+    CONFIG_SCHEMA_V3,
+    WorkflowConfig,
+    WorkflowRoleSpec,
+    WorkflowRuntimePolicy,
 )
 
 
@@ -17,4 +22,9 @@ __all__ = [
     'LoopRoleProfileSpec',
     'MaintenanceHeartbeatConfig',
     'ProjectConfig',
+    'CONFIG_SCHEMA_V2',
+    'CONFIG_SCHEMA_V3',
+    'WorkflowConfig',
+    'WorkflowRoleSpec',
+    'WorkflowRuntimePolicy',
 ]

@@ -46,6 +46,27 @@ def render_agent_lifecycle(summary) -> tuple[str, ...]:
 
 
 def render_config_validate(summary) -> tuple[str, ...]:
+    if int(getattr(summary, 'config_version', 2)) == 3:
+        workflow = summary.workflow or {}
+        capacity = summary.effective_workgroup_capacity or {}
+        return (
+            'config_status: valid',
+            f'project: {summary.project_root}',
+            f'project_id: {summary.project_id}',
+            f'config_source_kind: {summary.source_kind}',
+            f'config_source: {summary.source or "<builtin>"}',
+            'config_version: 3',
+            f'workflow_mode: {workflow.get("mode", "")}',
+            f'workflow_profile: {workflow.get("profile", "")}',
+            f'entry_role: {workflow.get("entry_role", "")}',
+            'resident_roles: ' + ', '.join(str(item.get('slot')) for item in summary.resident_roles),
+            'dynamic_profiles: ' + ', '.join(str(item.get('profile')) for item in summary.dynamic_profiles),
+            'effective_workgroup_capacity: '
+            f'max_workgroups={capacity.get("max_workgroups")} '
+            f'max_parallel_workgroups={capacity.get("max_parallel_workgroups")} '
+            f'max_active_dynamic_agents={capacity.get("max_active_dynamic_agents")}',
+            f'capacity_digest: {summary.capacity_digest}',
+        )
     lines = [
         'config_status: valid',
         f'project: {summary.project_root}',
