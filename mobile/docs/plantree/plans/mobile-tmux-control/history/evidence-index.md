@@ -2,6 +2,12 @@
 
 Date: 2026-06-29
 
+## 2026-07-10: Realtime Authority and Recovery
+
+- [Fresh profile-APK AVD evidence](/tmp/ccb-mobile-realtime-recovery-20260710/README.md):
+  same-SHA server-wide/dedicated-project cold snapshot, native invalidation,
+  reconnect retention, notification, and 259-second idle audit.
+
 ## Open External Gaps
 
 ### 2026-06-29: Local AVD Native Pane Timing And `/status`

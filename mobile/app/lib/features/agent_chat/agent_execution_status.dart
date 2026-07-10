@@ -21,6 +21,15 @@ AgentExecutionStatus agentExecutionStatus({
   final state = _normalized(agent.activityState);
   final source = _normalized(agent.activitySource);
   final reason = _normalized(agent.activityReason);
+  // A failure must never be painted over by a retained working marker.
+  if (_isExceptionActivity(state: state, source: source, reason: reason) ||
+      hasLocalExecutionException) {
+    return const AgentExecutionStatus(
+      label: 'Exception',
+      state: 'exception',
+      isRefreshing: false,
+    );
+  }
   if (_isWorkingActivity(
     state: state,
     source: source,
@@ -31,13 +40,6 @@ AgentExecutionStatus agentExecutionStatus({
       label: 'Working',
       state: 'working',
       isRefreshing: state == 'pending',
-    );
-  }
-  if (_isExceptionActivity(state: state, source: source, reason: reason)) {
-    return const AgentExecutionStatus(
-      label: 'Exception',
-      state: 'exception',
-      isRefreshing: false,
     );
   }
   if (isAwaitingAgentResponse) {
@@ -52,13 +54,6 @@ AgentExecutionStatus agentExecutionStatus({
       label: 'Working',
       state: 'working',
       isRefreshing: true,
-    );
-  }
-  if (hasLocalExecutionException) {
-    return const AgentExecutionStatus(
-      label: 'Exception',
-      state: 'exception',
-      isRefreshing: false,
     );
   }
   if (_isIdleActivity(state)) {

@@ -199,6 +199,35 @@ void main() {
     });
 
     test(
+      'unified stream dispatches redacted invalidations without an OS alert',
+      () async {
+        final streamClient = _FakeTaskCompletionStreamClient();
+        final localNotifications = _FakeTaskCompletionLocalNotifications();
+        final invalidations = <TaskCompletionNotificationEvent>[];
+        final controller = _controller(
+          streamClient: streamClient,
+          localNotifications: localNotifications,
+          onInvalidationEvent: invalidations.add,
+        );
+        final event = _invalidation(
+          id: 'conversation-7',
+          kind: TaskCompletionNotificationEvent.conversationChangedKind,
+        );
+
+        await controller.start(_host(scopes: const {'notify'}));
+        streamClient
+          ..add(event)
+          ..add(event);
+        await _drain();
+
+        expect(invalidations, [event]);
+        expect(localNotifications.shown, isEmpty);
+
+        await controller.dispose();
+      },
+    );
+
+    test(
       'stream completion reconnects and keeps future notifications alive',
       () async {
         final streamClient = _ReconnectTaskCompletionStreamClient();
@@ -344,6 +373,7 @@ TaskCompletionNotificationController _controller({
   required _FakeTaskCompletionLocalNotifications localNotifications,
   TaskCompletionSeenDedupeStore? seenStore,
   TaskCompletionNotificationEventHandler? onLiveEvent,
+  TaskCompletionNotificationEventHandler? onInvalidationEvent,
   TaskCompletionNotificationPredicate? shouldShowNotification,
   DateTime Function()? clock,
 }) {
@@ -355,6 +385,7 @@ TaskCompletionNotificationController _controller({
         TaskCompletionSeenDedupeStore(secureStore: MemorySecureStore()),
     onTap: (_) {},
     onLiveEvent: onLiveEvent,
+    onInvalidationEvent: onInvalidationEvent,
     shouldShowNotification: shouldShowNotification,
     clock: clock ?? () => DateTime.utc(2026, 6, 30, 11, 59),
   );
@@ -372,6 +403,23 @@ TaskCompletionNotificationEvent _event({
     agent: 'mobile',
     completedAt: completedAt ?? DateTime.utc(2026, 6, 30, 12),
     dedupeKey: dedupeKey,
+  );
+}
+
+TaskCompletionNotificationEvent _invalidation({
+  required String id,
+  required String kind,
+}) {
+  return TaskCompletionNotificationEvent(
+    id: id,
+    kind: kind,
+    projectId: 'proj-demo',
+    projectShortName: 'demo',
+    agent: 'mobile',
+    completedAt: DateTime.utc(2026, 6, 30, 12),
+    dedupeKey: 'invalidation:$id',
+    namespaceEpoch: 4,
+    scope: 'conversation',
   );
 }
 

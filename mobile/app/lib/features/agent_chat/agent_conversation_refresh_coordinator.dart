@@ -10,6 +10,8 @@ typedef AgentChatStateMutation = void Function(void Function() update);
 typedef AgentChatIsMounted = bool Function();
 typedef AgentTimelineNearEnd = bool Function(String agentName);
 typedef AgentTimelineScrollToEnd = void Function(String agentName);
+typedef AgentConversationLoaded =
+    void Function(CcbAgentConversation conversation);
 
 class AgentConversationRefreshCoordinator {
   AgentConversationRefreshCoordinator({
@@ -18,6 +20,7 @@ class AgentConversationRefreshCoordinator {
     required AgentChatStateMutation mutateState,
     required AgentTimelineNearEnd isTimelineNearEnd,
     required AgentTimelineScrollToEnd scrollTimelineToEnd,
+    this.onConversationLoaded,
   }) : _chatController = chatController,
        _isMounted = isMounted,
        _mutateState = mutateState,
@@ -29,6 +32,7 @@ class AgentConversationRefreshCoordinator {
   final AgentChatStateMutation _mutateState;
   final AgentTimelineNearEnd _isTimelineNearEnd;
   final AgentTimelineScrollToEnd _scrollTimelineToEnd;
+  final AgentConversationLoaded? onConversationLoaded;
   final Map<String, _PendingConversationLoad> _pendingLoads = {};
 
   Future<void> load({
@@ -71,6 +75,7 @@ class AgentConversationRefreshCoordinator {
         agentName: agentName,
         conversation: conversation,
       );
+      onConversationLoaded?.call(conversation);
     } catch (error) {
       if (!_isMounted()) {
         return;

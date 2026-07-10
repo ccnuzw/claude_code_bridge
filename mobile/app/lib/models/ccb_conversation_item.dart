@@ -309,6 +309,7 @@ class CcbConversationItem {
   }
 
   CcbConversationItem copyWith({
+    String? id,
     String? body,
     CcbConversationDeliveryState? state,
     List<CcbMessageAttachment>? attachments,
@@ -318,7 +319,7 @@ class CcbConversationItem {
     int? durationMs,
   }) {
     return CcbConversationItem(
-      id: id,
+      id: id ?? this.id,
       agentName: agentName,
       kind: kind,
       title: title,

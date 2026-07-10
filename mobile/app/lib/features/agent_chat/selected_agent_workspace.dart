@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 
+import '../../cache/mobile_snapshot_store.dart';
 import '../../l10n/ccb_mobile_localizations.dart';
 import '../../models/ccb_agent.dart';
 import '../../models/ccb_agent_conversation.dart';
@@ -24,7 +25,6 @@ import 'agent_message_submit_coordinator.dart';
 import 'agent_pane_event_coordinator.dart';
 import 'agent_pane_message_submitter.dart';
 import 'conversation_timeline.dart';
-import 'conversation_refresh_scheduler.dart';
 import 'pane_chat_controller.dart';
 import 'selected_agent_workspace_model.dart';
 import 'selected_agent_workspace_view.dart';
@@ -47,6 +47,11 @@ class SelectedAgentWorkspace extends StatefulWidget {
     this.onUserScrollDirectionChanged,
     this.onProjectActivity,
     this.localMessageStore,
+    this.snapshotStore,
+    this.snapshotNamespace,
+    this.sendEnabled = true,
+    this.sendDisabledReason,
+    this.refreshToken = 0,
     this.controller,
   });
 
@@ -60,6 +65,11 @@ class SelectedAgentWorkspace extends StatefulWidget {
   final ValueChanged<ScrollDirection>? onUserScrollDirectionChanged;
   final VoidCallback? onProjectActivity;
   final AgentLocalMessageStore? localMessageStore;
+  final MobileSnapshotStore? snapshotStore;
+  final String? snapshotNamespace;
+  final bool sendEnabled;
+  final String? sendDisabledReason;
+  final int refreshToken;
   final SelectedAgentWorkspaceController? controller;
 
   @override
@@ -100,6 +110,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     mutateState: _mutateChatState,
     isTimelineNearEnd: _isTimelineNearEnd,
     scrollTimelineToEnd: _scrollTimelineToEnd,
+    onConversationLoaded: _persistConversationSnapshot,
   );
   late final AgentPaneEventCoordinator _paneEventCoordinator =
       AgentPaneEventCoordinator(
@@ -119,14 +130,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         isTimelineNearEnd: _isTimelineNearEnd,
         scrollTimelineToEnd: _scrollTimelineToEnd,
         loadConversation: _loadConversation,
-        scheduleConversationRefresh: _scheduleConversationRefresh,
         paneSubmitter: _paneMessageSubmitter,
-      );
-  late final ConversationRefreshScheduler _conversationRefreshScheduler =
-      ConversationRefreshScheduler(
-        onRefresh: _refreshScheduledConversation,
-        isActive: (agentName) => mounted && widget.agent?.name == agentName,
-        onStateChanged: _handleRefreshScheduleChanged,
       );
   final Set<String> _downloadingAttachmentIds = {};
   final Map<String, String> _downloadedAttachmentPaths = {};
@@ -147,6 +151,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     WidgetsBinding.instance.addObserver(this);
     widget.controller?._attachRefreshLatest(_refreshSelectedAgentLatest);
     _restoreLocalMessagesForSelectedAgent();
+    _restoreConversationSnapshot();
     _loadSelectedAgentConversation();
   }
 
@@ -173,6 +178,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       }
       if (projectOrAgentChanged) {
         _restoreLocalMessagesForSelectedAgent();
+        _restoreConversationSnapshot();
       }
       _loadSelectedAgentConversation();
     } else if (_selectedAgentActivitySignature(oldWidget.agent) !=
@@ -188,6 +194,9 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         );
       }
     }
+    if (oldWidget.refreshToken != widget.refreshToken) {
+      _loadSelectedAgentConversation();
+    }
   }
 
   @override
@@ -197,7 +206,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     widget.controller?._detachRefreshLatest();
     unawaited(_paneMessageSubmitter.closeSessions());
     _uiControllers.dispose();
-    _conversationRefreshScheduler.cancelAll(notify: false);
     super.dispose();
   }
 
@@ -275,6 +283,68 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     setState(() {
       _chatController.restoreLocalMessages(agentName, messages);
     });
+  }
+
+  Future<void> _restoreConversationSnapshot() async {
+    final store = widget.snapshotStore;
+    final namespace = widget.snapshotNamespace;
+    final agent = widget.agent;
+    final epoch = widget.view.namespaceEpoch;
+    if (store == null || namespace == null || agent == null || epoch == null) {
+      return;
+    }
+    final projectId = widget.view.project.id;
+    final payload = await store.read(
+      mobileConversationSnapshotKey(
+        namespace: namespace,
+        projectId: projectId,
+        agent: agent.name,
+        namespaceEpoch: epoch,
+      ),
+    );
+    if (!mounted ||
+        payload == null ||
+        widget.view.project.id != projectId ||
+        widget.agent?.name != agent.name ||
+        widget.view.namespaceEpoch != epoch) {
+      return;
+    }
+    try {
+      final conversation = CcbAgentConversation.fromJson(payload);
+      if (conversation.projectId != projectId ||
+          conversation.agentName != agent.name ||
+          conversation.namespaceEpoch != epoch) {
+        return;
+      }
+      setState(() {
+        _chatController.applyRemoteConversation(
+          agentName: agent.name,
+          conversation: conversation,
+          shouldScroll: false,
+        );
+      });
+    } catch (_) {
+      // Invalid snapshots are ignored; the authoritative refresh remains live.
+    }
+  }
+
+  void _persistConversationSnapshot(CcbAgentConversation conversation) {
+    final store = widget.snapshotStore;
+    final namespace = widget.snapshotNamespace;
+    if (store == null || namespace == null || conversation.namespaceEpoch < 0) {
+      return;
+    }
+    unawaited(
+      store.write(
+        mobileConversationSnapshotKey(
+          namespace: namespace,
+          projectId: conversation.projectId,
+          agent: conversation.agentName,
+          namespaceEpoch: conversation.namespaceEpoch,
+        ),
+        conversation.toJson(),
+      ),
+    );
   }
 
   Future<void> _persistLocalMessages(String agentName) async {
@@ -436,10 +506,12 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
   }
 
   Future<void> _sendMessage(CcbAgent agent) async {
+    if (!widget.sendEnabled || widget.view.namespaceEpoch == null) {
+      _showSnack(widget.sendDisabledReason ?? 'Refresh target before sending');
+      return;
+    }
     final controller = _draftController(agent.name);
     final attachments = _draftAttachments(agent.name);
-    var acceptedPaneMessage = false;
-
     await _messageSubmitCoordinator.send(
       agent: agent,
       body: controller.text,
@@ -456,20 +528,12 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         _recentPaneOutputText.remove(agent.name);
         widget.onProjectActivity?.call();
         if (widget.usePaneInputForMessages) {
-          acceptedPaneMessage = true;
           _markAwaitingPaneResponse(agent.name);
         }
       },
     );
-    if (!acceptedPaneMessage ||
-        !mounted ||
-        widget.agent?.name != agent.name ||
-        _conversationRefreshScheduler.isPending(agent.name)) {
-      return;
-    }
-    setState(() {
-      _awaitingPaneResponseAgentNames.remove(agent.name);
-    });
+    // A successful pane write retains the single placeholder until an
+    // invalidation-driven authoritative snapshot reconciles the turn.
   }
 
   Future<void> _sendPaneKey(
@@ -492,7 +556,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       return;
     }
     _refreshLatest(agent.name);
-    _scheduleConversationRefresh(agent.name);
   }
 
   Future<void> _sendDraftThenPaneKey(
@@ -526,7 +589,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       _markAwaitingPaneResponse(agent.name);
     });
     _refreshLatest(agent.name);
-    _scheduleConversationRefresh(agent.name);
   }
 
   Future<void> _pickAttachments({
@@ -839,49 +901,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     }
   }
 
-  void _scheduleConversationRefresh(String agentName) {
-    _localExceptionStatusAgentNames.remove(agentName);
-    _recentPaneOutputText.remove(agentName);
-    _markAwaitingPaneResponse(agentName);
-    _conversationRefreshScheduler.schedule(agentName);
-  }
-
-  Future<void> _refreshScheduledConversation(String agentName) async {
-    final agent = widget.agent;
-    if (agent == null || agent.name != agentName) {
-      return;
-    }
-    final wasNearLatest = _isTimelineNearEnd(agent.name);
-    final result = await _refreshExecutionStatusForAgent(agent);
-    if (!result.settled || !mounted || widget.agent?.name != agent.name) {
-      if (mounted &&
-          widget.agent?.name == agent.name &&
-          _shouldRefreshConversationWhileAwaiting(agent.name)) {
-        await _refreshSelectedAgentConversation(agent);
-      }
-      if (wasNearLatest && mounted && widget.agent?.name == agent.name) {
-        _scrollTimelineToEnd(agent.name);
-      }
-      return;
-    }
-    _conversationRefreshScheduler.cancelAll();
-    await _refreshLatestForAgent(agent, refreshViewFirst: false);
-  }
-
-  bool _shouldRefreshConversationWhileAwaiting(String _) => true;
-
-  void _handleRefreshScheduleChanged() {
-    if (!mounted) {
-      return;
-    }
-    final selectedAgentName = widget.agent?.name;
-    if (selectedAgentName != null &&
-        !_conversationRefreshScheduler.isPending(selectedAgentName)) {
-      _clearAwaitingPaneResponse(selectedAgentName);
-    }
-    setState(() {});
-  }
-
   void _refreshLatest(String agentName) {
     final agent = widget.agent;
     if (agent == null || agent.name != agentName) {
@@ -909,19 +928,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       }
     }
     await _refreshSelectedAgentConversation(agent, viewOverride: view);
-  }
-
-  Future<_ExecutionSyncResult> _refreshExecutionStatusForAgent(
-    CcbAgent agent,
-  ) async {
-    final refreshed = await widget.onRefreshView?.call();
-    if (!mounted || widget.agent?.name != agent.name || refreshed == null) {
-      return _ExecutionSyncResult.pending;
-    }
-    return _syncLocalExecutionStateFromView(
-      view: refreshed,
-      agentName: agent.name,
-    );
   }
 
   _ExecutionSyncResult _syncLocalExecutionStateFromView({
@@ -1225,6 +1231,9 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
                 label: 'Esc',
               );
             },
+            sendEnabled:
+                widget.sendEnabled && widget.view.namespaceEpoch != null,
+            sendDisabledReason: widget.sendDisabledReason,
           ),
         ),
       ],

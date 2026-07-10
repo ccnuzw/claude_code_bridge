@@ -6,7 +6,7 @@ import 'package:ccb_mobile/features/agent_chat/selected_agent_workspace_model.da
 import 'package:ccb_mobile/features/agent_chat/selected_agent_workspace_view.dart';
 
 void main() {
-  testWidgets('comms updates render as status instead of timeline card', (
+  testWidgets('default chat excludes comms updates and terminal status cards', (
     tester,
   ) async {
     final scrollController = ScrollController();
@@ -98,25 +98,19 @@ void main() {
       ),
     );
 
-    expect(find.byKey(const ValueKey('agent-comms-status')), findsOneWidget);
-    expect(find.text('Communicating'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-comms-status')), findsNothing);
+    expect(find.text('Communicating'), findsNothing);
     expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
     expect(
       find.byKey(const ValueKey('conversation-working-status-text')),
       findsOneWidget,
     );
-    expect(find.text('project view updated'), findsOneWidget);
+    expect(find.text('project view updated'), findsNothing);
     expect(
       find.byKey(const ValueKey('agent-conversation-refresh-action')),
       findsNothing,
     );
     expect(_composerGap(tester), lessThanOrEqualTo(8));
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey('agent-comms-status'))).dy,
-      lessThan(
-        tester.getTopLeft(find.byKey(const ValueKey('agent-chat-composer'))).dy,
-      ),
-    );
     expect(
       find.byKey(const ValueKey('conversation-item-comms-1')),
       findsNothing,

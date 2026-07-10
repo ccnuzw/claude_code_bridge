@@ -60,6 +60,8 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
     required this.onSend,
     required this.onSendTab,
     required this.onSendEscape,
+    this.sendEnabled = true,
+    this.sendDisabledReason,
     super.key,
   });
 
@@ -91,6 +93,8 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onSendTab;
   final VoidCallback onSendEscape;
+  final bool sendEnabled;
+  final String? sendDisabledReason;
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +131,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
                         view: view,
                         agent: model.agent,
                         contentItems: model.contentItems,
-                        initialHistory: model.initialHistory,
+                        initialHistory: null,
                         items: model.timelineItems,
                         isLoading: model.isLoadingConversation,
                         controller: timelineController,
@@ -150,16 +154,17 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (model.commsItems.isNotEmpty)
+                  if (!model.isLoadingConversation &&
+                      model.timelineItems.isEmpty)
                     Positioned(
-                      top: 8,
+                      top: 24,
                       left: 8,
                       right: 8,
-                      child: IgnorePointer(
-                        child: Align(
-                          alignment: Alignment.topLeft,
-                          child: _AgentCommsStatusStrip(
-                            item: model.commsItems.last,
+                      child: const IgnorePointer(
+                        child: Center(
+                          child: Text(
+                            'No conversation yet',
+                            key: ValueKey('agent-conversation-empty'),
                           ),
                         ),
                       ),
@@ -181,6 +186,8 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
           controller: draftController,
           focusNode: draftFocusNode,
           isSending: model.isSending,
+          sendEnabled: sendEnabled,
+          sendDisabledReason: sendDisabledReason,
           collapsible: enableComposerCollapse,
           collapsed: enableComposerCollapse && model.isComposerCollapsed,
           onCollapse: onCollapseComposer,
@@ -286,63 +293,4 @@ class _ComposerDismissRegionState extends State<_ComposerDismissRegion> {
       child: widget.child,
     );
   }
-}
-
-class _AgentCommsStatusStrip extends StatelessWidget {
-  const _AgentCommsStatusStrip({required this.item});
-
-  final CcbConversationItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final strings = CcbMobileLocalizations.of(context);
-    final summary = _summaryText(item);
-    return Material(
-      key: const ValueKey('agent-comms-status'),
-      color: colorScheme.surfaceContainerHigh,
-      shape: const StadiumBorder(),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.forum_outlined, size: 18, color: colorScheme.primary),
-            const SizedBox(width: 6),
-            Text(
-              strings.communicating,
-              style: textTheme.labelLarge?.copyWith(color: colorScheme.primary),
-            ),
-            if (summary.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  summary,
-                  key: const ValueKey('agent-comms-status-summary'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-String _summaryText(CcbConversationItem item) {
-  final body = item.body.trim();
-  if (body.isNotEmpty) {
-    return body;
-  }
-  final source = item.source?.trim();
-  if (source != null && source.isNotEmpty) {
-    return source;
-  }
-  return item.title.trim();
 }

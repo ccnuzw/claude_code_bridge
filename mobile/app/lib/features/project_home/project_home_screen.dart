@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart' show SynchronousFuture;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 
+import '../../cache/mobile_snapshot_codec.dart';
+import '../../cache/mobile_snapshot_store.dart';
 import '../../app/app_factories.dart';
 import '../../app/app_theme.dart';
 import '../../app/runtime_mode.dart';
@@ -144,8 +146,6 @@ class _ProjectHomeView extends StatefulWidget {
 class _ProjectHomeViewState extends State<_ProjectHomeView>
     with WidgetsBindingObserver {
   static const _defaultProjectId = 'proj-demo';
-  static const _activeProjectStatusRefreshInterval = Duration(seconds: 2);
-
   final _pairingForm = ProjectHomePairingFormController();
 
   late MobileCcbRepository _activeRepository;
@@ -176,8 +176,13 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   WideSidebarState _wideSidebarDragStartState = WideSidebarState.expanded;
   double _wideSidebarDragDelta = 0;
   bool _mobileAgentsCollapsed = false;
-  Timer? _activeProjectStatusRefreshTimer;
-  bool _activeProjectStatusRefreshInFlight = false;
+  late final MobileSnapshotStore _snapshotStore = MobileSnapshotStore();
+  GatewayInvalidationConnectionState _gatewayConnectionState =
+      GatewayInvalidationConnectionState.connected;
+  Duration? _gatewayReconnectRetryIn;
+  bool _invalidationRefreshInFlight = false;
+  bool _invalidationRefreshQueued = false;
+  int _conversationInvalidationRevision = 0;
   AppLifecycleState _appLifecycleState =
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
   String? _visibleTaskCompletionProjectId;
@@ -219,6 +224,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           widget.taskCompletionSeenStore ?? TaskCompletionSeenDedupeStore(),
       onTap: _handleTaskCompletionNotificationTap,
       onLiveEvent: _handleLiveTaskCompletionEvent,
+      onInvalidationEvent: _handleGatewayInvalidationEvent,
+      onConnectionStateChanged: _handleGatewayConnectionStateChanged,
+      onStreamError: _handleGatewayStreamError,
       shouldShowNotification: _shouldShowTaskCompletionNotification,
     );
     _activeRepository = widget.repository;
@@ -228,7 +236,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   @override
   void dispose() {
-    _stopActiveProjectStatusRefresh();
     WidgetsBinding.instance.removeObserver(this);
     _pairingForm.dispose();
     unawaited(_taskNotifications.dispose());
@@ -331,6 +338,21 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
               ),
           onTimelineScrollDirectionChanged:
               _handleMobileTimelineScrollDirection,
+          snapshotStore: _snapshotStore,
+          snapshotNamespace: _snapshotNamespace,
+          sendEnabled: _sendEnabled,
+          sendDisabledReason: _sendDisabledReason,
+          conversationRefreshToken: _conversationInvalidationRevision,
+          reconnectRetryIn:
+              _gatewayConnectionState ==
+                      GatewayInvalidationConnectionState.reconnecting
+                  ? _gatewayReconnectRetryIn
+                  : null,
+          onRetryConnection:
+              _gatewayConnectionState ==
+                      GatewayInvalidationConnectionState.reconnecting
+                  ? _taskNotifications.retryNow
+                  : null,
         );
       },
     );
@@ -385,6 +407,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
             .getProjectView(_activeProjectId)
             .timeout(projectHomeRuntimeViewLoadTimeout);
         _rememberProjectActivity(view);
+        _persistProjectViewSnapshot(view);
         return view;
       } catch (error) {
         throw await _gatewayRequestFailure(profile, error);
@@ -396,11 +419,13 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     final profile = _selectedProfile;
     return _deferredBuilderFuture(() async {
       try {
-        return _sortProjectsWithLocalActivity(
+        final projects = _sortProjectsWithLocalActivity(
           await _activeRepository.listProjects().timeout(
             projectHomeRuntimeViewLoadTimeout,
           ),
         );
+        _persistProjectsSnapshot(projects);
+        return projects;
       } catch (error) {
         throw await _gatewayRequestFailure(profile, error);
       }
@@ -425,6 +450,47 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       await _invalidateGatewayProfile(profile);
     }
     return normalized;
+  }
+
+  String? get _snapshotNamespace {
+    final profile = _selectedProfile;
+    if (profile == null) {
+      return null;
+    }
+    return mobileSnapshotNamespace(
+      hostId: profile.profile.hostId,
+      deviceId: profile.profile.deviceId,
+    );
+  }
+
+  void _persistProjectsSnapshot(List<CcbProject> projects) {
+    final namespace = _snapshotNamespace;
+    if (namespace == null) {
+      return;
+    }
+    unawaited(
+      _snapshotStore.write(
+        mobileProjectsSnapshotKey(namespace),
+        projectsSnapshotPayload(projects),
+      ),
+    );
+  }
+
+  void _persistProjectViewSnapshot(CcbProjectView view) {
+    final namespace = _snapshotNamespace;
+    if (namespace == null) {
+      return;
+    }
+    unawaited(
+      _snapshotStore.write(
+        mobileProjectViewSnapshotKey(
+          namespace: namespace,
+          projectId: view.project.id,
+          namespaceEpoch: view.namespaceEpoch,
+        ),
+        projectViewSnapshotPayload(view),
+      ),
+    );
   }
 
   Future<T> _deferredBuilderFuture<T>(Future<T> Function() load) {
@@ -575,7 +641,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }
 
   void _returnToServerProjectList() {
-    _stopActiveProjectStatusRefresh();
     setState(() {
       _activeProjectId = '';
       _openedProjectId = null;
@@ -723,6 +788,21 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       unreadAgentNames: _unreadAgentNamesForProject(view.project.id),
       hasUnreadTaskCompletion: _projectHasUnreadTaskCompletion(view.project.id),
       hasWorkingAgents: _viewHasWorkingAgents(view),
+      snapshotStore: _snapshotStore,
+      snapshotNamespace: _snapshotNamespace,
+      sendEnabled: _sendEnabled,
+      sendDisabledReason: _sendDisabledReason,
+      conversationRefreshToken: _conversationInvalidationRevision,
+      reconnectRetryIn:
+          _gatewayConnectionState ==
+                  GatewayInvalidationConnectionState.reconnecting
+              ? _gatewayReconnectRetryIn
+              : null,
+      onRetryConnection:
+          _gatewayConnectionState ==
+                  GatewayInvalidationConnectionState.reconnecting
+              ? _taskNotifications.retryNow
+              : null,
     );
   }
 
@@ -849,7 +929,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     setState(() {
       _openedProjectId = outcome.openedProjectId;
     });
-    _restartActiveProjectStatusRefresh();
   }
 
   void _openServerProject(CcbProject project) {
@@ -860,7 +939,70 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _selectedAgentName = null;
       _viewFuture = _loadActiveProjectView();
     });
-    _restartActiveProjectStatusRefresh();
+    unawaited(_restoreProjectViewSnapshot(project.id));
+  }
+
+  Future<void> _restoreGatewayProjectListSnapshot(
+    GatewayPairedHost profile,
+  ) async {
+    final namespace = mobileSnapshotNamespace(
+      hostId: profile.profile.hostId,
+      deviceId: profile.profile.deviceId,
+    );
+    final payload = await _snapshotStore.read(
+      mobileProjectsSnapshotKey(namespace),
+    );
+    final projects =
+        payload == null
+            ? const <CcbProject>[]
+            : projectsFromSnapshotPayload(payload);
+    if (!mounted || !_isActiveGatewayProfile(profile) || projects.isEmpty) {
+      return;
+    }
+    setState(() {
+      if (_activeProjectId.isEmpty) {
+        _serverProjectsFuture = SynchronousFuture(projects);
+      }
+    });
+    // The cached list is only a startup frame. Authoritative data replaces it
+    // in the background without requiring a user tap.
+    try {
+      final fresh = await _loadServerProjects();
+      if (mounted &&
+          _isActiveGatewayProfile(profile) &&
+          _activeProjectId.isEmpty) {
+        setState(() {
+          _serverProjectsFuture = SynchronousFuture(fresh);
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _restoreProjectViewSnapshot(String projectId) async {
+    final namespace = _snapshotNamespace;
+    if (namespace == null) {
+      return;
+    }
+    final payload = await _snapshotStore.readLatestWithPrefix(
+      mobileProjectViewSnapshotPrefix(
+        namespace: namespace,
+        projectId: projectId,
+      ),
+    );
+    final snapshot =
+        payload == null ? null : projectViewFromSnapshotPayload(payload);
+    if (!mounted ||
+        snapshot == null ||
+        snapshot.project.id != projectId ||
+        _activeProjectId != projectId) {
+      return;
+    }
+    setState(() {
+      _viewFuture = SynchronousFuture(snapshot);
+      _selectedAgentName ??=
+          snapshot.agents.isEmpty ? null : snapshot.agents.first.name;
+    });
+    unawaited(_refreshActiveView());
   }
 
   void _closeProject() {
@@ -949,7 +1091,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   void _setRuntimeMode(AppRuntimeMode mode) {
     switch (mode) {
       case AppRuntimeMode.fake:
-        _stopActiveProjectStatusRefresh();
         _gatewayProfileActivationSucceeded = false;
         final reset = resetProjectHomeFakeRuntime(
           defaultProjectId: _defaultProjectId,
@@ -967,6 +1108,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           _openedProjectId = null;
           _selectedAgentName = null;
           _terminalTransport = session.terminalTransport;
+          _gatewayConnectionState =
+              GatewayInvalidationConnectionState.connected;
+          _gatewayReconnectRetryIn = null;
           _viewFuture = session.viewFuture;
         });
         unawaited(_taskNotifications.stop());
@@ -1011,7 +1155,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     unawaited(
       _completeGatewayProfileActivation(profile, session.projectsFuture),
     );
-    _stopActiveProjectStatusRefresh();
     setState(() {
       _mode = AppRuntimeMode.pairedGateway;
       _showPairingSetup = false;
@@ -1023,8 +1166,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _openedProjectId = null;
       _selectedAgentName = null;
       _terminalTransport = session.terminalTransport;
+      _gatewayConnectionState = GatewayInvalidationConnectionState.connected;
+      _gatewayReconnectRetryIn = null;
     });
     _lifecycleResultNotifier.value = null;
+    unawaited(_restoreGatewayProjectListSnapshot(profile));
   }
 
   Future<void> _completeGatewayProfileActivation(
@@ -1084,7 +1230,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }
 
   void _returnToPairingSetup() {
-    _stopActiveProjectStatusRefresh();
     unawaited(_taskNotifications.stop());
     setState(() {
       _mode = AppRuntimeMode.fake;
@@ -1095,6 +1240,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _openedProjectId = null;
       _selectedAgentName = null;
       _terminalTransport = null;
+      _gatewayConnectionState = GatewayInvalidationConnectionState.stopped;
+      _gatewayReconnectRetryIn = null;
       _routeDiagnostics = null;
       _viewFuture = _loadActiveProjectView();
     });
@@ -1279,6 +1426,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         return null;
       }
       final refreshed = outcome.refreshedView!;
+      _persistProjectViewSnapshot(refreshed);
       setState(() {
         _viewFuture = SynchronousFuture(refreshed);
         _selectedAgentName = outcome.selectedAgentName;
@@ -1286,67 +1434,142 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       return refreshed;
     }
     if (mounted) {
+      if (_mode == AppRuntimeMode.pairedGateway && _selectedProfile != null) {
+        setState(() {
+          _gatewayConnectionState =
+              GatewayInvalidationConnectionState.reconnecting;
+          _gatewayReconnectRetryIn ??= const Duration(seconds: 1);
+        });
+      }
       _showSnack(outcome.snackMessage!);
     }
     return null;
   }
 
-  bool get _shouldRefreshActiveProjectStatus =>
-      _mode == AppRuntimeMode.pairedGateway &&
-      !_showPairingSetup &&
-      _activeProjectId.isNotEmpty &&
-      _openedProjectId == _activeProjectId;
+  bool get _sendEnabled =>
+      _mode != AppRuntimeMode.pairedGateway ||
+      _gatewayConnectionState !=
+          GatewayInvalidationConnectionState.reconnecting;
 
-  void _restartActiveProjectStatusRefresh() {
-    _stopActiveProjectStatusRefresh();
-    if (!_shouldRefreshActiveProjectStatus) {
-      return;
+  String? get _sendDisabledReason {
+    if (_mode != AppRuntimeMode.pairedGateway) {
+      return null;
     }
-    _activeProjectStatusRefreshTimer = Timer.periodic(
-      _activeProjectStatusRefreshInterval,
-      (_) {
-        unawaited(_refreshActiveProjectStatus());
-      },
-    );
+    if (_gatewayConnectionState ==
+        GatewayInvalidationConnectionState.reconnecting) {
+      final seconds = _gatewayReconnectRetryIn?.inSeconds;
+      return seconds == null || seconds <= 0
+          ? 'Reconnecting. Sending is disabled.'
+          : 'Reconnecting. Retry in ${seconds}s.';
+    }
+    return 'Refresh target before sending';
   }
 
-  void _stopActiveProjectStatusRefresh() {
-    _activeProjectStatusRefreshTimer?.cancel();
-    _activeProjectStatusRefreshTimer = null;
-    _activeProjectStatusRefreshInFlight = false;
-  }
-
-  Future<void> _refreshActiveProjectStatus() async {
-    if (!_shouldRefreshActiveProjectStatus ||
-        _activeProjectStatusRefreshInFlight) {
+  void _handleGatewayConnectionStateChanged(
+    GatewayInvalidationConnectionState state,
+    Duration? retryIn,
+  ) {
+    if (!mounted || _mode != AppRuntimeMode.pairedGateway) {
       return;
     }
-    _activeProjectStatusRefreshInFlight = true;
-    final projectId = _activeProjectId;
-    try {
-      final current = await _viewFuture;
-      final refreshed = await _activeRepository
-          .getProjectView(projectId)
-          .timeout(projectHomeRuntimeViewLoadTimeout);
-      if (!mounted ||
-          projectId != _activeProjectId ||
-          !_shouldRefreshActiveProjectStatus ||
-          _sameProjectViewActivity(current, refreshed)) {
-        return;
+    final wasReconnecting =
+        _gatewayConnectionState ==
+        GatewayInvalidationConnectionState.reconnecting;
+    setState(() {
+      _gatewayConnectionState = state;
+      _gatewayReconnectRetryIn = retryIn;
+    });
+    if (state == GatewayInvalidationConnectionState.connected &&
+        wasReconnecting) {
+      unawaited(_refreshAfterGatewayReconnect());
+    }
+  }
+
+  void _handleGatewayStreamError(Object error) {
+    if (error is! GatewayTaskCompletionNotificationStreamException ||
+        (error.statusCode != 401 && error.statusCode != 403)) {
+      return;
+    }
+    final profile = _selectedProfile;
+    if (profile == null) {
+      return;
+    }
+    unawaited(() async {
+      await _invalidateGatewayProfile(profile);
+      if (mounted && _selectedProfile == null) {
+        _returnToPairingSetup();
       }
-      _rememberProjectActivity(refreshed);
-      setState(() {
-        _viewFuture = SynchronousFuture(
-          _projectViewWithRefreshedActivity(
-            current: current,
-            refreshed: refreshed,
-          ),
-        );
-      });
-    } catch (_) {
-      // Status polling is best-effort; explicit refresh still surfaces errors.
+    }());
+  }
+
+  Future<void> _refreshAfterGatewayReconnect() async {
+    if (_activeProjectId.isEmpty) {
+      try {
+        final projects = await _loadServerProjects();
+        if (mounted && _activeProjectId.isEmpty) {
+          setState(() {
+            _serverProjectsFuture = SynchronousFuture(projects);
+          });
+        }
+      } catch (_) {}
+      return;
+    }
+    await _scheduleInvalidationRefresh(conversationChanged: true);
+  }
+
+  Future<void> _handleGatewayInvalidationEvent(
+    TaskCompletionNotificationEvent event,
+  ) async {
+    if (!event.isInvalidation || _mode != AppRuntimeMode.pairedGateway) {
+      return;
+    }
+    if (event.kind ==
+            TaskCompletionNotificationEvent.projectSummaryChangedKind &&
+        _activeProjectId.isEmpty) {
+      try {
+        final projects = await _loadServerProjects();
+        if (mounted && _activeProjectId.isEmpty) {
+          setState(() {
+            _serverProjectsFuture = SynchronousFuture(projects);
+          });
+        }
+      } catch (_) {}
+      return;
+    }
+    if (event.projectId == _activeProjectId) {
+      await _scheduleInvalidationRefresh(
+        conversationChanged:
+            event.kind ==
+            TaskCompletionNotificationEvent.conversationChangedKind,
+      );
+    }
+  }
+
+  Future<void> _scheduleInvalidationRefresh({
+    required bool conversationChanged,
+  }) async {
+    if (_invalidationRefreshInFlight) {
+      _invalidationRefreshQueued =
+          _invalidationRefreshQueued || conversationChanged;
+      return;
+    }
+    _invalidationRefreshInFlight = true;
+    try {
+      final refreshed = await _refreshActiveView();
+      if (refreshed != null && mounted && conversationChanged) {
+        setState(() {
+          _conversationInvalidationRevision += 1;
+        });
+      }
     } finally {
-      _activeProjectStatusRefreshInFlight = false;
+      _invalidationRefreshInFlight = false;
+      if (_invalidationRefreshQueued) {
+        final queuedConversation = _invalidationRefreshQueued;
+        _invalidationRefreshQueued = false;
+        unawaited(
+          _scheduleInvalidationRefresh(conversationChanged: queuedConversation),
+        );
+      }
     }
   }
 
@@ -1736,9 +1959,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
             agent: route.agentName!,
           ),
         );
-        _restartActiveProjectStatusRefresh();
       case ProjectHomeTaskCompletionNotificationRouteKind.projectList:
-        _stopActiveProjectStatusRefresh();
         setState(() {
           _activeProjectId = '';
           _openedProjectId = null;
@@ -1753,76 +1974,4 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     messenger.clearSnackBars();
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
-}
-
-CcbProjectView _projectViewWithRefreshedActivity({
-  required CcbProjectView current,
-  required CcbProjectView refreshed,
-}) {
-  return CcbProjectView(
-    project: refreshed.project,
-    namespaceEpoch: refreshed.namespaceEpoch,
-    tmuxSocketPath: refreshed.tmuxSocketPath,
-    tmuxSessionName: refreshed.tmuxSessionName,
-    activeWindow: refreshed.activeWindow,
-    activePaneId: refreshed.activePaneId,
-    windows: refreshed.windows,
-    agents: refreshed.agents,
-    contentItems: current.contentItems,
-    notifications: current.notifications,
-    terminalHistories: current.terminalHistories,
-  );
-}
-
-bool _sameProjectViewActivity(
-  CcbProjectView current,
-  CcbProjectView refreshed,
-) {
-  return _projectViewActivitySignature(current) ==
-      _projectViewActivitySignature(refreshed);
-}
-
-String _projectViewActivitySignature(CcbProjectView view) {
-  final buffer =
-      StringBuffer()
-        ..write(view.namespaceEpoch)
-        ..write('|')
-        ..write(view.activeWindow)
-        ..write('|')
-        ..write(view.activePaneId);
-  for (final window in view.windows) {
-    buffer
-      ..write('|w:')
-      ..write(window.name)
-      ..write(',')
-      ..write(window.active)
-      ..write(',')
-      ..write(window.order)
-      ..write(',')
-      ..write(window.agents.join(','));
-  }
-  for (final agent in view.agents) {
-    buffer
-      ..write('|a:')
-      ..write(agent.name)
-      ..write(',')
-      ..write(agent.active)
-      ..write(',')
-      ..write(agent.queueDepth)
-      ..write(',')
-      ..write(agent.runtimeHealth)
-      ..write(',')
-      ..write(agent.activityState)
-      ..write(',')
-      ..write(agent.activitySource)
-      ..write(',')
-      ..write(agent.activityReason)
-      ..write(',')
-      ..write(agent.activitySymbol)
-      ..write(',')
-      ..write(agent.activityColor)
-      ..write(',')
-      ..write(agent.lastProgressAt);
-  }
-  return buffer.toString();
 }

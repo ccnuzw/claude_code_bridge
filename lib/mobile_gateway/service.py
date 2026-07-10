@@ -22,7 +22,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from ccbd.api_models import DeliveryScope, MessageEnvelope
 from ccbd.socket_client import CcbdClientError
-from .notifications import MobileNotificationSnapshot, MobileNotificationStore, encode_sse_event
+from .notifications import (
+    MobileInvalidationSnapshot,
+    MobileNotificationSnapshot,
+    MobileNotificationStore,
+    encode_sse_event,
+)
 from .pairing import MobileGatewayPairingError, MobileGatewayPairingStore
 from .project_activity import MobileGatewayProjectActivityStore
 from .project_registry import MobileGatewayProject, MobileGatewayProjectRegistry
@@ -52,6 +57,7 @@ _PAIRING_CAPABILITIES = (
     'file_upload',
     'file_download',
     'notifications',
+    'invalidation_stream',
 )
 _REDACTED_NAMESPACE_KEYS = ('socket_path', 'session_name')
 _DEFAULT_ROUTE_PROVIDER = 'lan'
@@ -77,6 +83,7 @@ _DEFAULT_PAIRING_SCOPES = (
 )
 _MAX_MOBILE_FILE_BYTES = 25 * 1024 * 1024
 _NOTIFICATION_STREAM_POLL_SECONDS = 1.0
+_INVALIDATION_WATCH_MIN_INTERVAL_SECONDS = 0.75
 _CODEX_NATIVE_TAIL_FILE_BYTES = 64 * 1024
 _CODEX_NATIVE_TAIL_LINE_LIMIT = 120
 _CODEX_NATIVE_TAIL_THREAD_LIMIT = 2
@@ -445,6 +452,11 @@ class MobileGatewayService:
         self._conversation_page_cache_lock = threading.Lock()
         self._project_activity_refreshing: set[str] = set()
         self._project_activity_refresh_lock = threading.Lock()
+        # One bounded watcher/cache serves every SSE client.  In particular,
+        # an additional phone must not multiply a full registry scan.
+        self._invalidation_watch_lock = threading.Lock()
+        self._invalidation_watch_refreshing = False
+        self._invalidation_watch_last_refresh = float('-inf')
         self._project_health_cache: _ProjectHealthCache | None = None
         if self._mode == 'loopback_server_registry':
             self._project_health_cache = _ProjectHealthCache(
@@ -668,15 +680,53 @@ class MobileGatewayService:
         query = parse_qs(parsed.query, keep_blank_values=True)
         self._authenticate(headers, required_scopes=('notify',))
         store = self._require_notification_store()
-        emitted = store.sync_snapshots(self._notification_snapshots())
-        for event in emitted:
-            self._record_project_activity(event.project_id, activity_at=event.completed_at)
+        self._refresh_notification_stream_if_due(
+            store,
+            force=self.notification_stream_once_from_path(path),
+        )
         cursor = (
             last_event_id
             if last_event_id is not None
             else _query_text(query, 'last_event_id') or _header_value(headers, 'last-event-id')
         )
         return [event.to_payload() for event in store.events_since(cursor)]
+
+    def _refresh_notification_stream_if_due(
+        self,
+        store: MobileNotificationStore,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Refresh the single gateway-side invalidation cache at most once.
+
+        SSE handlers may be numerous and each handler calls this method on its
+        keepalive cadence. The lock and monotonic interval make that cadence a
+        single bounded gateway observation rather than N registry scans.
+        """
+        now = self._monotonic_clock()
+        with self._invalidation_watch_lock:
+            if (
+                self._invalidation_watch_refreshing
+                or (
+                    not force
+                    and now - self._invalidation_watch_last_refresh
+                    < _INVALIDATION_WATCH_MIN_INTERVAL_SECONDS
+                )
+            ):
+                return
+            self._invalidation_watch_refreshing = True
+        try:
+            completion_snapshots, invalidation_snapshots = self._notification_stream_snapshots()
+            # Both signals share one bounded journal/SSE connection. REST
+            # endpoints remain the source of readable project state.
+            store.sync_invalidations(invalidation_snapshots)
+            emitted = store.sync_snapshots(completion_snapshots)
+            for event in emitted:
+                self._record_project_activity(event.project_id, activity_at=event.completed_at)
+        finally:
+            with self._invalidation_watch_lock:
+                self._invalidation_watch_last_refresh = self._monotonic_clock()
+                self._invalidation_watch_refreshing = False
 
     def terminal_history_payload(
         self,
@@ -754,19 +804,12 @@ class MobileGatewayService:
                     namespace_epoch=int(target['namespace_epoch']),
                     page=cached_page,
                 )
-        terminal_history = self._agent_terminal_history_for_conversation(
-            project_id=project.project_id,
-            view_payload=view_payload,
-            agent=str(target['agent']),
-            namespace_epoch=int(target['namespace_epoch']),
-        )
         conversation_items = _agent_conversation_items(
             view_payload,
             project_id=project.project_id,
             agent=target['agent'],
             namespace_epoch=int(target['namespace_epoch']),
             project_root=project.project_root,
-            terminal_history=terminal_history,
             mobile_files_dir=self._mobile_files_dir(),
             limit=limit,
             cursor=cursor,
@@ -857,33 +900,6 @@ class MobileGatewayService:
             ):
                 _, evicted = self._conversation_page_cache.popitem(last=False)
                 self._conversation_page_cache_bytes -= evicted.byte_size
-
-    def _agent_terminal_history_for_conversation(
-        self,
-        *,
-        project_id: str,
-        view_payload: dict[str, object],
-        agent: str,
-        namespace_epoch: int,
-    ) -> dict[str, object] | None:
-        try:
-            target = _terminal_history_target(
-                project_id=project_id,
-                view_payload=view_payload,
-                agent=agent,
-                namespace_epoch=namespace_epoch,
-                max_lines=240,
-            )
-            history = dict(self._terminal_history_factory(target) or {})
-        except Exception:
-            return None
-        history.setdefault('agent', target.agent)
-        history.setdefault('history_scope', 'tmux_scrollback')
-        history.setdefault('source_pane_id', target.pane_id)
-        history.setdefault('generated_at', self._clock())
-        history.setdefault('stale', False)
-        history.setdefault('blocks', [])
-        return history
 
     def file_upload_target_from_path(self, path: str) -> tuple[str, str] | None:
         parsed = urlparse(path)
@@ -1551,15 +1567,24 @@ class MobileGatewayService:
             raise MobileGatewayError('mobile notification store is not configured', status_code=503)
         return self._notification_store
 
-    def _notification_snapshots(self) -> list[MobileNotificationSnapshot]:
-        snapshots: list[MobileNotificationSnapshot] = []
+    def _notification_stream_snapshots(
+        self,
+    ) -> tuple[list[MobileNotificationSnapshot], list[MobileInvalidationSnapshot]]:
+        completion_snapshots: list[MobileNotificationSnapshot] = []
+        invalidation_snapshots: list[MobileInvalidationSnapshot] = []
         for project in self._project_registry.projects():
             try:
                 payload = self._request_project_view(project)
             except MobileGatewayError:
                 continue
-            snapshots.extend(_notification_snapshots_for_project(project, payload, observed_at=self._clock()))
-        return snapshots
+            observed_at = self._clock()
+            completion_snapshots.extend(
+                _notification_snapshots_for_project(project, payload, observed_at=observed_at)
+            )
+            invalidation_snapshots.extend(
+                _invalidation_snapshots_for_project(project, payload, observed_at=observed_at)
+            )
+        return completion_snapshots, invalidation_snapshots
 
     def _mobile_file_dir(self, project_id: str, agent: str, file_id: str) -> Path:
         return (
@@ -2307,6 +2332,58 @@ def _notification_snapshots_for_project(
     return snapshots
 
 
+def _invalidation_snapshots_for_project(
+    project: MobileGatewayProject,
+    payload: dict[str, object],
+    *,
+    observed_at: str,
+) -> list[MobileInvalidationSnapshot]:
+    """Build a low-sensitive, per-agent change fingerprint for mobile SSE.
+
+    File metadata is hashed before it leaves the gateway.  The app receives no
+    path, terminal output, native transcript, or device credential in an
+    invalidation event and follows it with its normal authenticated REST read.
+    """
+    view = _map(payload.get('view'))
+    cache = _map(payload.get('cache'))
+    project_record = _map(view.get('project'))
+    namespace = _map(view.get('namespace'))
+    namespace_epoch = _optional_int(namespace.get('epoch'))
+    generated_at = _optional_text(cache.get('generated_at')) or observed_at
+    project_short_name = (
+        _optional_text(project_record.get('display_name'))
+        or _optional_text(project_record.get('name'))
+        or project.public_display_name
+    )
+    snapshots: list[MobileInvalidationSnapshot] = []
+    for item in _iterable(view.get('agents')):
+        agent_record = _map(item)
+        agent_name = _optional_text(agent_record.get('name'))
+        if not agent_name:
+            continue
+        provider = _optional_text(agent_record.get('provider'))
+        fingerprint = _agent_native_conversation_cache_fingerprint(
+            project.project_root,
+            agent=agent_name,
+            provider=provider,
+        )
+        fingerprint_text = hashlib.sha256(
+            repr(fingerprint).encode('utf-8')
+        ).hexdigest()[:24]
+        snapshots.append(
+            MobileInvalidationSnapshot(
+                project_id=project.project_id,
+                project_short_name=project_short_name,
+                namespace_epoch=namespace_epoch,
+                agent=agent_name,
+                activity_state=(_optional_text(agent_record.get('activity_state')) or 'unknown').lower(),
+                conversation_fingerprint=fingerprint_text,
+                observed_at=generated_at,
+            )
+        )
+    return snapshots
+
+
 def _ccbd_health_summary(payload: dict[str, object]) -> dict[str, object]:
     return {
         'reachable': True,
@@ -2533,7 +2610,6 @@ def _agent_conversation_items(
     agent: str,
     namespace_epoch: int,
     project_root: Path,
-    terminal_history: dict[str, object] | None = None,
     mobile_files_dir: Path | None = None,
     limit: int | None = None,
     cursor: str | None = None,
@@ -2551,255 +2627,10 @@ def _agent_conversation_items(
         limit=limit,
         cursor=cursor,
     )
-    if native_items.items:
-        return native_items
-
-    items: list[dict[str, object]] = [
-        {
-            'id': f'status-{agent}',
-            'agent': agent,
-            'kind': 'status_event',
-            'title': 'Agent status',
-            'body': _agent_status_summary(agent_record),
-            'format': 'plain',
-            'source': 'project_view',
-        }
-    ]
-    content = _map(view.get('content'))
-    for item in _iterable(content.get('items')):
-        content_item = _map(item)
-        if not _conversation_item_belongs_to_agent(content_item, agent):
-            continue
-        content_id = str(content_item.get('id') or f'content-{len(items)}')
-        body = (
-            _optional_text(content_item.get('text'))
-            or _optional_text(content_item.get('body'))
-            or ''
-        )
-        if not body:
-            continue
-        reply_item = {
-            'id': f'reply-{content_id}',
-            'agent': agent,
-            'kind': 'agent_reply',
-            'title': _optional_text(content_item.get('title')) or 'Agent reply',
-            'body': body,
-            'format': _optional_text(content_item.get('format')) or 'plain',
-            'content_id': content_id,
-            'source': _optional_text(content_item.get('source')) or 'content',
-        }
-        _apply_mobile_conversation_timing(
-            reply_item,
-            sent_at=content_item.get('sent_at') or content_item.get('created_at'),
-            started_at=content_item.get('started_at') or content_item.get('execution_started_at'),
-            completed_at=(
-                content_item.get('completed_at')
-                or content_item.get('finished_at')
-                or content_item.get('execution_completed_at')
-            ),
-            duration_ms=content_item.get('duration_ms'),
-            duration_seconds=content_item.get('duration_seconds'),
-        )
-        items.append(
-            reply_item
-        )
-    seen_item_ids = {str(item.get('id') or '') for item in items}
-
-    if provider_key != 'claude':
-        terminal_items = _terminal_history_conversation_items(
-            terminal_history,
-            agent=agent,
-        )
-        if terminal_items:
-            return _ConversationItemsResult(terminal_items)
-
-    for item in _agent_history_conversation_items(
-        project_root,
-        project_id=project_id,
-        agent=agent,
-    ):
-        item_id = str(item.get('id') or '')
-        if item_id and item_id in seen_item_ids:
-            continue
-        items.append(item)
-        if item_id:
-            seen_item_ids.add(item_id)
-    comm_records = [_map(item) for item in _iterable(view.get('comms'))]
-    comm_records = [
-        item
-        for _, item in sorted(
-            enumerate(comm_records),
-            key=lambda indexed: (
-                _optional_text(indexed[1].get('created_at'))
-                or _optional_text(indexed[1].get('updated_at'))
-                or '9999',
-                indexed[0],
-            ),
-        )
-    ]
-    for comm in comm_records:
-        if not _conversation_item_belongs_to_agent(comm, agent):
-            continue
-        body = (
-            _optional_text(comm.get('body'))
-            or _optional_text(comm.get('text'))
-            or _optional_text(comm.get('message'))
-            or _optional_text(comm.get('body_preview'))
-        )
-        reply_dict = _completion_reply_for_job(
-            project_root,
-            _optional_text(comm.get('id')),
-            project_id=project_id,
-            agent=agent,
-        )
-        reply = str(reply_dict.get('body') or '')
-        reply_attachments = _attachment_records(reply_dict.get('attachments'))
-        attachments = _attachment_records(comm.get('attachments'))
-        comm_created_at = _first_mobile_conversation_timestamp(
-            comm.get('sent_at'),
-            comm.get('created_at'),
-            comm.get('updated_at'),
-        )
-        reply_completed_at = _first_mobile_conversation_timestamp(
-            reply_dict.get('completed_at'),
-            reply_dict.get('sent_at'),
-            comm.get('completed_at'),
-            comm.get('finished_at'),
-            comm.get('updated_at'),
-            comm_created_at,
-        )
-        if reply:
-            comm_id = str(comm.get('id') or f'comms-{len(items)}')
-            if body:
-                user_id = f'user-{comm_id}'
-                if user_id in seen_item_ids:
-                    continue
-                user_item = {
-                    'id': user_id,
-                    'agent': agent,
-                    'kind': 'user_message',
-                    'title': 'You',
-                    'body': body,
-                    'format': _optional_text(comm.get('format')) or 'markdown',
-                    'source': 'mobile',
-                    'state': 'sent',
-                    'attachments': attachments,
-                }
-                _apply_mobile_conversation_timing(user_item, sent_at=comm_created_at)
-                items.append(
-                    user_item
-                )
-                seen_item_ids.add(user_id)
-            reply_id = f'reply-{comm_id}'
-            if reply_id in seen_item_ids:
-                continue
-            reply_item = {
-                'id': reply_id,
-                'agent': agent,
-                'kind': 'agent_reply',
-                'title': _optional_text(comm.get('title')) or 'Agent reply',
-                'body': reply,
-                'format': 'markdown',
-                'source': 'completion_snapshot',
-                'attachments': reply_attachments,
-            }
-            _apply_mobile_conversation_timing(
-                reply_item,
-                sent_at=reply_completed_at,
-                started_at=reply_dict.get('started_at') or comm_created_at,
-                completed_at=reply_completed_at,
-                duration_ms=reply_dict.get('duration_ms'),
-                duration_seconds=reply_dict.get('duration_seconds'),
-            )
-            items.append(
-                reply_item
-            )
-            seen_item_ids.add(reply_id)
-            continue
-        if not body:
-            continue
-        comm_id = str(comm.get('id') or f'comms-{len(items)}')
-        item_id = f'comms-{comm_id}'
-        if item_id in seen_item_ids:
-            continue
-        comm_item = {
-            'id': item_id,
-            'agent': agent,
-            'kind': 'comms_item',
-            'title': _optional_text(comm.get('title')) or 'Comms',
-            'body': body,
-            'format': _optional_text(comm.get('format')) or 'plain',
-            'source': _optional_text(comm.get('source')) or 'project_view',
-            'attachments': attachments,
-        }
-        _apply_mobile_conversation_timing(comm_item, sent_at=comm_created_at)
-        items.append(
-            comm_item
-        )
-        seen_item_ids.add(item_id)
-    return _ConversationItemsResult(items)
-
-
-def _terminal_history_conversation_items(
-    history: dict[str, object] | None,
-    *,
-    agent: str,
-) -> list[dict[str, object]]:
-    history = _map(history)
-    if not history:
-        return []
-    history_scope = _optional_text(history.get('history_scope')) or 'tmux_scrollback'
-    source_pane_id = _optional_text(history.get('source_pane_id'))
-    items: list[dict[str, object]] = []
-    for block in _iterable(history.get('blocks')):
-        block_record = _map(block)
-        text = _optional_text(block_record.get('text')) or ''
-        if not text:
-            continue
-        block_id = _optional_text(block_record.get('id')) or f'history-{len(items) + 1}'
-        block_type = _optional_text(block_record.get('type')) or 'log'
-        is_input = block_type == 'command'
-        items.append(
-            {
-                'id': f'terminal-history-{block_id}',
-                'agent': agent,
-                'kind': 'user_message' if is_input else 'agent_reply',
-                'title': 'Terminal input'
-                if is_input
-                else (_optional_text(block_record.get('title')) or 'Terminal output'),
-                'body': _terminal_history_body(text, is_input=is_input),
-                'format': 'plain',
-                'source': _terminal_conversation_source(
-                    history_scope,
-                    source_pane_id=source_pane_id,
-                    is_input=is_input,
-                ),
-                'attachments': [],
-            }
-        )
-    return items
-
-
-def _terminal_history_body(text: str, *, is_input: bool) -> str:
-    body = text.strip()
-    if not is_input or body.startswith('$ '):
-        return body
-    return '$ ' + body
-
-
-def _terminal_conversation_source(
-    history_scope: str,
-    *,
-    source_pane_id: str | None,
-    is_input: bool,
-) -> str:
-    parts = [
-        'terminal input' if is_input else 'tmux output',
-        history_scope,
-    ]
-    if source_pane_id:
-        parts.append(source_pane_id)
-    return ' / '.join(parts)
+    # The ordinary Chat contract is provider-native only. Tmux scrollback,
+    # ProjectView content, and completion snapshots are explicit
+    # Terminal/Diagnostics surfaces, never automatic chat fallback.
+    return native_items
 
 
 def _agent_native_conversation_items(

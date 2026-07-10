@@ -31,7 +31,7 @@ void main() {
     expect(repository.conversationCalls.last, ('proj-demo', 'lead', 5));
   });
 
-  testWidgets('stale namespace chat send refreshes and retries', (
+  testWidgets('stale namespace chat send does not refresh or replay', (
     tester,
   ) async {
     final repository = _RefreshWidgetRepository(
@@ -47,13 +47,13 @@ void main() {
 
     await _sendMessage(tester, 'retry after stale epoch');
 
-    _expectOnlyProjectViewCalls(repository, minCalls: 2);
+    _expectOnlyProjectViewCalls(repository, minCalls: 1);
     expect(
       [for (final item in repository.submittedMessages) item.namespaceEpoch],
-      [4, 5],
+      [4],
     );
     expect(find.text('retry after stale epoch'), findsOneWidget);
-    expect(find.text('Failed'), findsNothing);
+    expect(find.text('Failed'), findsOneWidget);
   });
 
   testWidgets('refreshed view missing selected agent clears selection', (
@@ -71,7 +71,10 @@ void main() {
     await tester.pumpAndSettle();
     expectAgentSelected(tester, 'lead');
 
-    await _sendMessage(tester, 'lead goes stale');
+    await tester.tap(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+    );
+    await tester.pumpAndSettle();
 
     _expectOnlyProjectViewCalls(repository, minCalls: 2);
     expect(find.byKey(const ValueKey('agent-lead')), findsNothing);
@@ -93,13 +96,16 @@ void main() {
     await tester.pumpAndSettle();
     expectAgentSelected(tester, 'lead');
 
-    await _sendMessage(tester, 'refresh fails');
+    await tester.tap(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+    );
+    await tester.pumpAndSettle();
 
     _expectOnlyProjectViewCalls(repository, minCalls: 2);
     expectAgentSelected(tester, 'lead');
     expect(find.byKey(const ValueKey('agent-mobile')), findsOneWidget);
     expect(find.text('Bad state: refresh failed'), findsOneWidget);
-    expect(find.text('Failed'), findsOneWidget);
+    expect(find.text('Failed'), findsNothing);
   });
 }
 

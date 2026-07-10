@@ -109,7 +109,7 @@ void main() {
     );
 
     test(
-      'refreshes view once when opening terminal hits stale epoch',
+      'does not replay pane input when opening terminal hits stale epoch',
       () async {
         final transport = _RecordingTerminalTransport(
           openResponses: [_staleEpochError(), null],
@@ -128,12 +128,10 @@ void main() {
           },
         );
 
-        expect(outcome.replacement.state, CcbConversationDeliveryState.sent);
-        expect(outcome.terminalHistoryView?.namespaceEpoch, 5);
-        expect(refreshCount, 1);
-        expect(transport.requests.map((item) => item.target.namespaceEpoch), [
-          5,
-        ]);
+        expect(outcome.replacement.state, CcbConversationDeliveryState.failed);
+        expect(outcome.terminalHistoryView, isNull);
+        expect(refreshCount, 0);
+        expect(transport.requests, isEmpty);
 
         await submitter.closeSessions();
       },

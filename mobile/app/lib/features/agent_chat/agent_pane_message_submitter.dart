@@ -25,7 +25,6 @@ class AgentPaneMessageSubmitter {
     required CcbProjectView view,
     required AgentViewRefresh? refreshView,
     String? paneBody,
-    bool allowStaleRefresh = true,
   }) async {
     try {
       final readyTransport = transport;
@@ -42,22 +41,8 @@ class AgentPaneMessageSubmitter {
         terminalHistoryView: view,
       );
     } catch (error) {
-      if (allowStaleRefresh &&
-          !paneInputMayHaveReachedPane(error) &&
-          isStaleNamespaceEpochError(error)) {
-        final refreshed = await refreshView?.call();
-        if (refreshed != null && refreshed.agentByName(agent.name) != null) {
-          return submit(
-            transport: transport,
-            agent: agent,
-            message: message,
-            view: refreshed,
-            refreshView: refreshView,
-            paneBody: paneBody,
-            allowStaleRefresh: false,
-          );
-        }
-      }
+      // Never replay pane input after a stale namespace/pane failure. The
+      // user keeps the draft/local failed item and explicitly refreshes.
       return AgentPaneMessageSubmitOutcome.replaceLocalMessage(
         message.copyWith(state: paneFailureDeliveryState(error)),
       );
@@ -70,7 +55,6 @@ class AgentPaneMessageSubmitter {
     required CcbProjectView view,
     required AgentViewRefresh? refreshView,
     required List<int> bytes,
-    bool allowStaleRefresh = true,
   }) async {
     try {
       final readyTransport = transport;
@@ -84,21 +68,6 @@ class AgentPaneMessageSubmitter {
       ).sendKey(agent: agent, view: view, bytes: bytes);
       return const AgentPaneKeySubmitOutcome.sent();
     } catch (error) {
-      if (allowStaleRefresh &&
-          !paneInputMayHaveReachedPane(error) &&
-          isStaleNamespaceEpochError(error)) {
-        final refreshed = await refreshView?.call();
-        if (refreshed != null && refreshed.agentByName(agent.name) != null) {
-          return sendKey(
-            transport: transport,
-            agent: agent,
-            view: refreshed,
-            refreshView: refreshView,
-            bytes: bytes,
-            allowStaleRefresh: false,
-          );
-        }
-      }
       return AgentPaneKeySubmitOutcome.failed(error);
     }
   }
@@ -110,7 +79,6 @@ class AgentPaneMessageSubmitter {
     required AgentViewRefresh? refreshView,
     required String body,
     required List<int> bytes,
-    bool allowStaleRefresh = true,
   }) async {
     try {
       final readyTransport = transport;
@@ -124,22 +92,6 @@ class AgentPaneMessageSubmitter {
       ).sendTextThenKey(agent: agent, view: view, body: body, bytes: bytes);
       return const AgentPaneKeySubmitOutcome.sent();
     } catch (error) {
-      if (allowStaleRefresh &&
-          !paneInputMayHaveReachedPane(error) &&
-          isStaleNamespaceEpochError(error)) {
-        final refreshed = await refreshView?.call();
-        if (refreshed != null && refreshed.agentByName(agent.name) != null) {
-          return sendTextThenKey(
-            transport: transport,
-            agent: agent,
-            view: refreshed,
-            refreshView: refreshView,
-            body: body,
-            bytes: bytes,
-            allowStaleRefresh: false,
-          );
-        }
-      }
       return AgentPaneKeySubmitOutcome.failed(error);
     }
   }

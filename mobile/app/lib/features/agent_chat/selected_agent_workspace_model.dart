@@ -4,7 +4,6 @@ import '../../models/ccb_conversation_item.dart';
 import '../../models/ccb_project_view.dart';
 import '../../models/readable_terminal_history.dart';
 import 'agent_chat_controller.dart';
-import 'agent_chat_timeline_items.dart';
 import 'agent_execution_status.dart';
 
 export 'agent_execution_status.dart';
@@ -12,10 +11,10 @@ export 'agent_execution_status.dart';
 class SelectedAgentWorkspaceModel {
   const SelectedAgentWorkspaceModel({
     required this.agent,
-    required this.contentItems,
-    required this.initialHistory,
+    this.contentItems = const [],
+    this.initialHistory,
     required this.timelineItems,
-    required this.commsItems,
+    this.commsItems = const [],
     required this.isLoadingConversation,
     required this.hasOlderConversation,
     required this.expandedItemIds,
@@ -50,36 +49,25 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
   required bool isAwaitingAgentResponse,
   bool hasLocalExecutionException = false,
 }) {
-  final contentItems = view.contentForAgent(agent.name);
-  final refreshedTerminalHistory = chatController.refreshedTerminalHistoryFor(
-    agent.name,
-  );
-  final terminalHistory =
-      refreshedTerminalHistory ?? view.terminalHistoryForAgent(agent.name);
   final remoteConversation = chatController.remoteConversationFor(agent.name);
   final isLoadingConversation = chatController.isLoadingConversation(
     agent.name,
   );
-  final allTimelineItems = selectedAgentTimelineItems(
-    view: view,
-    agent: agent,
-    contentItems: contentItems,
-    terminalHistory: terminalHistory,
-    remoteConversation: remoteConversation,
-    localMessages: chatController.localMessagesFor(agent.name),
-    preferSupplementalTerminalHistoryAtEnd: refreshedTerminalHistory != null,
-    isLoadingConversation: isLoadingConversation,
-  );
-  final timelineItems = [
-    for (final item in allTimelineItems)
-      if (item.kind != CcbConversationItemKind.commsItem) item,
-  ];
   final executionStatus = agentExecutionStatus(
     agent: agent,
     isAwaitingAgentResponse: isAwaitingAgentResponse,
     isLoadingConversation: isLoadingConversation,
     hasLocalExecutionException: hasLocalExecutionException,
   );
+  final timelineItems = [
+    // Chat is deliberately limited to provider/native history plus local
+    // optimistic user messages. Terminal history is an explicit fallback.
+    if (remoteConversation != null)
+      for (final item in remoteConversation.items)
+        if (_isDefaultChatRemoteItem(item))
+          chatController.presentationItemFor(agent.name, item),
+    ...chatController.localMessagesFor(agent.name),
+  ];
   final workingReplyItemId =
       executionStatus.state == 'working'
           ? selectedAgentWorkingReplyItemId(timelineItems)
@@ -101,12 +89,13 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
           : null);
   return SelectedAgentWorkspaceModel(
     agent: agent,
-    contentItems: contentItems,
-    initialHistory: terminalHistory,
+    contentItems: view.contentForAgent(agent.name),
+    initialHistory: null,
     timelineItems: visibleTimelineItems,
     commsItems: [
-      for (final item in allTimelineItems)
-        if (item.kind == CcbConversationItemKind.commsItem) item,
+      if (remoteConversation != null)
+        for (final item in remoteConversation.items)
+          if (item.kind == CcbConversationItemKind.commsItem) item,
     ],
     isLoadingConversation: isLoadingConversation,
     hasOlderConversation: chatController.hasOlderConversation(agent.name),
@@ -160,36 +149,34 @@ String? selectedAgentWorkingReplyItemId(List<CcbConversationItem> items) {
   if (latestReply == null) {
     return null;
   }
+  if (latestReply.completedAt != null) {
+    return null;
+  }
   final replyStartedAt = latestReply.startedAt ?? latestReply.sentAt;
   final userSentAt = latestUser?.sentAt;
   if (replyStartedAt == null) {
-    if (userSentAt != null) {
+    if (latestUser != null) {
       return null;
     }
-    return _isTerminalDerivedConversationItem(latestReply)
-        ? latestReply.id
-        : null;
+    return _isCurrentTurnReplyCandidate(latestReply) ? latestReply.id : null;
   }
   if (userSentAt != null && replyStartedAt.isBefore(userSentAt)) {
     return null;
   }
-  if (latestReply.completedAt != null) {
-    if (latestUser == null || !_isCurrentTurnReplyCandidate(latestReply)) {
-      return null;
-    }
-  }
-  return latestReply.id;
+  return _isCurrentTurnReplyCandidate(latestReply) ? latestReply.id : null;
 }
 
 bool _isCurrentTurnReplyCandidate(CcbConversationItem item) {
   final source = item.source ?? '';
-  return source.startsWith('provider_native/') ||
-      _isTerminalDerivedConversationItem(item);
+  return source.isEmpty || source.startsWith('provider_native/');
 }
 
-bool _isTerminalDerivedConversationItem(CcbConversationItem item) {
+bool _isDefaultChatRemoteItem(CcbConversationItem item) {
+  if (item.kind == CcbConversationItemKind.commsItem) {
+    return false;
+  }
   final source = item.source ?? '';
-  return item.kind == CcbConversationItemKind.terminalHistoryBlock ||
-      source.startsWith('tmux output /') ||
-      source.startsWith('terminal ');
+  return !source.startsWith('tmux output') &&
+      !source.startsWith('terminal ') &&
+      !source.startsWith('tmux scrollback');
 }

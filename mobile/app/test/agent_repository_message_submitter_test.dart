@@ -84,7 +84,7 @@ void main() {
     );
 
     test(
-      'refreshes view once when submit hits stale namespace epoch',
+      'does not replay input when submit hits stale namespace epoch',
       () async {
         final repository = _SubmitRepository(
           responses: [
@@ -111,10 +111,10 @@ void main() {
           },
         ).submit(agent: _leadAgent, message: _localMessage(), view: _view(4));
 
-        expect(outcome.replacement?.state, CcbConversationDeliveryState.sent);
-        expect(outcome.shouldRefreshConversation, isTrue);
-        expect(refreshCount, 1);
-        expect(repository.requests.map((item) => item.namespaceEpoch), [4, 5]);
+        expect(outcome.replacement?.state, CcbConversationDeliveryState.failed);
+        expect(outcome.shouldRefreshConversation, isFalse);
+        expect(refreshCount, 0);
+        expect(repository.requests.map((item) => item.namespaceEpoch), [4]);
       },
     );
 

@@ -2,6 +2,21 @@
 
 Date: 2026-06-18
 
+## Phase 4G: Realtime Authority, Recovery, and Bounded Cache
+
+Status: Complete (2026-07-10).
+
+- provider/native Chat authority replaces automatic terminal-history fallback;
+- one gateway invalidation SSE journal signals project/activity/conversation
+  changes without per-client registry scans;
+- app refreshes from invalidations, uses bounded reconnect and offline-safe
+  sends, and retains bounded read-only snapshots by host/project/agent/epoch;
+- active-send scheduler and active-project 2-second polling are removed;
+- real emulator evidence covers cold startup, automatic recovery, notification
+  delivery, and a 259-second zero-view-request idle window.
+
+Evidence: [realtime recovery packet](/tmp/ccb-mobile-realtime-recovery-20260710/README.md).
+
 ## Phase 0: Research Spike
 
 Status: Complete for native direction planning.

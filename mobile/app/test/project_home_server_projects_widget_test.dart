@@ -251,7 +251,7 @@ void main() {
     },
   );
 
-  testWidgets('paired gateway auto refreshes open project execution status', (
+  testWidgets('paired gateway does not poll open project execution status', (
     tester,
   ) async {
     await setTestSurfaceSize(tester, const Size(390, 844));
@@ -301,11 +301,11 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
 
-    expect(gatewayRepository.getProjectViewCalls, ['test_ccb2', 'test_ccb2']);
+    expect(gatewayRepository.getProjectViewCalls, ['test_ccb2']);
     expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
     expect(
       find.byKey(const ValueKey('conversation-working-status-text')),
-      findsOneWidget,
+      findsNothing,
     );
   });
 

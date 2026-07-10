@@ -19,6 +19,7 @@ List<CcbConversationItem> selectedAgentTimelineItems({
   final remoteItems = remoteConversation?.items;
   return [
     if (remoteItems != null) ...remoteItems,
+    // SelectedAgentWorkspaceModel does not use this fallback for default Chat.
     if (remoteConversation == null && !isLoadingConversation)
       ...conversationItemsFor(
         view: view,

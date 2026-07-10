@@ -195,25 +195,28 @@ void main() {
     expect(model.executionStatus?.isRefreshing, isFalse);
   });
 
-  test('current pending activity is working even with interrupted reason', () {
-    final chatController = AgentChatController();
-    final agent = _agent(
-      activityState: 'pending',
-      activitySource: 'codex_runtime',
-      activityReason: 'conversation_interrupted',
-    );
+  test(
+    'current pending activity reports an interrupted error before working',
+    () {
+      final chatController = AgentChatController();
+      final agent = _agent(
+        activityState: 'pending',
+        activitySource: 'codex_runtime',
+        activityReason: 'conversation_interrupted',
+      );
 
-    final model = selectedAgentWorkspaceModel(
-      view: _view(agent: agent),
-      agent: agent,
-      chatController: chatController,
-      isAwaitingAgentResponse: false,
-    );
+      final model = selectedAgentWorkspaceModel(
+        view: _view(agent: agent),
+        agent: agent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
 
-    expect(model.executionStatus?.label, 'Working');
-    expect(model.executionStatus?.state, 'working');
-    expect(model.executionStatus?.isRefreshing, isTrue);
-  });
+      expect(model.executionStatus?.label, 'Exception');
+      expect(model.executionStatus?.state, 'exception');
+      expect(model.executionStatus?.isRefreshing, isFalse);
+    },
+  );
 
   test(
     'project view failed activity overrides local awaiting response status',
@@ -238,7 +241,7 @@ void main() {
     },
   );
 
-  test('project view working activity overrides stale local exception', () {
+  test('local exception is not hidden by a retained working marker', () {
     final chatController = AgentChatController();
     final agent = _agent(
       activityState: 'active',
@@ -254,8 +257,8 @@ void main() {
       hasLocalExecutionException: true,
     );
 
-    expect(model.executionStatus?.label, 'Working');
-    expect(model.executionStatus?.state, 'working');
+    expect(model.executionStatus?.label, 'Exception');
+    expect(model.executionStatus?.state, 'exception');
     expect(model.executionStatus?.isRefreshing, isFalse);
   });
 
@@ -472,7 +475,7 @@ void main() {
   });
 
   test(
-    'marks visible current-turn native reply as working even if completion leaked',
+    'uses a single placeholder when a current native reply is completed',
     () {
       final chatController = AgentChatController();
       final view = _view();
@@ -522,21 +525,23 @@ void main() {
       );
 
       expect(model.executionStatus?.state, 'working');
-      expect(model.workingReplyItemId, 'reply-current');
+      expect(
+        model.workingReplyItemId,
+        syntheticAgentWorkingConversationItemId(agent.name),
+      );
       expect(model.timelineItems.map((item) => item.id), [
         'user-current',
         'reply-current',
+        syntheticAgentWorkingConversationItemId(agent.name),
       ]);
       expect(
-        model.timelineItems
-            .map((item) => item.id)
-            .contains(syntheticAgentWorkingConversationItemId(agent.name)),
-        isFalse,
+        model.timelineItems.map((item) => item.id),
+        contains(syntheticAgentWorkingConversationItemId(agent.name)),
       );
     },
   );
 
-  test('marks latest terminal output block as working fallback', () {
+  test('does not put terminal output in the default working timeline', () {
     final chatController = AgentChatController();
     final view = _view();
     final agent = _agent(
@@ -573,7 +578,10 @@ void main() {
     );
 
     expect(model.executionStatus?.state, 'working');
-    expect(model.workingReplyItemId, 'terminal-history-1');
+    expect(
+      model.workingReplyItemId,
+      syntheticAgentWorkingConversationItemId(agent.name),
+    );
   });
 
   test(
@@ -764,7 +772,10 @@ void main() {
     );
 
     expect(model.executionStatus?.state, 'working');
-    expect(model.workingReplyItemId, 'reply-running');
+    expect(
+      model.workingReplyItemId,
+      'native-current-reply-${agent.name}-reply-running',
+    );
   });
 }
 

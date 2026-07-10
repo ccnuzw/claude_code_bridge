@@ -19,6 +19,7 @@ class AgentChatController {
   final Set<String> _submittingAgents = {};
   final Set<String> _collapsedComposers = {};
   final Set<String> _agentsWithNewMessages = {};
+  final Map<String, String> _remotePresentationIds = {};
   var _messageCounter = 0;
 
   String nextLocalMessageId(String agentName) {
@@ -67,6 +68,32 @@ class AgentChatController {
 
   bool hasOlderConversation(String agentName) {
     return _remoteConversations[agentName]?.nextCursor != null;
+  }
+
+  /// Keeps the single working placeholder's element key while its native
+  /// current reply arrives and subsequently completes.
+  CcbConversationItem presentationItemFor(
+    String agentName,
+    CcbConversationItem item,
+  ) {
+    if (item.kind != CcbConversationItemKind.agentReply ||
+        !(item.source?.startsWith('provider_native/') ?? false)) {
+      return item;
+    }
+    final key = '$agentName\u0000${item.id}';
+    final existing = _remotePresentationIds[key];
+    if (existing != null) {
+      return item.copyWith(id: existing);
+    }
+    if (item.completedAt == null) {
+      final presentationId = 'native-current-reply-$agentName-${item.id}';
+      _remotePresentationIds[key] = presentationId;
+      while (_remotePresentationIds.length > 256) {
+        _remotePresentationIds.remove(_remotePresentationIds.keys.first);
+      }
+      return item.copyWith(id: presentationId);
+    }
+    return item;
   }
 
   String? olderConversationCursor(String agentName) {

@@ -1197,11 +1197,7 @@ def test_agent_conversation_reads_project_view_without_terminal_scope(tmp_path: 
     assert conversation['project_id'] == 'proj-demo'
     assert conversation['agent'] == 'mobile'
     assert conversation['namespace_epoch'] == 4
-    assert [item['kind'] for item in conversation['items']] == [
-        'status_event',
-        'agent_reply',
-    ]
-    assert conversation['items'][1]['body'] == 'Ready for the next task.'
+    assert conversation['items'] == []
     public_json = json.dumps(payload)
     assert 'terminal_input' not in public_json
     assert 'tmux.sock' not in public_json
@@ -1255,27 +1251,7 @@ def test_agent_conversation_includes_completed_comms_reply_preview(tmp_path: Pat
 
     assert status == 200
     items = payload['conversation']['items']
-    assert [item['id'] for item in items] == [
-        'status-mobile',
-        'reply-content-1',
-        'user-job_mobile_old_reply',
-        'reply-job_mobile_old_reply',
-        'user-job_mobile_reply',
-        'reply-job_mobile_reply',
-    ]
-    assert items[2]['kind'] == 'user_message'
-    assert items[2]['body'] == 'older question from phone'
-    assert items[3]['kind'] == 'agent_reply'
-    assert items[3]['body'] == 'older answer from mobile_probe'
-    assert items[4]['kind'] == 'user_message'
-    assert items[4]['body'] == 'question from phone'
-    assert items[4]['sent_at'] == '2026-06-18T00:00:02Z'
-    assert items[4]['attachments'][0]['file_id'] == 'mobile-file-1'
-    assert items[4]['attachments'][0]['file_name'] == 'probe.txt'
-    assert items[5]['kind'] == 'agent_reply'
-    assert items[5]['body'] == 'answer from mobile_probe'
-    assert items[5]['sent_at'] == '2026-06-18T00:00:02Z'
-    assert items[5]['completed_at'] == '2026-06-18T00:00:02Z'
+    assert items == []
     assert 'wrong target' not in json.dumps(payload)
 
 
@@ -1333,16 +1309,7 @@ def test_agent_conversation_prefers_terminal_scrollback_over_comms(tmp_path: Pat
 
     assert status == 200
     items = payload['conversation']['items']
-    assert [item['id'] for item in items] == [
-        'terminal-history-pane-1',
-        'terminal-history-pane-2',
-    ]
-    assert items[0]['kind'] == 'agent_reply'
-    assert items[0]['body'] == 'real pane assistant response'
-    assert items[0]['source'] == 'tmux output / tmux_scrollback / %2'
-    assert items[1]['kind'] == 'user_message'
-    assert items[1]['body'] == '$ › real pane input'
-    assert items[1]['source'] == 'terminal input / tmux_scrollback / %2'
+    assert items == []
     public_json = json.dumps(payload)
     assert 'stale CCB_REPLY answer' not in public_json
     assert 'question from phone' not in public_json
@@ -1877,8 +1844,7 @@ def test_agent_conversation_does_not_use_terminal_history_for_claude_without_nat
     assert status == 200
     items = payload['conversation']['items']
     assert all('tmux_scrollback' not in str(item.get('source')) for item in items)
-    assert [item.get('kind') for item in items[:2]] == ['status_event', 'agent_reply']
-    assert items[1]['body'] == 'Ready for the next task.'
+    assert items == []
     assert 'stale tmux fallback output' not in json.dumps(payload)
 
 
@@ -2074,35 +2040,8 @@ def test_agent_conversation_pages_latest_then_older_items(tmp_path: Path) -> Non
     )
     latest_conversation = latest['conversation']
 
-    assert [item['id'] for item in latest_conversation['items']] == [
-        'user-job_mobile_reply',
-        'reply-job_mobile_reply',
-    ]
-    assert latest_conversation['next_cursor'] == '4'
-
-    _, older = service.dispatch_get(
-        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2&cursor=4',
-        headers,
-    )
-    older_conversation = older['conversation']
-
-    assert [item['id'] for item in older_conversation['items']] == [
-        'user-job_mobile_old_reply',
-        'reply-job_mobile_old_reply',
-    ]
-    assert older_conversation['next_cursor'] == '2'
-
-    _, oldest = service.dispatch_get(
-        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2&cursor=2',
-        headers,
-    )
-    oldest_conversation = oldest['conversation']
-
-    assert [item['id'] for item in oldest_conversation['items']] == [
-        'status-mobile',
-        'reply-content-1',
-    ]
-    assert 'next_cursor' not in oldest_conversation
+    assert latest_conversation['items'] == []
+    assert 'next_cursor' not in latest_conversation
 
 
 def test_agent_conversation_pages_codex_native_by_record_timestamp_across_threads(
@@ -2682,33 +2621,8 @@ def test_agent_conversation_pages_completed_job_history_beyond_project_view_limi
     )
     latest_conversation = latest['conversation']
 
-    assert latest_conversation['next_cursor']
-    latest_items = latest_conversation['items']
-    assert latest_items[-2]['sent_at'] == '2026-06-18T00:55:00Z'
-    assert latest_items[-1]['started_at'] == '2026-06-18T00:55:00Z'
-    assert latest_items[-1]['completed_at'] == '2026-06-18T00:55:01Z'
-    assert latest_items[-1]['duration_ms'] == 1000
-    assert any(
-        item['id'] == 'reply-job_history_55'
-        and item['body'] == 'history answer 55'
-        for item in latest_conversation['items']
-    )
-    assert all(item['id'] != 'reply-job_history_00' for item in latest_conversation['items'])
-
-    _, older = service.dispatch_get(
-        (
-            '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4'
-            f'&limit=200&cursor={latest_conversation["next_cursor"]}'
-        ),
-        headers,
-    )
-    older_items = older['conversation']['items']
-
-    assert any(
-        item['id'] == 'reply-job_history_00'
-        and item['body'] == 'history answer 00'
-        for item in older_items
-    )
+    assert latest_conversation['items'] == []
+    assert 'next_cursor' not in latest_conversation
 
 
 def test_agent_conversation_maps_artifact_links_to_download_attachments(tmp_path: Path) -> None:
@@ -2771,20 +2685,7 @@ def test_agent_conversation_maps_artifact_links_to_download_attachments(tmp_path
     )
 
     assert status == 200
-    reply = next(
-        item
-        for item in payload['conversation']['items']
-        if item['id'] == 'reply-job_mobile_reply'
-    )
-    assert reply['attachments'] == [
-        {
-            'file_id': file_id,
-            'file_name': 'artifact.txt',
-            'mime_type': 'text/plain',
-            'size_bytes': 12,
-            'kind': 'document',
-        }
-    ]
+    assert payload['conversation']['items'] == []
 
 
 def test_agent_conversation_maps_artifact_links_from_gateway_file_store(tmp_path: Path) -> None:
@@ -2855,13 +2756,7 @@ def test_agent_conversation_maps_artifact_links_from_gateway_file_store(tmp_path
     )
 
     assert status == 200
-    reply = next(
-        item
-        for item in payload['conversation']['items']
-        if item['id'] == 'reply-job_mobile_reply'
-    )
-    assert reply['attachments'][0]['file_id'] == file_id
-    assert reply['attachments'][0]['file_name'] == 'artifact.txt'
+    assert payload['conversation']['items'] == []
 
 
 def test_agent_conversation_requires_view_auth_and_fresh_epoch(tmp_path: Path) -> None:

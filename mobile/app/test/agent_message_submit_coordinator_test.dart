@@ -77,7 +77,7 @@ void main() {
         ]);
         expect(scrolled, ['lead']);
         expect(loads, ['lead']);
-        expect(scheduled, ['lead']);
+        expect(scheduled, isEmpty);
       },
     );
 
@@ -131,7 +131,7 @@ void main() {
           CcbConversationDeliveryState.sent,
         );
         expect(loads, ['lead']);
-        expect(scheduled, ['lead']);
+        expect(scheduled, isEmpty);
       },
     );
 
@@ -175,7 +175,7 @@ void main() {
           CcbConversationDeliveryState.sent,
         );
         expect(loads, ['lead']);
-        expect(scheduled, ['lead']);
+        expect(scheduled, isEmpty);
       },
     );
 

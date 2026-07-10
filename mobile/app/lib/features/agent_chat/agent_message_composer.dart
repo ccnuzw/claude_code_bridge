@@ -12,6 +12,8 @@ class AgentMessageComposer extends StatefulWidget {
     required this.controller,
     this.focusNode,
     required this.isSending,
+    this.sendEnabled = true,
+    this.sendDisabledReason,
     required this.collapsible,
     required this.collapsed,
     required this.onCollapse,
@@ -30,6 +32,8 @@ class AgentMessageComposer extends StatefulWidget {
   final TextEditingController controller;
   final FocusNode? focusNode;
   final bool isSending;
+  final bool sendEnabled;
+  final String? sendDisabledReason;
   final bool collapsible;
   final bool collapsed;
   final VoidCallback onCollapse;
@@ -193,7 +197,10 @@ class _AgentMessageComposerState extends State<AgentMessageComposer> {
                         height: 36,
                       ),
                       padding: EdgeInsets.zero,
-                      onPressed: widget.isSending ? null : widget.onSendTab,
+                      onPressed:
+                          widget.isSending || !widget.sendEnabled
+                              ? null
+                              : widget.onSendTab,
                       icon: const Icon(Icons.keyboard_tab),
                     ),
                     IconButton(
@@ -205,7 +212,10 @@ class _AgentMessageComposerState extends State<AgentMessageComposer> {
                         height: 36,
                       ),
                       padding: EdgeInsets.zero,
-                      onPressed: widget.isSending ? null : widget.onSendEscape,
+                      onPressed:
+                          widget.isSending || !widget.sendEnabled
+                              ? null
+                              : widget.onSendEscape,
                       icon: const Icon(Icons.close),
                     ),
                   ],
@@ -224,7 +234,7 @@ class _AgentMessageComposerState extends State<AgentMessageComposer> {
                   ),
                   padding: EdgeInsets.zero,
                   onPressed:
-                      widget.isSending
+                      widget.isSending || !widget.sendEnabled
                           ? null
                           : () => _showAttachmentSheet(context),
                   icon: const Icon(Icons.attach_file),
@@ -239,7 +249,7 @@ class _AgentMessageComposerState extends State<AgentMessageComposer> {
                       actions: {
                         _SendMessageIntent: CallbackAction<_SendMessageIntent>(
                           onInvoke: (_) {
-                            if (!widget.isSending) {
+                            if (!widget.isSending && widget.sendEnabled) {
                               widget.onSend();
                             }
                             return null;
@@ -278,26 +288,39 @@ class _AgentMessageComposerState extends State<AgentMessageComposer> {
                     onPressed: widget.onCollapse,
                     icon: const Icon(Icons.keyboard_arrow_down),
                   ),
-                IconButton.filled(
-                  key: const ValueKey('agent-message-send-button'),
-                  tooltip:
-                      widget.isSending
-                          ? strings.sendingMessage
-                          : strings.sendMessage,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 40,
-                    height: 40,
+                Semantics(
+                  label:
+                      widget.sendEnabled
+                          ? strings.sendMessage
+                          : (widget.sendDisabledReason ??
+                              'Sending is unavailable'),
+                  child: IconButton.filled(
+                    key: const ValueKey('agent-message-send-button'),
+                    tooltip:
+                        widget.isSending
+                            ? strings.sendingMessage
+                            : (widget.sendEnabled
+                                ? strings.sendMessage
+                                : (widget.sendDisabledReason ??
+                                    'Sending is unavailable')),
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    padding: EdgeInsets.zero,
+                    onPressed:
+                        widget.isSending || !widget.sendEnabled
+                            ? null
+                            : widget.onSend,
+                    icon:
+                        widget.isSending
+                            ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : const Icon(Icons.send),
                   ),
-                  padding: EdgeInsets.zero,
-                  onPressed: widget.isSending ? null : widget.onSend,
-                  icon:
-                      widget.isSending
-                          ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                          : const Icon(Icons.send),
                 ),
               ],
             ),

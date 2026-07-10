@@ -9,6 +9,8 @@ import '../../models/ccb_window.dart';
 import '../../repository/mobile_ccb_repository.dart';
 import '../../transport/terminal_transport.dart';
 import '../agent_chat/selected_agent_workspace.dart';
+import '../../cache/mobile_snapshot_store.dart';
+import 'gateway_reconnecting_banner.dart';
 import 'project_shell_widgets.dart';
 
 class ProjectHomeProjectListHost extends StatelessWidget {
@@ -209,6 +211,13 @@ class ProjectHomeMobileChatScaffoldHost extends StatefulWidget {
     required this.onTimelineScrollDirectionChanged,
     this.unreadAgentNames = const {},
     this.onProjectActivity,
+    this.snapshotStore,
+    this.snapshotNamespace,
+    this.sendEnabled = true,
+    this.sendDisabledReason,
+    this.conversationRefreshToken = 0,
+    this.reconnectRetryIn,
+    this.onRetryConnection,
     super.key,
   });
 
@@ -229,6 +238,13 @@ class ProjectHomeMobileChatScaffoldHost extends StatefulWidget {
   final Future<CcbProjectView?> Function() onRefreshView;
   final ValueChanged<ScrollDirection> onTimelineScrollDirectionChanged;
   final Set<String> unreadAgentNames;
+  final MobileSnapshotStore? snapshotStore;
+  final String? snapshotNamespace;
+  final bool sendEnabled;
+  final String? sendDisabledReason;
+  final int conversationRefreshToken;
+  final Duration? reconnectRetryIn;
+  final VoidCallback? onRetryConnection;
 
   @override
   State<ProjectHomeMobileChatScaffoldHost> createState() =>
@@ -239,6 +255,14 @@ class _ProjectHomeMobileChatScaffoldHostState
     extends State<ProjectHomeMobileChatScaffoldHost> {
   final SelectedAgentWorkspaceController _workspaceController =
       SelectedAgentWorkspaceController();
+
+  @override
+  void didUpdateWidget(covariant ProjectHomeMobileChatScaffoldHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationRefreshToken != widget.conversationRefreshToken) {
+      _workspaceController.refreshLatest();
+    }
+  }
 
   @override
   void dispose() {
@@ -293,6 +317,14 @@ class _ProjectHomeMobileChatScaffoldHostState
                   onAgentSelected: widget.onAgentSelected,
                 ),
               ],
+              if (widget.onRetryConnection != null) ...[
+                const SizedBox(height: 4),
+                GatewayReconnectingBanner(
+                  retryIn: widget.reconnectRetryIn,
+                  onRetry: widget.onRetryConnection!,
+                  onDiagnostics: widget.onOpenConnectionDetails,
+                ),
+              ],
               const SizedBox(height: 4),
               Expanded(
                 child: SelectedAgentWorkspace(
@@ -307,6 +339,11 @@ class _ProjectHomeMobileChatScaffoldHostState
                       widget.onTimelineScrollDirectionChanged,
                   onProjectActivity: widget.onProjectActivity,
                   controller: _workspaceController,
+                  snapshotStore: widget.snapshotStore,
+                  snapshotNamespace: widget.snapshotNamespace,
+                  sendEnabled: widget.sendEnabled,
+                  sendDisabledReason: widget.sendDisabledReason,
+                  refreshToken: widget.conversationRefreshToken,
                 ),
               ),
             ],
@@ -505,6 +542,13 @@ class ProjectHomeWideScaffoldHost extends StatelessWidget {
     this.onProjectActivity,
     this.hasUnreadTaskCompletion = false,
     this.hasWorkingAgents = false,
+    this.snapshotStore,
+    this.snapshotNamespace,
+    this.sendEnabled = true,
+    this.sendDisabledReason,
+    this.conversationRefreshToken = 0,
+    this.reconnectRetryIn,
+    this.onRetryConnection,
     super.key,
   });
 
@@ -529,6 +573,13 @@ class ProjectHomeWideScaffoldHost extends StatelessWidget {
   final Set<String> unreadAgentNames;
   final bool hasUnreadTaskCompletion;
   final bool hasWorkingAgents;
+  final MobileSnapshotStore? snapshotStore;
+  final String? snapshotNamespace;
+  final bool sendEnabled;
+  final String? sendDisabledReason;
+  final int conversationRefreshToken;
+  final Duration? reconnectRetryIn;
+  final VoidCallback? onRetryConnection;
 
   @override
   Widget build(BuildContext context) {
@@ -612,6 +663,14 @@ class ProjectHomeWideScaffoldHost extends StatelessWidget {
                               },
                       onOpenConnectionDetails: onOpenConnectionDetails,
                     ),
+                    if (onRetryConnection != null) ...[
+                      const SizedBox(height: 4),
+                      GatewayReconnectingBanner(
+                        retryIn: reconnectRetryIn,
+                        onRetry: onRetryConnection!,
+                        onDiagnostics: onOpenConnectionDetails,
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Expanded(
                       child: SelectedAgentWorkspace(
@@ -624,6 +683,11 @@ class ProjectHomeWideScaffoldHost extends StatelessWidget {
                         onRefreshView: onRefreshView,
                         onUserScrollDirectionChanged: null,
                         onProjectActivity: onProjectActivity,
+                        snapshotStore: snapshotStore,
+                        snapshotNamespace: snapshotNamespace,
+                        sendEnabled: sendEnabled,
+                        sendDisabledReason: sendDisabledReason,
+                        refreshToken: conversationRefreshToken,
                       ),
                     ),
                   ],

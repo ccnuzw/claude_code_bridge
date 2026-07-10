@@ -16,6 +16,7 @@ from mobile_gateway import (
     parse_listen_address,
 )
 from mobile_gateway.notifications import (
+    MobileInvalidationSnapshot,
     MobileNotificationSnapshot,
     MobileNotificationStore,
     encode_sse_event,
@@ -164,6 +165,52 @@ def test_notification_store_emits_multi_project_transitions(tmp_path: Path) -> N
     ]
 
 
+def test_invalidation_store_dedupes_redacts_and_bounds_event_journal(tmp_path: Path) -> None:
+    store = MobileNotificationStore(tmp_path / 'mobile', recent_limit=3)
+    baseline = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'active', 'fingerprint-one', '2026-06-30T01:00:00Z'
+    )
+    activity_changed = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'idle', 'fingerprint-one', '2026-06-30T01:01:00Z'
+    )
+    conversation_changed = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'idle', 'fingerprint-two', '2026-06-30T01:02:00Z'
+    )
+
+    assert store.sync_invalidations([baseline]) == []
+    activity_events = store.sync_invalidations([activity_changed])
+    assert {event.kind for event in activity_events} == {
+        'agent_activity_changed',
+        'project_summary_changed',
+    }
+    conversation_events = store.sync_invalidations([conversation_changed])
+    assert [event.kind for event in conversation_events] == ['conversation_changed']
+    assert store.sync_invalidations([conversation_changed]) == []
+
+    records = store.events_since(None)
+    assert len(records) <= 3
+    payload = json.dumps([event.to_payload() for event in records])
+    assert 'fingerprint-one' not in payload
+    assert 'fingerprint-two' not in payload
+    assert '/srv/' not in payload
+
+
+def test_notification_watcher_is_shared_across_sse_clients(tmp_path: Path) -> None:
+    client = _ActivityCcbdClient(project_id='proj-demo', project_root='/srv/demo', display_name='demo')
+    service = _service(client, mobile_dir=tmp_path / 'mobile')
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': pairing['pairing_code']})
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+
+    service.notification_events_since('/v1/mobile/notifications', headers)
+    first_scan_count = len([call for call in client.calls if call[0] == 'project_view'])
+    service.notification_events_since('/v1/mobile/notifications', headers)
+    second_scan_count = len([call for call in client.calls if call[0] == 'project_view'])
+
+    assert first_scan_count == 1
+    assert second_scan_count == first_scan_count
+
+
 def test_notification_service_requires_notify_scope_and_default_pairing_grants_it(tmp_path: Path) -> None:
     client = _ActivityCcbdClient(project_id='proj-demo', project_root='/srv/demo', display_name='demo')
     service = _service(client, mobile_dir=tmp_path / 'mobile')
@@ -209,11 +256,17 @@ def test_notification_service_scans_all_registered_projects(tmp_path: Path) -> N
     second.activity_state = 'idle'
     events = service.notification_events_since('/v1/mobile/notifications?once=1', headers)
 
-    assert [event['project_id'] for event in events] == ['proj-one', 'proj-two']
-    assert [event['dedupe_key'] for event in events] == [
+    completion_events = [event for event in events if event['kind'] == 'task_completed']
+    invalidations = [event for event in events if event['kind'] != 'task_completed']
+    assert [event['project_id'] for event in completion_events] == ['proj-one', 'proj-two']
+    assert [event['dedupe_key'] for event in completion_events] == [
         'proj-one:7:mobile:1',
         'proj-two:7:mobile:1',
     ]
+    assert {event['kind'] for event in invalidations} == {
+        'agent_activity_changed',
+        'project_summary_changed',
+    }
 
 
 def test_notification_completion_records_project_activity(tmp_path: Path) -> None:
@@ -235,7 +288,7 @@ def test_notification_completion_records_project_activity(tmp_path: Path) -> Non
     events = service.notification_events_since('/v1/mobile/notifications?once=1', headers)
     projects = service.projects_payload()
 
-    assert events[0]['kind'] == 'task_completed'
+    assert any(event['kind'] == 'task_completed' for event in events)
     assert projects['projects'][0]['last_activity_at'] == '2026-06-30T01:02:03Z'
 
 

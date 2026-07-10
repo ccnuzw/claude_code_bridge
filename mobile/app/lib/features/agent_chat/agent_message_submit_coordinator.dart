@@ -17,7 +17,6 @@ typedef AgentMessageSubmitTimelineNearEnd = bool Function(String agentName);
 typedef AgentMessageSubmitTimelineScrollToEnd = void Function(String agentName);
 typedef AgentMessageSubmitLoadConversation =
     Future<void> Function(String agentName);
-typedef AgentMessageSubmitScheduleRefresh = void Function(String agentName);
 typedef AgentMessageDraftAccepted = void Function();
 
 class AgentMessageSubmitCoordinator {
@@ -28,7 +27,7 @@ class AgentMessageSubmitCoordinator {
     required AgentMessageSubmitTimelineNearEnd isTimelineNearEnd,
     required AgentMessageSubmitTimelineScrollToEnd scrollTimelineToEnd,
     required AgentMessageSubmitLoadConversation loadConversation,
-    required AgentMessageSubmitScheduleRefresh scheduleConversationRefresh,
+    void Function(String)? scheduleConversationRefresh,
     AgentPaneMessageSubmitter? paneSubmitter,
   }) : _chatController = chatController,
        _isMounted = isMounted,
@@ -36,7 +35,6 @@ class AgentMessageSubmitCoordinator {
        _isTimelineNearEnd = isTimelineNearEnd,
        _scrollTimelineToEnd = scrollTimelineToEnd,
        _loadConversation = loadConversation,
-       _scheduleConversationRefresh = scheduleConversationRefresh,
        _paneSubmitter = paneSubmitter;
 
   final AgentChatController _chatController;
@@ -45,7 +43,6 @@ class AgentMessageSubmitCoordinator {
   final AgentMessageSubmitTimelineNearEnd _isTimelineNearEnd;
   final AgentMessageSubmitTimelineScrollToEnd _scrollTimelineToEnd;
   final AgentMessageSubmitLoadConversation _loadConversation;
-  final AgentMessageSubmitScheduleRefresh _scheduleConversationRefresh;
   final AgentPaneMessageSubmitter? _paneSubmitter;
 
   Future<void> send({
@@ -94,7 +91,6 @@ class AgentMessageSubmitCoordinator {
         terminalTransport: terminalTransport,
         usePaneInput: usePaneInput,
         refreshView: refreshView,
-        allowStaleRefresh: true,
       );
     } finally {
       if (_isMounted()) {
@@ -134,7 +130,6 @@ class AgentMessageSubmitCoordinator {
         terminalTransport: terminalTransport,
         usePaneInput: usePaneInput,
         refreshView: refreshView,
-        allowStaleRefresh: true,
       );
     } finally {
       if (_isMounted()) {
@@ -153,7 +148,6 @@ class AgentMessageSubmitCoordinator {
     required TerminalTransport? terminalTransport,
     required bool usePaneInput,
     required AgentViewRefresh? refreshView,
-    required bool allowStaleRefresh,
   }) async {
     if (usePaneInput && _paneSubmitter != null) {
       await _submitPaneMessageWithView(
@@ -163,7 +157,6 @@ class AgentMessageSubmitCoordinator {
         repository: repository,
         terminalTransport: terminalTransport,
         refreshView: refreshView,
-        allowStaleRefresh: allowStaleRefresh,
       );
       return;
     }
@@ -173,7 +166,6 @@ class AgentMessageSubmitCoordinator {
       view: view,
       repository: repository,
       refreshView: refreshView,
-      allowStaleRefresh: allowStaleRefresh,
     );
   }
 
@@ -184,7 +176,6 @@ class AgentMessageSubmitCoordinator {
     required MobileCcbRepository repository,
     required TerminalTransport? terminalTransport,
     required AgentViewRefresh? refreshView,
-    required bool allowStaleRefresh,
   }) async {
     if (terminalTransport == null) {
       final outcome = await _paneSubmitter!.submit(
@@ -193,7 +184,6 @@ class AgentMessageSubmitCoordinator {
         message: message,
         view: view,
         refreshView: refreshView,
-        allowStaleRefresh: allowStaleRefresh,
       );
       if (!_isMounted()) {
         return;
@@ -203,7 +193,6 @@ class AgentMessageSubmitCoordinator {
     }
     final repositorySubmitter = AgentRepositoryMessageSubmitter(
       repository: repository,
-      refreshView: refreshView,
     );
     List<CcbMessageAttachment> uploadedAttachments;
     try {
@@ -233,7 +222,6 @@ class AgentMessageSubmitCoordinator {
       view: view,
       refreshView: refreshView,
       paneBody: paneBody,
-      allowStaleRefresh: allowStaleRefresh,
     );
     if (!_isMounted()) {
       return;
@@ -241,7 +229,6 @@ class AgentMessageSubmitCoordinator {
     _replaceLocalMessage(agent.name, message.id, outcome.replacement);
     if (outcome.shouldRefreshTerminalHistory) {
       unawaited(_loadConversation(agent.name));
-      _scheduleConversationRefresh(agent.name);
     }
   }
 
@@ -251,17 +238,10 @@ class AgentMessageSubmitCoordinator {
     required CcbProjectView view,
     required MobileCcbRepository repository,
     required AgentViewRefresh? refreshView,
-    required bool allowStaleRefresh,
   }) async {
     final outcome = await AgentRepositoryMessageSubmitter(
       repository: repository,
-      refreshView: refreshView,
-    ).submit(
-      agent: agent,
-      message: message,
-      view: view,
-      allowStaleRefresh: allowStaleRefresh,
-    );
+    ).submit(agent: agent, message: message, view: view);
     if (!_isMounted()) {
       return;
     }
@@ -302,7 +282,6 @@ class AgentMessageSubmitCoordinator {
     }
     if (outcome.shouldRefreshConversation) {
       unawaited(_loadConversation(agent.name));
-      _scheduleConversationRefresh(agent.name);
     }
   }
 

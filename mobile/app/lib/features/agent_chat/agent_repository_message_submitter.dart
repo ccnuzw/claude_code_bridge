@@ -5,24 +5,20 @@ import '../../models/ccb_agent_conversation.dart';
 import '../../models/ccb_conversation_item.dart';
 import '../../models/ccb_project_view.dart';
 import '../../repository/mobile_ccb_repository.dart';
-import 'agent_chat_state_helpers.dart';
 import 'agent_conversation_loader.dart';
 
 class AgentRepositoryMessageSubmitter {
   const AgentRepositoryMessageSubmitter({
     required MobileCcbRepository repository,
     AgentViewRefresh? refreshView,
-  }) : _repository = repository,
-       _refreshView = refreshView;
+  }) : _repository = repository;
 
   final MobileCcbRepository _repository;
-  final AgentViewRefresh? _refreshView;
 
   Future<AgentRepositoryMessageSubmitOutcome> submit({
     required CcbAgent agent,
     required CcbConversationItem message,
     required CcbProjectView view,
-    bool allowStaleRefresh = true,
   }) async {
     final namespaceEpoch = view.namespaceEpoch;
     if (namespaceEpoch == null) {
@@ -75,17 +71,8 @@ class AgentRepositoryMessageSubmitter {
         shouldRefreshConversation: true,
       );
     } catch (error) {
-      if (allowStaleRefresh && isStaleNamespaceEpochError(error)) {
-        final refreshed = await _refreshView?.call();
-        if (refreshed != null && refreshed.agentByName(agent.name) != null) {
-          return submit(
-            agent: agent,
-            message: message,
-            view: refreshed,
-            allowStaleRefresh: false,
-          );
-        }
-      }
+      // A stale namespace is an unsafe replay boundary. Preserve the local
+      // draft/attachment state and require an explicit user retry instead.
       return AgentRepositoryMessageSubmitOutcome.replaceLocalMessage(
         _failedMessage(message, error),
       );
