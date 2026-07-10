@@ -555,7 +555,7 @@ def test_install_managed_venv_refreshes_legacy_pip_when_reused(tmp_path: Path) -
         CCB_INSTALL_TOMLI=0
         CCB_INSTALL_WATCHDOG=0
         pip_argv_marker="$HOME/pip-refresh-argv.txt"
-        mkdir -p "$CODEX_INSTALL_PREFIX"
+        mkdir -p "$HOME" "$CODEX_INSTALL_PREFIX"
         python3 -m venv "$CODEX_INSTALL_PREFIX/.venv"
         pip_needs_system_trust_refresh() { return 0; }
         pip_install_with_index_fallback() {
