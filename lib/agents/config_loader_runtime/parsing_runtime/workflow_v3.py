@@ -30,6 +30,7 @@ from agents.models import (
 )
 from provider_core.registry import CORE_PROVIDER_NAMES, OPTIONAL_PROVIDER_NAMES
 from provider_model_shortcuts import provider_model_startup_args, startup_args_contain_model_flag
+from rolepacks.manifest import RoleManifestError, role_manifest_from_mapping
 
 from ..common import StructuredConfigValidationError
 from .expectations import expect_mapping
@@ -398,14 +399,29 @@ def _parse_role(
     role_id = _required_string(raw, 'role', path=f'{path}.role')
     try:
         role_id = normalize_role_id(role_id)
-        load_installed_role_manifest(role_id, project_root=project_root)
+        role_root, role_manifest_raw = load_installed_role_manifest(role_id, project_root=project_root)
+        role_manifest = role_manifest_from_mapping(role_root, role_manifest_raw)
     except RoleLookupError as exc:
         _fail('v3_rolepack_not_installed', f'{path}.role', str(exc))
+    except RoleManifestError as exc:
+        _fail('v3_rolepack_invalid', f'{path}.role', str(exc))
 
     common = defaults['common']
     kind_defaults = defaults[kind]
     provider_value = raw.get('provider', kind_defaults.get('provider', common.get('provider', 'codex')))
     provider = _provider(provider_value, path=f'{path}.provider')
+    if not role_manifest.providers:
+        _fail(
+            'v3_rolepack_provider_compatibility_missing',
+            f'{path}.role',
+            f'role {role_id} does not declare supported providers',
+        )
+    if provider not in role_manifest.providers:
+        _fail(
+            'v3_role_provider_unsupported',
+            f'{path}.provider',
+            f'role {role_id} does not support provider {provider}; supported: {", ".join(role_manifest.providers)}',
+        )
     role_model = raw.get('model')
     if role_model is None:
         role_model = provider_defaults.get(provider, {}).get('model')

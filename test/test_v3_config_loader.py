@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import StringIO
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -47,7 +48,15 @@ def _install_roles(root: Path, monkeypatch: pytest.MonkeyPatch, *, omit: str | N
             continue
         _write(
             role_store / 'installed' / role_id / 'current' / 'role.toml',
-            f'id = "{role_id}"\nversion = "0.1.0"\n\n[identity]\ndefault_agent_name = "{name}"\n',
+            'schema = "rolepack/v1"\n'
+            f'id = "{role_id}"\n'
+            f'name = "{name}"\n'
+            'version = "0.1.0"\n'
+            f'description = "Test {name} role"\n\n'
+            '[identity]\n'
+            f'default_agent_name = "{name}"\n\n'
+            '[compatibility]\n'
+            'providers = ["codex", "claude", "gemini", "opencode", "kimi", "mimo", "qwen", "zai", "droid"]\n',
         )
     monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
     return role_store
@@ -133,6 +142,25 @@ def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, text: str | Non
     return project_root
 
 
+def _install_source_rolepacks(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    role_store = root / 'source-roles'
+    drafts = (
+        Path(__file__).resolve().parents[1]
+        / 'docs'
+        / 'plantree'
+        / 'plans'
+        / 'agentic-loop-workflow'
+        / 'drafts'
+    )
+    for role_id, _name in REQUIRED_ROLES:
+        shutil.copytree(
+            drafts / role_id,
+            role_store / 'installed' / role_id / 'current',
+        )
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    return role_store
+
+
 def test_v3_loads_compiled_residents_dynamic_profiles_and_preserves_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -160,6 +188,21 @@ def test_v3_loads_compiled_residents_dynamic_profiles_and_preserves_source(
     assert config.workflow.dynamic['ccb_round_reviewer'].raw_model == 'Claude Sonnet 4.6 (Thinking)'
     assert config.workflow.dynamic['ccb_round_reviewer'].model == 'claude-sonnet-4.6-(thinking)'
     assert render_project_config_text(config) == _valid_v3_text()
+
+
+def test_v3_loads_real_agent_role_preview_manifests_through_ccb_adapters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-v3-source-rolepacks'
+    _install_source_rolepacks(tmp_path, monkeypatch)
+    _write(project_root / '.ccb' / 'ccb.config', _valid_v3_text())
+
+    workflow = load_project_config(project_root, include_loop_overlays=False).config.workflow
+
+    assert workflow is not None
+    assert workflow.resident['frontdesk'].provider == 'codex'
+    assert workflow.dynamic['ccb_round_reviewer'].provider == 'claude'
 
 
 def test_v3_effective_capacity_snapshot_is_stable_bound_and_secret_free(
@@ -372,7 +415,7 @@ def test_v3_kind_default_without_provider_applies_to_explicit_provider(
         (lambda text: text.replace('legacy_aliases = ["worker"]', 'legacy_aliases = ["worker", 3]'), 'v3_type_invalid', 'workflow.dynamic.coder.legacy_aliases'),
         (lambda text: text.replace('env = { FRONTDESK_TOKEN = "must-not-be-reported" }', 'env = { FRONTDESK_TOKEN = 3 }'), 'v3_type_invalid', 'workflow.resident.frontdesk.env'),
         (lambda text: text.replace('provider = "claude"', 'provider = "not-a-provider"'), 'v3_provider_unknown', 'workflow.dynamic.ccb_round_reviewer.provider'),
-        (lambda text: text.replace('provider = "claude"', 'provider = "agy"'), 'v3_model_unsupported_for_provider', 'workflow.dynamic.ccb_round_reviewer.model'),
+        (lambda text: text.replace('provider = "claude"', 'provider = "qwen"'), 'v3_model_unsupported_for_provider', 'workflow.dynamic.ccb_round_reviewer.model'),
         (lambda text: text.replace('release_policy = "auto"', 'release_policy = "explode"'), 'v3_release_policy_invalid', 'workflow.runtime.release_policy'),
         (lambda text: text.replace('role = "agentroles.coder"\nworkspace_mode', 'role = "agentroles.coder"\nwindow_class = "plan"\nworkspace_mode'), 'v3_window_class_invalid', 'workflow.dynamic.coder.window_class'),
         (lambda text: text.replace('name_template = "loop-{loop_id}-{node_id}-{profile}"', 'name_template = ""'), 'v3_type_invalid', 'workflow.runtime.name_template'),
@@ -419,6 +462,24 @@ def test_v3_missing_rolepack_is_a_structured_pre_start_error(
     assert exc_info.value.code == 'v3_rolepack_not_installed'
     assert exc_info.value.path == 'workflow.resident.frontdesk.role'
     assert 'agentroles.ccb_frontdesk' in exc_info.value.message
+
+
+def test_v3_rejects_provider_not_supported_by_installed_rolepack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = _valid_v3_text().replace(
+        'provider = "claude"\nmodel = "Claude Sonnet 4.6 (Thinking)"',
+        'provider = "grok"',
+    )
+    project_root = _project(tmp_path, monkeypatch, text=text)
+
+    with pytest.raises(StructuredConfigValidationError) as exc_info:
+        load_project_config(project_root, include_loop_overlays=False)
+
+    assert exc_info.value.code == 'v3_role_provider_unsupported'
+    assert exc_info.value.path == 'workflow.dynamic.ccb_round_reviewer.provider'
+    assert 'agentroles.ccb_round_reviewer does not support provider grok' in exc_info.value.message
 
 
 def test_v3_cross_provider_default_model_inheritance_is_rejected(
