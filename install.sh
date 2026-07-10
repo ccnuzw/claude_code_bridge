@@ -399,6 +399,7 @@ Optional environment variables:
   CCB_INSTALL_WATCHDOG     Auto-install optional watchdog dependency (default: 1; set 0 to skip)
   CCB_PIP_INDEX_URL        Package index used by install-time pip commands (default: pip configuration)
   CCB_PIP_FALLBACK_INDEX_URL Fallback after TLS/network errors (default on macOS: TUNA PyPI; set 0 to disable)
+  PIP_CERT                 PEM CA bundle used by pip for HTTPS verification
   CCB_INSTALL_ROLES        Install catalog Role Packs and dependencies: auto soft (default), 1 required, 0 skip
   CCB_ALLOW_ROOT_INSTALL   Set to 1 to explicitly allow a root-owned install
   CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN Set to 1 to allow a temporary install prefix to write outside its isolated bin/home
@@ -652,6 +653,54 @@ raise SystemExit(0 if is_virtualenv else 1)
 PY
 }
 
+pip_should_use_system_truststore() {
+  local python_cmd="$1"
+  "$python_cmd" - <<'PY' >/dev/null 2>&1
+import re
+import sys
+from importlib.metadata import PackageNotFoundError, distribution, version
+from importlib.util import find_spec
+
+try:
+    pip_version = version("pip")
+    pip_distribution = distribution("pip")
+except PackageNotFoundError:
+    raise SystemExit(1)
+
+parts = tuple(int(item) for item in re.findall(r"\d+", pip_version)[:2])
+if len(parts) < 2:
+    raise SystemExit(1)
+has_truststore = (
+    find_spec("truststore") is not None
+    or pip_distribution.locate_file("pip/_vendor/truststore").is_dir()
+)
+supports_system_trust = (
+    sys.version_info >= (3, 10)
+    and (22, 2) <= parts < (24, 2)
+    and has_truststore
+)
+raise SystemExit(0 if supports_system_trust else 1)
+PY
+}
+
+pip_needs_system_trust_refresh() {
+  local python_cmd="$1"
+  "$python_cmd" - <<'PY' >/dev/null 2>&1
+import re
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    pip_version = version("pip")
+except PackageNotFoundError:
+    raise SystemExit(1)
+
+parts = tuple(int(item) for item in re.findall(r"\d+", pip_version)[:2])
+if len(parts) < 2:
+    raise SystemExit(1)
+raise SystemExit(0 if parts < (24, 2) else 1)
+PY
+}
+
 pip_primary_index_url() {
   if [[ -n "${_CCB_INSTALL_PIP_ACTIVE_INDEX_URL:-}" ]]; then
     echo "$_CCB_INSTALL_PIP_ACTIVE_INDEX_URL"
@@ -689,7 +738,7 @@ pip_failure_allows_index_fallback() {
     return 0
   fi
   grep -Eiq \
-    'CERTIFICATE_VERIFY_FAILED|Could not fetch URL|Connection (broken|error|refused|reset)|ConnectTimeout|ReadTimeout|ProxyError|Temporary failure|Name or service not known|Network is unreachable|Max retries exceeded' \
+    'CERTIFICATE_VERIFY_FAILED|SSLCertVerificationError|Could not fetch URL|Connection (aborted|broken|error|refused|reset)|ConnectTimeout|ReadTimeout|TimeoutError|timed out|ProxyError|NameResolutionError|NewConnectionError|Temporary failure|Name or service not known|nodename nor servname|Network is (down|unreachable)|No route to host|Max retries exceeded|RemoteDisconnected|Remote end closed connection' \
     "$pip_log" 2>/dev/null
 }
 
@@ -704,16 +753,20 @@ pip_install_once() {
   local index_url="$4"
   shift 4
 
+  local -a pip_command=("$python_cmd" -m pip)
+  if pip_should_use_system_truststore "$python_cmd"; then
+    pip_command+=(--use-feature=truststore)
+  fi
+  pip_command+=(install)
+  if [[ -n "$index_url" ]]; then
+    pip_command+=(--index-url "$index_url")
+  fi
+  pip_command+=("$@")
+
   if [[ "$log_mode" == "append" ]]; then
-    if [[ -n "$index_url" ]]; then
-      "$python_cmd" -m pip install --index-url "$index_url" "$@" >>"$pip_log" 2>&1
-    else
-      "$python_cmd" -m pip install "$@" >>"$pip_log" 2>&1
-    fi
-  elif [[ -n "$index_url" ]]; then
-    "$python_cmd" -m pip install --index-url "$index_url" "$@" >"$pip_log" 2>&1
+    "${pip_command[@]}" >>"$pip_log" 2>&1
   else
-    "$python_cmd" -m pip install "$@" >"$pip_log" 2>&1
+    "${pip_command[@]}" >"$pip_log" 2>&1
   fi
 }
 
@@ -1760,7 +1813,14 @@ install_managed_venv() {
     echo "ERROR: Managed venv Python not executable: $venv_python"
     exit 1
   fi
+  local refresh_pip=0
   if [[ "$reused_venv" -eq 0 ]]; then
+    refresh_pip=1
+  elif pip_needs_system_trust_refresh "$venv_python"; then
+    refresh_pip=1
+    echo "Refreshing managed Python pip for system certificate support"
+  fi
+  if [[ "$refresh_pip" -eq 1 ]]; then
     local pip_log pip_log_cleanup=0
     pip_log="$(mktemp "${TMPDIR:-/tmp}/ccb-pip-upgrade.XXXXXX.log" 2>/dev/null || mktemp "/tmp/ccb-pip-upgrade.XXXXXX.log" 2>/dev/null || true)"
     if [[ -z "$pip_log" ]]; then
@@ -1768,7 +1828,7 @@ install_managed_venv() {
     else
       pip_log_cleanup=1
     fi
-    if ! pip_install_with_index_fallback "$venv_python" "$pip_log" --upgrade pip; then
+    if ! pip_install_with_index_fallback "$venv_python" "$pip_log" --upgrade "pip>=24.2"; then
       echo "WARN: unable to upgrade pip inside managed venv; continuing"
     fi
     if [[ "$pip_log_cleanup" -eq 1 ]]; then

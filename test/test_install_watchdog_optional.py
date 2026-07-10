@@ -265,6 +265,74 @@ def test_install_watchdog_for_python_uses_real_virtualenv_scope(tmp_path: Path) 
     assert "--user" not in pip_argv
 
 
+def test_install_watchdog_opts_legacy_pip_into_system_truststore(tmp_path: Path) -> None:
+    completed = _run_install_snippet(
+        tmp_path,
+        """
+        venv_dir="$HOME/managed-venv"
+        fake_modules="$HOME/fake-modules"
+        pip_argv_marker="$HOME/pip-argv.txt"
+        python3 -m venv "$venv_dir"
+        mkdir -p "$fake_modules"
+        cat > "$fake_modules/pip.py" <<'PY'
+        if __name__ == "__main__":
+            import os
+            import pathlib
+            import sys
+
+            pathlib.Path(os.environ["PIP_ARGV_MARKER"]).write_text(
+                " ".join(sys.argv[1:]) + "\\n",
+                encoding="utf-8",
+            )
+            pathlib.Path(os.environ["FAKE_MODULES_DIR"], "watchdog.py").write_text(
+                "__version__ = 'test'\\n",
+                encoding="utf-8",
+            )
+        PY
+        pip_should_use_system_truststore() { return 0; }
+        PIP_ARGV_MARKER="$pip_argv_marker" \
+        FAKE_MODULES_DIR="$fake_modules" \
+        PYTHONPATH="$fake_modules" \
+          install_watchdog_for_python "$venv_dir/bin/python"
+        cat "$pip_argv_marker"
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "watchdog installed" in completed.stdout
+    pip_argv = (tmp_path / "home" / "pip-argv.txt").read_text(encoding="utf-8")
+    assert "--use-feature=truststore" in pip_argv
+    assert "install watchdog>=2.1.0" in pip_argv
+
+
+def test_legacy_pip_truststore_probe_requires_available_backend(tmp_path: Path) -> None:
+    completed = _run_install_snippet(
+        tmp_path,
+        """
+        venv_dir="$HOME/managed-venv"
+        fake_distribution="$HOME/fake-distribution"
+        python3 -m venv "$venv_dir"
+        mkdir -p "$fake_distribution/pip-23.1.2.dist-info"
+        cat > "$fake_distribution/pip-23.1.2.dist-info/METADATA" <<'EOF'
+        Metadata-Version: 2.1
+        Name: pip
+        Version: 23.1.2
+        EOF
+        if PYTHONPATH="$fake_distribution" pip_should_use_system_truststore "$venv_dir/bin/python"; then
+          echo unexpected-truststore
+          exit 9
+        fi
+        mkdir -p "$fake_distribution/pip/_vendor/truststore"
+        PYTHONPATH="$fake_distribution" pip_should_use_system_truststore "$venv_dir/bin/python"
+        echo truststore-ready
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "unexpected-truststore" not in completed.stdout
+    assert "truststore-ready" in completed.stdout
+
+
 def test_install_watchdog_retries_macos_tls_failure_with_fallback_index(tmp_path: Path) -> None:
     completed = _run_install_snippet(
         tmp_path,
@@ -307,6 +375,59 @@ def test_install_watchdog_retries_macos_tls_failure_with_fallback_index(tmp_path
     assert len(pip_calls) == 2
     assert "--index-url" not in pip_calls[0]
     assert "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" in pip_calls[1]
+
+
+def test_install_watchdog_retries_macos_dns_failure_with_fallback_index(tmp_path: Path) -> None:
+    completed = _run_install_snippet(
+        tmp_path,
+        """
+        venv_dir="$HOME/managed-venv"
+        fake_modules="$HOME/fake-modules"
+        pip_argv_marker="$HOME/pip-argv.txt"
+        python3 -m venv "$venv_dir"
+        mkdir -p "$fake_modules"
+        cat > "$fake_modules/pip.py" <<'PY'
+        import os
+        import pathlib
+        import sys
+
+        marker = pathlib.Path(os.environ["PIP_ARGV_MARKER"])
+        with marker.open("a", encoding="utf-8") as stream:
+            stream.write(" ".join(sys.argv[1:]) + "\\n")
+        fallback = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+        if fallback not in sys.argv:
+            print(
+                "NewConnectionError: [Errno 8] nodename nor servname provided, or not known"
+            )
+            raise SystemExit(1)
+        pathlib.Path(os.environ["FAKE_MODULES_DIR"], "watchdog.py").write_text(
+            "__version__ = 'test'\\n", encoding="utf-8"
+        )
+        raise SystemExit(0)
+        PY
+        detect_platform() { echo macos; }
+        PIP_ARGV_MARKER="$pip_argv_marker" \
+        FAKE_MODULES_DIR="$fake_modules" \
+        PYTHONPATH="$fake_modules" \
+          install_watchdog_for_python "$venv_dir/bin/python"
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "retrying with" in completed.stdout
+    assert "watchdog installed" in completed.stdout
+    pip_calls = (tmp_path / "home" / "pip-argv.txt").read_text(encoding="utf-8").splitlines()
+    assert len(pip_calls) == 2
+    assert "--index-url" not in pip_calls[0]
+    assert "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" in pip_calls[1]
+
+
+def test_install_pip_fallback_never_disables_https_verification() -> None:
+    text = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert "http://pypi.tuna.tsinghua.edu.cn" not in text
+    assert "--trusted-host pypi.tuna.tsinghua.edu.cn" not in text
+    assert "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" in text
 
 
 def test_install_watchdog_uses_configured_primary_index_without_retry(tmp_path: Path) -> None:
@@ -414,6 +535,7 @@ def test_install_managed_venv_reuses_healthy_environment(tmp_path: Path) -> None
         mkdir -p "$CODEX_INSTALL_PREFIX"
         python3 -m venv "$CODEX_INSTALL_PREFIX/.venv"
         echo keep > "$CODEX_INSTALL_PREFIX/.venv/marker"
+        pip_needs_system_trust_refresh() { return 1; }
         install_managed_venv
         cat "$CODEX_INSTALL_PREFIX/.venv/marker"
         """,
@@ -422,6 +544,35 @@ def test_install_managed_venv_reuses_healthy_environment(tmp_path: Path) -> None
     assert completed.returncode == 0, completed.stderr or completed.stdout
     assert "Reusing managed Python venv" in completed.stdout
     assert "keep" in completed.stdout
+
+
+def test_install_managed_venv_refreshes_legacy_pip_when_reused(tmp_path: Path) -> None:
+    completed = _run_install_snippet(
+        tmp_path,
+        """
+        CCB_SOURCE_KIND=release
+        CCB_USE_MANAGED_VENV=1
+        CCB_INSTALL_TOMLI=0
+        CCB_INSTALL_WATCHDOG=0
+        pip_argv_marker="$HOME/pip-refresh-argv.txt"
+        mkdir -p "$CODEX_INSTALL_PREFIX"
+        python3 -m venv "$CODEX_INSTALL_PREFIX/.venv"
+        pip_needs_system_trust_refresh() { return 0; }
+        pip_install_with_index_fallback() {
+          shift 2
+          printf '%s\\n' "$*" > "$pip_argv_marker"
+          return 0
+        }
+        install_managed_venv
+        cat "$pip_argv_marker"
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "Reusing managed Python venv" in completed.stdout
+    assert "Refreshing managed Python pip for system certificate support" in completed.stdout
+    pip_argv = (tmp_path / "home" / "pip-refresh-argv.txt").read_text(encoding="utf-8")
+    assert "--upgrade pip>=24.2" in pip_argv
 
 
 def test_release_managed_venv_wraps_installed_python_entrypoints(tmp_path: Path) -> None:
