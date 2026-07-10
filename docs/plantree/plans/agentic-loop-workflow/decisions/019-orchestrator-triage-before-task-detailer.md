@@ -85,5 +85,11 @@ surfaces directly.
 
 - [017-flat-roles-and-role-collections.md](017-flat-roles-and-role-collections.md)
 - [018-planner-uses-plan-brief.md](018-planner-uses-plan-brief.md)
+- [022-semantic-orchestration-bundle-and-controller-execution.md](022-semantic-orchestration-bundle-and-controller-execution.md)
 - [../topics/architecture.md](../topics/architecture.md)
 - [../topics/task-detailer-role-design.md](../topics/task-detailer-role-design.md)
+
+Decision 022 refines this V1 triage shape: a validated single-unit template may
+eventually bypass an orchestrator provider activation, while a semantically
+orchestrated task uses one complete orchestration bundle and controller-owned
+physical dispatch.

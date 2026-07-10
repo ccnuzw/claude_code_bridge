@@ -4,14 +4,22 @@ Date: 2026-06-24
 
 ## Purpose
 
-`orchestrator` is the loop-internal semantic dispatcher. It is activated by
-`loop_runner` through `ask` for one execution round or one orchestration batch.
-It turns an execution-ready task packet into bounded work items, selects a small
-execution-node topology, dispatches constrained work through `ask`, and returns
-structured aggregation for round checking or replanning.
+`orchestrator` is the loop-internal semantic workgraph planner. It is activated
+by `loop_runner` through `ask` only when a task cannot use the validated
+single-unit execution template. It turns an execution-ready task packet into
+one complete orchestration bundle: bounded work items, dependencies, logical
+role assignments, complete task packets, review/integration intent, and
+capacity intent.
 
 It is not a daemon, not a permanent manager, and not the owner of runtime state.
-It proposes runtime topology; CCB scripts commit and reconcile topology.
+It does not physically publish asks. CCB scripts validate the bundle, bind
+logical roles to concrete mounted agents, submit asks exactly once, import
+results, and reconcile topology and lifecycle.
+
+The current boundary is governed by
+[Decision 022](../decisions/022-semantic-orchestration-bundle-and-controller-execution.md)
+and the
+[semantic orchestration/controller topic](semantic-orchestration-and-controller-boundary.md).
 
 ## Context Purity
 
@@ -32,8 +40,9 @@ each orchestration activation and record enough evidence to audit freshness.
 loop_runner
   -> ask orchestrator
       inputs: task packet, verification contract, loop state refs, node budget
-      outputs: work items, dependency graph, topology proposal, dispatch plan,
-               partial summary, round-check handoff
+      outputs: orchestration bundle containing work items, dependency graph,
+               logical role assignments, task packet refs, review policy,
+               integration points, capacity intent, and dispatchable nodes
 ```
 
 `orchestrator` should receive references, not large copied context:
@@ -44,7 +53,7 @@ loop_runner
 - Verification contract path.
 - Current loop breadcrumb.
 - Existing node/branch status refs.
-- Current topology and runtime capacity summary.
+- Read-only capacity envelope and current mount constraints.
 
 `orchestrator` may read the referenced documents, reason semantically, and
 produce draft artifacts. It must ask CCB scripts to record authoritative state.
@@ -129,145 +138,67 @@ When a node is `non_converged`, orchestrator should:
 
 It must not downgrade the branch to success or silently remove it from scope.
 
-### 4. Runtime Workflow Graph Proposal
+### 4. Capacity Intent
 
-`orchestrator` may propose the execution-round topology, but it must not
-directly mutate runtime state.
+Before activation, the controller supplies a read-only capacity envelope with
+allowed role profiles, maximum instances, provider constraints, window
+capacity, and lifecycle policy. The orchestrator designs against that envelope
+and returns logical capacity intent as part of the bundle.
 
 Allowed:
 
-- Call the planned `orchestrator-topology` skill, which in turn uses
-  `ccb loop topology propose/validate/commit/status`.
-- Propose a bounded graph of loop-owned agents by declared profile and count.
-- Define information-flow edges, call order, artifact refs, and release gates.
-- Use committed topology and observed status as the only dynamic ask targets.
-- Report node/window placement as evidence only after the reconciler returns
-  it.
-- Request release by removing or parking agents in topology intent, not by
-  killing or unloading them directly.
-- Provide reasons, node count, provider/role preferences, expected lifetime,
-  failure policies, and release gates.
+- request declared role profiles and counts;
+- identify parallel branches and integration points;
+- state the expected activation lifetime and evidence gates;
+- return `replan_required` when the bounded capacity cannot safely execute the
+  task.
 
 Disallowed:
 
-- Editing `.ccb/ccb.config` directly.
-- Running `ccb reload` directly from the role.
-- Killing panes or agents directly.
-- Calling `ccb agent add --window`, `ccb agent add --window-class`,
-  `ccb agent remove`, or choosing execution-node window names directly.
-- Calling `ccb loop capacity ensure/release` directly in the normal topology
-  path after topology commands are available.
-- Writing `.ccb/runtime/loops/*` authority files directly.
-- Bypassing busy unload or provider replacement guards.
+- choose concrete agent ids, windows, or panes;
+- encode normal ask edges in mount topology;
+- edit `.ccb/ccb.config` or runtime authority files;
+- run reload, add, move, park, release, or kill commands;
+- silently reduce parallelism after a capacity conflict.
 
-Topology proposal shape:
+The controller compiles accepted capacity intent into mount-only topology. If
+capacity changes before dispatch, it returns `capacity_conflict`; it does not
+rewrite the workgraph.
 
-```json
-{
-  "request_type": "propose_runtime_workflow_graph",
-  "reason": "Need two independent coder/checker nodes for parallel branches",
-  "node_count": 2,
-  "max_node_count": 4,
-  "preferred_profiles": ["worker_coder", "reviewer_code"],
-  "lifetime": "current_loop_round",
-  "edges": [
-    {
-      "id": "edge-worker-node1",
-      "from": "orchestrator",
-      "to": "worker_coder_1",
-      "type": "ask",
-      "order": 10,
-      "output_artifact": "node1.worker-result.md"
-    },
-    {
-      "id": "edge-review-node1",
-      "from": "worker_coder_1",
-      "to": "reviewer_code_1",
-      "type": "ask_after",
-      "after": ["edge-worker-node1"],
-      "order": 20,
-      "input_artifact": "node1.worker-result.md",
-      "output_artifact": "node1.review.md"
-    }
-  ],
-  "release_gates": [
-    {
-      "agents": ["worker_coder_1", "reviewer_code_1"],
-      "condition": "artifacts_imported && agents_idle",
-      "policy": "auto"
-    }
-  ],
-  "fallback": "return replan_required or run fixed configured worker/reviewer serially only when planner policy allows"
-}
-```
+### 5. Logical Publication Intent
 
-`ccb loop topology` owns validation and desired-state commit. The topology
-reconciler owns translating committed desired topology into capacity records,
-guarded reload, lifecycle records, window creation, pane placement, idle
-release, or rejection. Current CCB has proven loop-generated worker/checker
-placement in `node-<loop-id>-<node-id>` windows for explicit `[windows]`
-layouts; the topology reconciler should reuse that substrate. `orchestrator`
-may inspect `ccb loop topology status --json` and `ccb layout status --json`
-as read-only diagnostic views, but it must not use those views to hand-pick
-targets or repair tmux state.
+Each orchestration-bundle node includes everything needed for deterministic
+physical publication:
 
-### 5. Ask Dispatch
+- work item id and complete packet ref;
+- required logical role profile;
+- dependencies and dispatch readiness;
+- scope, non-goals, acceptance, and verification refs;
+- forbidden degradation rules;
+- expected worker output and independent review contract;
+- bounded rework and structural-escalation policy.
 
-`orchestrator` dispatches work through `ask`, but every ask must be constrained.
+The orchestrator does not execute `ask`. The controller binds the logical role
+to a concrete mounted instance, submits once, and records submission intent,
+target, job id, and callback state. This preserves exact-once recovery without
+introducing a second semantic task publisher.
 
-Each worker ask should include:
+### 6. Structural Replanning
 
-- Work item id.
-- Goal.
-- Scope and non-goals.
-- Acceptance refs.
-- Verification refs.
-- Forbidden degradation rules.
-- Expected output schema.
-- Artifact refs instead of large copied text where possible.
-- Time/retry limits inherited from loop state.
+Normal worker/reviewer success does not reactivate orchestrator. The controller
+imports accepted evidence and advances according to the bundle.
 
-Each checker ask should include:
+An immaculate orchestrator is activated again only when semantic structure
+must change, including:
 
-- Work item id.
-- Worker result refs.
-- Acceptance refs.
-- Verification refs.
-- Fallback/degradation audit requirement.
-- Expected status: `pass`, `rework`, `blocked`, or `non_converged`.
+- dependency graph invalidation;
+- a new work unit or integration point;
+- partial continuation requiring a new split;
+- reviewer findings that exceed bounded node rework;
+- changed capacity that cannot execute the accepted graph.
 
-`orchestrator` should record submitted ask refs through script-owned runtime
-commands such as `ccb loop ask-record`; it must not hand-edit `asks.jsonl`.
-
-### 6. Aggregation
-
-After node results return, orchestrator produces:
-
-```text
-orchestration_summary
-  completed_nodes
-  rework_nodes
-  blocked_nodes
-  non_converged_nodes
-  frozen_branches
-  drained_sibling_work
-  dependency_graph
-  changed_surfaces
-  evidence_refs
-  round_checker_handoff
-```
-
-If the round is partial, produce:
-
-```text
-partial_loop_report
-  completed_nodes
-  non_converged_nodes
-  blocked_downstream_nodes
-  skipped_nodes
-  failed_assumptions
-  recommended_replan_options
-```
+The new activation consumes durable node, review, and round evidence and emits
+a new bundle revision. It does not rely on the previous provider conversation.
 
 ## Explicit Non-Authority
 
@@ -276,6 +207,8 @@ partial_loop_report
 - Modify durable plan-tree state directly.
 - Modify runtime authority files directly.
 - Start or stop providers directly.
+- Submit worker or reviewer asks directly.
+- Bind logical roles to concrete agent instances.
 - Confirm user-facing scope changes.
 - Lower acceptance criteria.
 - Convert partial work into `done`.
@@ -284,34 +217,36 @@ partial_loop_report
 
 ## V1 Cut
 
-V1 should move to the topology path:
+The target path is:
 
 ```text
 planner -> loop_runner -> ask orchestrator
-orchestrator -> ccb loop topology propose/commit
-loop_runner/reconciler -> ccb loop topology reconcile
-orchestrator or loop_runner -> ask committed worker target
-orchestrator or loop_runner -> ask committed reviewer target
-orchestrator -> aggregate
-loop_runner/reconciler -> ccb loop topology release/reconcile
-checker or round_checker -> verify
+orchestrator -> orchestration bundle
+loop_runner -> validate bundle and capacity intent
+loop_runner/reconciler -> commit/reconcile mount topology
+loop_runner -> submit asks to concrete ready targets exactly once
+worker/reviewer -> return evidence through callback delivery
+loop_runner -> import evidence and advance accepted graph
+round/integration reviewer -> verify when policy requires
+loop_runner/reconciler -> release/reconcile immaculate roles
 planner/frontdesk -> receive partial/replan only when needed
 ```
 
-The existing `ccb loop capacity` path remains useful as the lower-level
-substrate and for compatibility/debugging, but it is no longer the preferred
-orchestrator contract.
+The current source still implements earlier triage and ask-first paths. The
+bundle path is a planning target and must not be described as landed until its
+schema, controller, recovery, and real opened-project acceptance evidence exist.
 
 ## Role Pack Guidance
 
 The `orchestrator` Role Pack should include:
 
 - Role memory describing purpose, authorities, non-authorities, and V1 limits.
-- A dispatch skill for work item slicing and ask payload generation.
-- A topology skill for producing structured runtime workflow graph proposals
-  without direct runtime mutation or hand-picked placement.
-- Templates for work items, dependency graphs, worker asks, checker asks,
-  topology proposals, orchestration summaries, and partial loop reports.
+- A bundle skill for coupled work slicing, dependency design, logical role
+  assignment, complete worker/reviewer packets, and capacity intent.
+- No permission to run physical ask, topology, layout, lifecycle, reload, or
+  provider-management commands.
+- Templates for task envelopes, work items, dependency graphs, orchestration
+  bundles, capacity intent, structural replan requests, and partial reports.
 - References to:
   - `topics/plan-and-runtime-list-structure.md`
   - `topics/execution-node-and-round-verification.md`

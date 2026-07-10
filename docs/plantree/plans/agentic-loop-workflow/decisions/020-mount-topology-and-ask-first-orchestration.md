@@ -39,8 +39,11 @@ The default orchestration model is **ask-first**:
 - it decides whether the task needs direct execution, task-detailer refinement,
   or planner macro adjustment;
 - it proposes or patches the mount topology needed for that round;
-- after CCB applies topology, it coordinates agents through normal `ask`;
-- worker and `code_reviewer` may ask each other directly when useful;
+- after CCB applies topology, controller code binds accepted logical roles and
+  submits normal `ask` jobs exactly once from the accepted orchestration
+  intent;
+- worker and `code_reviewer` replies remain semantic evidence, while follow-up
+  asks and bounded rework are controller-owned physical side effects;
 - important outcomes become authority only after they are imported into
   task/round artifacts through scripts.
 
@@ -95,8 +98,10 @@ human-readable summaries.
   input, not the preferred orchestration contract.
 - `orchestration_notes` may mention intended asks and review order, but CCB
   should not require a full dispatch DAG for ordinary worker/reviewer loops.
-- Programmatic ask dispatch remains useful for bounded smokes, scripted gates,
-  and final import, but agent-to-agent ask is the normal collaboration path.
+- `ask` remains the normal collaboration primitive. Decision 022 makes
+  programmatic controller submission the preferred physical publication path
+  for recoverable workflow execution; provider-side direct ask commands remain
+  interactive or compatibility behavior, not the authority path.
 - Tests must prove both sides: topology can change panes without losing
   running agents, and ask-first collaboration can complete a task with only
   the small document anchors.
@@ -115,5 +120,10 @@ human-readable summaries.
 
 - [014-runtime-workflow-graph-reconciler.md](014-runtime-workflow-graph-reconciler.md)
 - [019-orchestrator-triage-before-task-detailer.md](019-orchestrator-triage-before-task-detailer.md)
+- [022-semantic-orchestration-bundle-and-controller-execution.md](022-semantic-orchestration-bundle-and-controller-execution.md)
 - [../topics/mount-topology-and-ask-first-orchestration.md](../topics/mount-topology-and-ask-first-orchestration.md)
 - [../topics/runtime-workflow-graph-and-reconciler.md](../topics/runtime-workflow-graph-and-reconciler.md)
+
+Decision 022 preserves ask-first collaboration but refines physical ask
+submission as a controller-owned side effect. The orchestrator owns semantic
+publication intent, not provider-side execution of runtime commands.

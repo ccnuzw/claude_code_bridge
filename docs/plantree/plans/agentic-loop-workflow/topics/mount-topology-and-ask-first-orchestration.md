@@ -17,6 +17,12 @@ The goal is to avoid turning topology into a full communication DSL. Topology
 should answer "what agents are mounted where, with what lifecycle policy?"
 Normal `ask` should answer "who talks to whom to complete this semantic work?"
 
+Decision 022 further separates semantic publication intent from its physical
+side effect. Orchestrator may define logical role assignments and complete ask
+packets in one orchestration bundle, but controller code binds concrete mounted
+agents and submits those asks exactly once. This refinement does not put
+communication edges back into mount topology.
+
 ## Layer Model
 
 | Layer | What It Owns | What It Must Not Own |
@@ -36,6 +42,7 @@ docs/plantree/plans/<plan-slug>/tasks/<task-id>/
   task_packet.md
   execution_contract.md
   orchestration_notes.md
+  orchestration_bundle.json
   round_summary.md
   artifacts/
     detail_packet.manifest.json
@@ -126,6 +133,17 @@ Non-authority:
 - It is not a required DAG scheduler input.
 - It must not replace `round_summary.md`.
 
+### `orchestration_bundle.json`
+
+Decision 022 target artifact for complex semantic execution. One immaculate
+orchestrator activation owns its work slicing, dependencies, logical role
+assignments, task packet refs, review/integration policy, and capacity intent.
+
+The current source does not yet treat this artifact as runtime authority. A
+future controller may execute it only after schema, revision, capacity, and
+task-envelope validation. It must not reinterpret the bundle or copy its graph
+into mount topology communication edges.
+
 ### `agent_mount_topology.*`
 
 CCB-owned runtime desired and observed state.
@@ -208,10 +226,11 @@ V1 should use explicit runner calls, not a watcher:
 ccb loop runner --once
   reads task_packet status
   if ready_for_orchestration:
-    asks ccb_orchestrator
-    imports orchestration_notes
+    validates the single-unit template or asks ccb_orchestrator once
+    imports orchestration_notes and orchestration_bundle when required
     commits/applies mount topology when needed
-    runs ask collaboration or waits for orchestrator result
+    binds logical roles and submits newly dispatchable asks exactly once
+    resumes from callbacks and imports reviewed evidence
     imports round_summary
     releases eligible ephemeral agents
   else:
@@ -223,7 +242,7 @@ same state machine should remain visible and testable through commands.
 
 ## Ask Collaboration Rules
 
-Default allowed:
+Default logical flows:
 
 - orchestrator -> worker;
 - worker -> code_reviewer;
@@ -231,6 +250,12 @@ Default allowed:
 - orchestrator -> ccb_task_detailer when triage returns `needs_detail`;
 - ccb_task_detailer -> orchestrator with detail packet links;
 - round reviewer -> orchestrator for missing evidence clarification.
+
+These arrows describe semantic provenance, not permission for providers to run
+arbitrary ask commands. In the Decision 022 target path, controller code
+submits each physical ask from validated bundle state, records the job id, and
+resumes from delivery evidence. Provider replies cannot create new workflow
+authority or silently publish additional work.
 
 Required discipline:
 
@@ -243,13 +268,11 @@ Required discipline:
 - If they do not converge within budget, the unit reports `partial`,
   `replan_required`, or `blocked`; it must not silently degrade.
 
-Programmatic ask should be reserved for:
-
-- repeatable smoke tests with fake providers;
-- runner-owned asks to resident roles at phase boundaries;
-- final round reviewer or evidence-import gates where deterministic status is
-  needed;
-- health diagnostics when direct agent asks are not trustworthy.
+Controller-owned programmatic ask is the preferred physical dispatch mechanism
+for recoverable bundle execution. Direct provider-side ask remains useful for
+interactive collaboration and compatibility paths, but it cannot replace
+submission intent, job-id persistence, callback recovery, or script-owned
+artifact import.
 
 ## Landing Plan
 

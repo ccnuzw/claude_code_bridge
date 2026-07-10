@@ -218,6 +218,11 @@ recoverable workflow loops.
   orchestrator role capability boundary, ask activation model, 1-4 node
   complexity slicing, runtime-agent request semantics, and task-dispatch
   constraints.
+- [topics/semantic-orchestration-and-controller-boundary.md](topics/semantic-orchestration-and-controller-boundary.md):
+  target boundary where planner owns global structure, detailer returns compact
+  global impact, orchestrator emits one coupled workgraph/task-assignment
+  bundle, and the controller performs physical dispatch without semantic
+  reinterpretation.
 - [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md):
   landed desired-state topology controller and earlier broader workflow-graph
   direction; Decision 020 narrows the preferred future scope to mount
@@ -398,6 +403,10 @@ recoverable workflow loops.
   decision that `orchestrator`, `task_detailer`, workers, reviewers, and round
   reviewers are immaculate (`无垢`) activation-scoped roles, while only
   `frontdesk` and `planner` retain compact long-lived conversation context.
+- [decisions/022-semantic-orchestration-bundle-and-controller-execution.md](decisions/022-semantic-orchestration-bundle-and-controller-execution.md):
+  decision to keep slicing, dependency design, logical assignment, and task
+  publication intent in one orchestrator bundle while scripts own concrete
+  binding, exact-once ask submission, state import, and lifecycle side effects.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and
@@ -507,7 +516,7 @@ Out of scope:
 | clarification broker | Candidate-question filtering, user-question artifact, answer normalization | Direct user conversation or execution-loop activation |
 | planner stewardship mode / `ccb plan` scripts | Plan-tree consistency, short-term progress state, evidence linking, authoritative task/index/status writes through scripts | Business implementation, provider repair, daemon supervision, or bypassing script validation |
 | loop runner | Deterministic state-machine execution and loop start/advance | Semantic product decisions |
-| orchestrator | Work decomposition, execution-node selection, result aggregation | Long-term plan authority |
+| orchestrator | One activation owns coupled work slicing, dependencies, logical role assignment, worker packets, review/integration intent, and bounded semantic replanning | Long-term plan authority, concrete agent binding, physical `ask` submission, topology mutation, or runtime authority writes |
 | execution node | Bounded `worker + checker` implementation and node-quality gate | Global task routing, hidden degradation, or durable plan mutation |
 | round checker | Whole-round verification plan and execution | Product scope changes, implementation fixes, or authoritative state writes |
 | inner monitor | Health observation, timeout/anomaly escalation, communication checks | Product judgment or arbitrary repair |
@@ -519,6 +528,7 @@ then read [topics/architecture.md](topics/architecture.md), then read
 [topics/state-and-script-contract.md](topics/state-and-script-contract.md) and
 [topics/plan-and-runtime-list-structure.md](topics/plan-and-runtime-list-structure.md),
 then [topics/orchestrator-role-capability.md](topics/orchestrator-role-capability.md),
+then [topics/semantic-orchestration-and-controller-boundary.md](topics/semantic-orchestration-and-controller-boundary.md),
 then [topics/mount-topology-and-ask-first-orchestration.md](topics/mount-topology-and-ask-first-orchestration.md),
 then [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md)
 for landed topology-controller context,

@@ -27,8 +27,11 @@ Date: 2026-06-24
   while short-lived `agentroles.ccb_task_detailer` performs source-backed task
   refinement only when orchestrator triage returns `needs_detail`. It owns
   task-local clarification and hands a detailed execution packet back to
-  orchestrator. `ccb_frontdesk` or the frontend only notifies the user where
-  to clarify; V1 does not need a separate task-local clarification role. See
+  orchestrator. The Decision 022 target additionally requires every detail
+  pass to emit a compact global-impact result so local readiness cannot bypass
+  planner-owned architecture, dependency, invariant, or acceptance checks.
+  `ccb_frontdesk` or the frontend only notifies the user where to clarify; V1
+  does not need a separate task-local clarification role. See
   [topics/task-detailer-role-design.md](topics/task-detailer-role-design.md)
   and
   [decisions/015-task-detailer-owns-task-refinement-and-clarification.md](decisions/015-task-detailer-owns-task-refinement-and-clarification.md).
@@ -91,10 +94,18 @@ Date: 2026-06-24
   `docs/plantree/plans/<plan-slug>/tasks/<task-id>/`, runtime loop lists live
   under `.ccb/runtime/loops/`, and scripts own all authoritative status,
   index, phase, owner, node, branch, ask, and round writes.
-- Accepted the orchestrator boundary: it is an ask-activated semantic
-  dispatcher that analyzes task complexity, chooses 1-4 nodes, slices work,
-  constrains `ask` dispatch, requests runtime capacity, and aggregates results.
-  It must not directly reload, unload, kill, or write runtime authority.
+- Accepted the orchestrator boundary: it is an ask-activated immaculate
+  semantic planner that keeps work slicing, dependencies, logical role
+  assignment, complete task packets, review/integration intent, and bounded
+  rework policy together in one orchestration bundle. It does not perform
+  physical `ask` submission, concrete agent binding, topology mutation, or
+  runtime authority writes; those exact-once side effects belong to the
+  controller. A future deterministic single-unit template may bypass an
+  orchestrator provider call after explicit planner selection and validation.
+  See
+  [topics/semantic-orchestration-and-controller-boundary.md](topics/semantic-orchestration-and-controller-boundary.md)
+  and
+  [decisions/022-semantic-orchestration-bundle-and-controller-execution.md](decisions/022-semantic-orchestration-bundle-and-controller-execution.md).
 - Reviewed the `mother` role's orchestrator RolePack blueprint and accepted it
   as the V1 content plan for `agentroles.ccb_orchestrator`: single role,
   default local name `orchestrator`, six generic skills, seven templates,

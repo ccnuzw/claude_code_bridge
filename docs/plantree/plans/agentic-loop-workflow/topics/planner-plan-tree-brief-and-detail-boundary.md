@@ -134,6 +134,9 @@ Planner may:
 - publish macro task refs and handoff refs for detail refinement;
 - review `macro-adjustment-request` artifacts and request script-owned plan
   updates when accepted.
+- own the compact global architecture map, cross-task dependency summary,
+  invariants, acceptance coverage, and integration milestones used by the
+  Decision 022 global-consistency gate.
 
 Planner must not:
 
@@ -144,6 +147,9 @@ Planner must not:
 - turn task-local clarification into long-lived planner conversation context;
 - accept a detail summary or macro adjustment as authority before script-owned
   import or decision handling.
+- read every detail body merely to decide whether local work is globally safe;
+  the detailer must provide a compact global-impact artifact with evidence
+  refs.
 
 ## Task Detailer Detail Docs Boundary
 
@@ -159,6 +165,8 @@ Detail expansion belongs to `task_detailer` in V1.
 - worker/reviewer handoff material;
 - task-local clarification artifacts;
 - stable summary backfill for the brief or task document;
+- mandatory compact global-impact classification, including an explicit
+  `none` result when no macro surface changes;
 - `macro-adjustment-request` when detail evidence invalidates a macro
   assumption.
 
@@ -201,6 +209,11 @@ summary artifact:
 Planner decides whether this summary is stable enough for the brief. If it is
 not stable, the task detail docs remain linked as work in progress rather than
 absorbed into the macro summary.
+
+Stable summary backfill remains optional because not every local fact belongs
+in long-lived planner context. Global-impact classification is separate and
+mandatory: it exists to prove that the local detail packet was checked against
+planner-owned interfaces, dependencies, invariants, and acceptance coverage.
 
 ## Compact Planner Import Policy
 
