@@ -2,6 +2,17 @@
 
 Date: 2026-06-24
 
+## Current Release Track
+
+- F1/R1 and the generalized one-node G1 kernel landed in `0c2f19ef`.
+  Direct evidence is in
+  [history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
+- Current work is C1 Config V3 plus P1 RolePack projection. G2 Git integration
+  and G3 ready-frontier scheduling remain gated until Wave 1 is combined and
+  green.
+- Real one-to-four workgroup provider runs are intentionally unopened until
+  multi-node bind, integration, recovery, lifecycle, and result gates exist.
+
 ## Done
 
 - Accepted the product direction that `frontdesk` should be reduced to user
@@ -1228,16 +1239,17 @@ multi-lane scheduler source changes in parallel.
 2026-07-10 checkpoint: item 1 planning/contracts are frozen by `ce4f7590`.
 Item 2 foundation is landed by `34027943`, including strict bundle import and
 validation, canonical work packets, deterministic one-node compatibility
-evidence, and a multi-node pre-bind pause. Item 2 remains in progress until
-the one-node engine uses node state exclusively and the normal post-worker
-orchestrator call is removed. See
+evidence, and a multi-node pre-bind pause. See
 [history/single-lane-multi-workgroup-g1-foundation-20260710.md](history/single-lane-multi-workgroup-g1-foundation-20260710.md).
 
 2026-07-11 F1 checkpoint: Decision 026 freezes task revision, effective
 capacity snapshots, semantic bundle/provenance boundaries, adaptive one-to-four
-selection, node state, exact-once intent, and result ownership. Wave 1 R1/C1/P1
-implementation may now proceed in parallel; real multi-workgroup execution
-remains gated until the runtime packages are integrated and directly tested.
+selection, node state, exact-once intent, and result ownership. R1 landed in
+`0c2f19ef` and closes item 2 with sole node-map one-group execution,
+node-keyed intent/recovery, strict immaculate freshness, and no normal
+post-worker orchestrator call. C1/P1 remain active; real multi-workgroup
+execution remains gated until G2/G3 are integrated and directly tested. See
+[history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from

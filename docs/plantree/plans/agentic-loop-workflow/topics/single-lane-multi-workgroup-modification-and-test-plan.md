@@ -1,7 +1,7 @@
 # Single-Lane Multi-Workgroup Modification And Test Plan
 
-Date: 2026-07-10
-Status: Implementation-ready design
+Date: 2026-07-11
+Status: R1/G1 complete; Config V3 and RolePack Wave 1 packages pending
 
 F1 authority interfaces and adaptive group selection are frozen by
 [Decision 026](../decisions/026-authority-envelope-and-adaptive-workgroup-selection.md).
@@ -10,6 +10,12 @@ always requires an explicit one-to-four-node candidate, Config V2 alone may
 use the deterministic one-node compatibility bundle, provenance is artifact
 metadata rather than semantic bundle content, and node count is selected by
 the orchestrator from complexity and cutability rather than by test scripts.
+
+R1 landed in commit `0c2f19ef`; direct evidence is recorded in
+[single-lane-r1-authority-runtime-closure-20260711.md](../history/single-lane-r1-authority-runtime-closure-20260711.md).
+The controller still rejects multi-node execution before bind, so the next
+runtime implementation gate is G2 integration followed by G3 scheduling, not
+real-provider fanout yet.
 
 ## Objective
 

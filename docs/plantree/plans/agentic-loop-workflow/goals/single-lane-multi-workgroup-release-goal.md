@@ -1,7 +1,7 @@
 # Single-Lane Multi-Workgroup Release Goal
 
 Date: 2026-07-11
-Status: In progress; F1 frozen and G1 foundation landed
+Status: In progress; F1/R1 and generalized one-node G1 kernel landed
 
 ## Goal
 
@@ -44,19 +44,23 @@ Already available and preserved:
   explicit orchestrator candidate import, one-node compatibility evidence,
   and a multi-node pre-bind pause. Evidence is recorded in
   [../history/single-lane-multi-workgroup-g1-foundation-20260710.md](../history/single-lane-multi-workgroup-g1-foundation-20260710.md).
+- commit `0c2f19ef` closes R1: semantic task revision fencing, canonical
+  effective-capacity binding, adaptive selection evidence, node-keyed
+  exact-once intent, sole node-map one-group execution, immaculate freshness
+  enforcement, V2 replan-safe compatibility, and removal of the normal
+  post-worker orchestrator call. Evidence is recorded in
+  [../history/single-lane-r1-authority-runtime-closure-20260711.md](../history/single-lane-r1-authority-runtime-closure-20260711.md).
 
 Blocking gaps:
 
-- the direct engine still creates one hard-coded coder/reviewer pair;
-- the canonical bundle still needs task-revision and effective-capacity digest
-  binding before its V1 authority envelope is frozen;
-- stage state now exposes a node map, but submission intent, result synthesis,
-  promotion, and parts of recovery still use the scalar compatibility mirror;
+- the direct engine deliberately pauses multi-node bundles before bind; the
+  ready-frontier scheduler is not landed;
+- one-node execution uses node-map authority, but multi-node result synthesis,
+  integration, promotion, rollback, and lifecycle scheduling are absent;
 - existing multi-node tests stop at mount/layout/release and do not execute one
   task through several reviewed workgroups;
 - parallel workers cannot safely promote their deltas independently to the
   shared project root;
-- the normal pass path still makes a post-worker orchestrator call;
 - `max_nodes` currently counts physical profile instances, not semantic
   workgroups;
 - Config V3 is design-only and its older draft incorrectly treats immaculate
@@ -262,7 +266,7 @@ visible-project, package, and release acceptance belongs to `talk2`.
 Gate: planning links resolve, schemas have rejection cases, and no core
 behavior is left to implementation-time interpretation.
 
-### G1 Bundle Authority And One-Node Generalization - In Progress
+### G1 Bundle Authority And One-Node Generalization - Complete
 
 - Add `ccb.loop.orchestration_bundle.v1` validation and script-owned import.
 - Add a deterministic one-node bundle for the validated simple fast path.
@@ -273,6 +277,10 @@ behavior is left to implementation-time interpretation.
 
 Gate: all current one-workgroup tests pass through the generalized engine and
 provider replies still cannot write authority.
+
+Direct evidence: commit `0c2f19ef`, `195` owned tests, `117` adjacent tests,
+and the non-Gemini portion of the full repository run passed. Multi-node
+execution remains blocked intentionally at the G2/G3 boundary.
 
 ### G2 Worktree And Integration Kernel - Pending
 

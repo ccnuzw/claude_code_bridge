@@ -12,15 +12,12 @@ frontdesk-started macro task, one semantic orchestration bundle, and one to
 four independently reviewed `Worker + Reviewer` workgroups. Multi-lane
 Roadmap scheduling remains out of scope.
 
-G0 design and F1 authority interfaces are accepted, and the first G1
-foundation is landed. Commit
-`34027943` provides strict bundle import/validation, canonical work packets,
-deterministic ordering, explicit orchestrator candidate import, one-node
-compatibility evidence, and a multi-node pre-bind pause. It does not execute
-multiple workgroups. Decision 026 freezes task revision, capacity digest,
-bundle/node/intent authority, result mapping, and adaptive one-to-four group
-selection. The current phase is Wave 1 implementation and remaining G1
-one-node kernel closure.
+G0/F1 and R1/G1 are complete. Commit `0c2f19ef` adds semantic task revision
+fencing, canonical effective-capacity binding, adaptive selection evidence,
+node-keyed exact-once intent/recovery, sole node-map one-group execution,
+strict immaculate freshness, V2 replan-safe compatibility, and removal of the
+normal post-worker orchestrator call. Multi-node bundles still pause before
+bind. The current phase is the remaining Wave 1 Config V3 and RolePack work.
 
 ## Authority
 
@@ -39,6 +36,8 @@ physical placement/lifecycle state, not a semantic dispatch graph.
 
 ## Last Landed
 
+- `0c2f19ef`: R1 authority/runtime closure and generalized one-node kernel.
+- `ec01d53a`: F1 Decision 026 and adaptive selection freeze.
 - `77ca803a`: production-closure Goal, whole-block worker waves, direct
   acceptance campaign, and separate deployment versus publication gates.
 - `5f938559`: G1 foundation evidence and roadmap/status checkpoint.
@@ -48,18 +47,20 @@ physical placement/lifecycle state, not a semantic dispatch graph.
 Foundation evidence:
 [history/single-lane-multi-workgroup-g1-foundation-20260710.md](history/single-lane-multi-workgroup-g1-foundation-20260710.md).
 
+R1 closure evidence:
+[history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
+
 ## Next Target
 
-Implement and integrate the three Wave 1 packages against Decision 026: R1
-runtime closure, C1 Config V3 core, and P1 RolePack contract. R1 lands first;
-C1 and P1 follow one at a time after direct diff review and focused tests.
+Implement and integrate C1 Config V3 core and P1 RolePack contract against the
+landed R1 interfaces, one package at a time after direct diff review and tests.
 
 ## Execution Queue
 
 - Wave 0, complete: F1 is frozen by Decision 026.
-- Wave 1, active: parallel whole blocks R1 runtime closure, C1 Config
-  V3 core, and P1 RolePack contract in separate worktrees/branches.
-- Wave 1 integration: `talk2` reviews and integrates R1, then C1, then P1;
+- Wave 1, active: R1 is integrated; C1 Config V3 core and P1 RolePack contract
+  will use separate worktrees/branches.
+- Wave 1 integration: `talk2` reviews and integrates C1, then P1;
   focused and non-Gemini repository gates run on the combined branch.
 - Wave 2, gated: R2 Git integration, T1 topology/capacity, and E1 evidence/
   fake harness may run in parallel only after Wave 1 passes.
@@ -70,13 +71,11 @@ C1 and P1 follow one at a time after direct diff review and focused tests.
 
 ## Active TODO
 
-1. Dispatch R1/C1/P1 as bounded whole-block code packages.
+1. Dispatch C1 and P1 as bounded whole-block code packages.
 2. Review each returned commit against file ownership and invariants; integrate
    one at a time and rerun adjacent tests.
-3. Close G1 with sole node-state one-group execution, node-keyed recovery, and
-   removal of the normal post-worker orchestrator activation.
-4. Start G2/G3 only after the combined Wave 1 gate is green.
-5. Keep real 1-4 group roots unopened until the multi-node runtime gate passes.
+3. Start G2/G3 only after the combined Wave 1 gate is green.
+4. Keep real 1-4 group roots unopened until the multi-node runtime gate passes.
 
 ## Blocked By
 
@@ -101,22 +100,19 @@ agree with B7; script output cannot substitute for the opened project.
 
 ## Last Verified
 
-- Bundle/plan/loop/topology focused and adjacent suite: `209 passed`.
-- Non-Gemini repository gate: `3868 passed, 2 skipped, 124 deselected`.
-- Unrestricted repository run: `3988 passed, 2 skipped, 4 failed`; all four
-  failures are recorded Gemini restart-timing blackbox cases, not hidden.
-- Goal-document relative links and `git diff --check`: passed before commit
-  `77ca803a`.
-- Current status/Goal/archive relative-link audit and `git diff --check`:
-  passed before this handoff commit.
-- F1 Decision 026 defines the frozen implementation contract; link and
-  whitespace verification is pending its commit.
+- R1 owned suite: `195 passed`.
+- R1 adjacent suite: `117 passed`.
+- Unrestricted repository run: `4000 passed, 2 skipped, 5 failed`; four
+  failures are out-of-gate Gemini restart-timing blackbox cases. The fifth is
+  a stale Phase 6B repeat8 status-doc assertion reproduced on parent commit
+  `ec01d53a`.
+- R1 evidence links and `git diff --check`: passed after this status update.
 
 ## Non-Claims And History
 
-The branch is not production-ready: the one-group engine is still partly
-scalar, multi-node bundles pause before execution, Git integration and the
-ready-frontier scheduler are absent, Config V3 is not implemented, and no
+The branch is not production-ready: multi-node bundles pause before execution,
+Git integration and the ready-frontier scheduler are absent, Config V3 is not
+implemented, RolePack projection is not updated, and no
 multi-workgroup real-provider or packed-candidate acceptance exists.
 
 The superseded detailed status log is preserved at
