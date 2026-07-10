@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    allow_preferred_session_rotation as _allow_preferred_session_rotation_impl,
     capture_state as _capture_reader_state,
     format_subagent_text as _format_subagent_text_impl,
     initialize_reader as _initialize_reader,
@@ -77,6 +78,9 @@ class ClaudeLogReader:
 
     def set_preferred_session(self, session_path: Path | None) -> None:
         _set_preferred_session_impl(self, session_path)
+
+    def allow_preferred_session_rotation(self) -> None:
+        _allow_preferred_session_rotation_impl(self)
 
     def current_session_path(self) -> Path | None:
         return self._latest_session()

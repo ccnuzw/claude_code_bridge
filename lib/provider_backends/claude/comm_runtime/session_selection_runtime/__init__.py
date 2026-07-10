@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .indexing import parse_sessions_index
 from .membership import (
+    allow_preferred_session_rotation,
     project_dir,
     session_belongs_to_current_project,
     session_is_sidechain,
@@ -12,6 +13,7 @@ from .state_capture import capture_state
 from .setup import initialize_reader
 
 __all__ = [
+    "allow_preferred_session_rotation",
     "capture_state",
     "initialize_reader",
     "latest_session",

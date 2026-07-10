@@ -13,6 +13,7 @@ from .communicator import (
     remember_claude_session,
 )
 from .log_reader import (
+    allow_preferred_session_rotation,
     capture_state,
     format_subagent_text,
     initialize_reader,
@@ -41,6 +42,7 @@ from .paths import CLAUDE_PROJECTS_ROOT
 from .parsing import extract_content_text, extract_message, structured_event
 
 __all__ = [
+    'allow_preferred_session_rotation',
     'ask_async',
     'ask_sync',
     'CLAUDE_PROJECTS_ROOT',

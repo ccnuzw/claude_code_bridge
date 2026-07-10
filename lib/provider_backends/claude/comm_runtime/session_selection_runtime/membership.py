@@ -42,6 +42,11 @@ def set_preferred_session(reader, session_path: Path | None) -> None:
         reader._preferred_session_locked = True
 
 
+def allow_preferred_session_rotation(reader) -> None:
+    """Allow a bound Claude pane to move to a newer same-project session."""
+    reader._preferred_session_locked = False
+
+
 def _resolved_existing_path(pathlike: Path | str | None) -> Path | None:
     try:
         candidate = Path(pathlike).expanduser()
@@ -100,6 +105,7 @@ def _json_line_entry(line: str) -> dict | None:
 
 __all__ = [
     "project_dir",
+    "allow_preferred_session_rotation",
     "session_belongs_to_current_project",
     "session_is_sidechain",
     "set_preferred_session",

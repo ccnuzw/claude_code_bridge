@@ -10,6 +10,7 @@ from .polling import (
     read_since_events,
 )
 from .session_selection import (
+    allow_preferred_session_rotation,
     capture_state,
     initialize_reader,
     latest_session,
@@ -30,6 +31,7 @@ from .subagents import (
 )
 
 __all__ = [
+    "allow_preferred_session_rotation",
     "capture_state",
     "format_subagent_text",
     "initialize_reader",

@@ -34,11 +34,18 @@ def configure_resume_reader(reader, state: dict[str, object], context: ProviderR
     preferred_session = preferred_session_path(str(state.get("session_path") or ""), context.session_ref)
     if preferred_session is not None:
         reader.set_preferred_session(preferred_session)
+    _allow_reader_session_rotation(reader)
 
 
 def completion_dir_for_session(session) -> str:
     path = completion_dir_from_session_data(dict(getattr(session, "data", {}) or {}))
     return str(path) if path is not None else ""
+
+
+def _allow_reader_session_rotation(reader) -> None:
+    allow_rotation = getattr(reader, "allow_preferred_session_rotation", None)
+    if callable(allow_rotation):
+        allow_rotation()
 
 
 def state_session_path(state: dict[str, object]) -> str:
@@ -155,6 +162,7 @@ def start_active_submission(
     if preferred_session is not None:
         reader.set_preferred_session(preferred_session)
     state = reader.capture_state()
+    _allow_reader_session_rotation(reader)
     request_anchor = request_anchor_fn(job.job_id)
     completion_dir = completion_dir_for_session(prepared.session)
     no_wrap = no_wrap_requested(job)

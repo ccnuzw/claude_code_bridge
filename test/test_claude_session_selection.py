@@ -46,6 +46,32 @@ def test_latest_session_keeps_explicit_preferred_session_over_newer_candidate(tm
     assert reader.current_session_path() == older
 
 
+def test_active_reader_can_rotate_from_bound_session_after_claude_clear(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / 'claude-root'
+    work_dir = tmp_path / 'project-a'
+    work_dir.mkdir()
+    monkeypatch.setenv('PWD', str(work_dir))
+
+    original = root / _project_key(work_dir) / 'original.jsonl'
+    _write_session(original, text='old')
+
+    reader = ClaudeLogReader(root=root, work_dir=work_dir, use_sessions_index=False)
+    reader.set_preferred_session(original)
+    state = reader.capture_state()
+    reader.allow_preferred_session_rotation()
+
+    rotated = root / _project_key(work_dir) / 'rotated.jsonl'
+    _write_session(rotated, text='new')
+    os.utime(rotated, (rotated.stat().st_atime, original.stat().st_mtime + 20))
+
+    entries, updated = reader.try_get_entries(state)
+
+    assert reader._preferred_session_locked is False
+    assert reader.current_session_path() == rotated
+    assert updated['session_path'] == rotated
+    assert [entry['text'] for entry in entries if entry['role'] == 'assistant'] == ['new']
+
+
 def test_latest_session_ignores_env_pwd_project_namespace_for_workspace_reader(
     tmp_path: Path,
     monkeypatch,

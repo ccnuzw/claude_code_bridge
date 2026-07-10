@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .session_selection_runtime import (
+    allow_preferred_session_rotation,
     capture_state,
     initialize_reader,
     latest_session,
@@ -14,6 +15,7 @@ from .session_selection_runtime import (
 )
 
 __all__ = [
+    "allow_preferred_session_rotation",
     "capture_state",
     "initialize_reader",
     "latest_session",
