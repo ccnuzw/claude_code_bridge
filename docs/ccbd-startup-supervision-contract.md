@@ -129,10 +129,15 @@ Out of scope:
 - `.ccb/ccb.config` is the highest-priority forward authority for the project's desired agent mount set and foreground layout when it exists.
 - When `.ccb/ccb.config` is absent, `~/.ccb/ccb.config` is the user-level forward authority for the project's desired agent mount set and foreground layout when it exists.
 - When both files are absent, the built-in default config is the forward authority for the desired agent mount set and foreground layout.
-- The built-in default desired set includes `agent1`, `agent2`, `agent3`, and
-  `ccb_self`; `ccb_self` uses provider `codex` and role
-  `agentroles.ccb_self` so a blank project can route CCB config work to the
-  maintenance agent.
+- The built-in default desired set contains exactly one `demo` agent in the
+  `main` window. Its provider is the first locally available supported CLI in
+  built-in priority order (`codex`, `claude`, `gemini`, then optional
+  providers). If none is available, `demo:codex` remains the diagnostic
+  fallback.
+- Built-in provider availability honors the effective provider executable,
+  including `*_START_CMD` overrides. This selection applies only while both
+  user and project config are absent; explicit config remains authoritative and
+  may mount any supported single- or multi-agent topology.
 - Effective config logical names are the only forward authority for project-namespace pane display names.
 - Until a future explicit `enabled` or `desired_state` field exists, all configured agents are desired agents.
 - `default_agents` and CLI `requested_agents` do not redefine long-lived backend ownership.

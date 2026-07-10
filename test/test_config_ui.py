@@ -117,6 +117,47 @@ def test_config_ui_serves_token_guarded_page_and_project_session(tmp_path: Path)
     assert not thread.is_alive()
 
 
+def test_config_ui_uses_builtin_demo_config_when_project_config_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    (project_root / '.ccb').mkdir(parents=True)
+    page = tmp_path / 'index.html'
+    page.write_text('<!doctype html><title>settings</title>', encoding='utf-8')
+    monkeypatch.setattr(
+        config_ui_module,
+        'render_default_project_config_text',
+        lambda: 'version = 2\n\n[windows]\nmain = "demo:claude"\n',
+    )
+    handle = prepare_config_ui(
+        _context(project_root),
+        ParsedConfigUiCommand(project=None),
+        asset_path=page,
+        token='test-token',
+        idle_timeout_s=0.3,
+    )
+    thread = threading.Thread(target=handle.serve_forever)
+    thread.start()
+
+    try:
+        config = _get_json(handle.url, '/api/config')
+        assert config['exists'] is False
+        assert config['digest'] is None
+        assert config['text'].endswith('main = "demo:claude"\n')
+        assert config['editor']['windows'][0]['tree'] == {
+            'kind': 'leaf',
+            'name': 'demo',
+            'provider': 'claude',
+            'workspace_mode': 'inplace',
+            'percent': None,
+        }
+    finally:
+        thread.join(timeout=2)
+        handle.close()
+    assert not thread.is_alive()
+
+
 def test_config_ui_validates_saves_with_digest_guard_and_hot_reloads(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     config_path = project_root / '.ccb' / 'ccb.config'

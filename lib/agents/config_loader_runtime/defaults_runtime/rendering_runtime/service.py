@@ -10,8 +10,10 @@ from .compact import can_render_compact
 from .serialization import agent_spec_to_hybrid_overlay_dict, loop_capacity_to_config_dict
 
 
-def render_default_project_config_text() -> str:
-    return render_project_config_text(build_default_project_config())
+def render_default_project_config_text(*, provider: str | None = None, which_fn=None) -> str:
+    return render_project_config_text(
+        build_default_project_config(provider=provider, which_fn=which_fn)
+    )
 
 
 def render_project_config_text(config) -> str:

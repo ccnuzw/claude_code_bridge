@@ -8,7 +8,7 @@
 <p>
   <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
-  <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
+  <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
 
 <p>
@@ -111,7 +111,17 @@ mkdir -p .ccb
 
 ### 2. 프로젝트 설정 만들기
 
-프로젝트 루트에 `.ccb/ccb.config`를 만듭니다. 권장 v2 `[windows]` 토폴로지는 각 window 안에서 `,`와 `;`로 세로 쌓기와 가로 분할을 제어합니다. 예를 들어 `A,B;C,D`는 네 개 pane 배치에 가깝습니다.
+빈 프로젝트는 가볍게 시작합니다. CCB는 `main` window 하나만 열고 머신에서 사용 가능한 첫 번째 지원 CLI를 선택해 `demo`라는 agent 하나를 만듭니다. 멀티 에이전트 팀은 더 이상 기본으로 마운트되지 않습니다.
+
+CCB sidebar 왼쪽 위의 **⚙ 설정** 아이콘을 클릭하면 로컬 설정 제어판이 열립니다. `ccb config ui` 명령으로도 실행할 수 있습니다.
+
+<p align="center">
+  <img src="../assets/readme_v7/config-control-panel.png" alt="기본 demo agent를 편집하는 CCB 설정 제어판" width="960">
+</p>
+
+제어판에서 windows, pane 분할, provider, 모델, thinking 단계, API override, workspace, Rich 모드와 sidebar를 설정할 수 있습니다. 저장 전 검증, reload dry-run, 보호된 hot reload를 지원합니다.
+
+고급 멀티 에이전트 토폴로지가 필요하면 화면에서 agent를 추가하거나 `.ccb/ccb.config`를 직접 만드세요. `,`와 `;`는 세로 쌓기와 가로 분할을 제어하며 `A,B;C,D`는 네 pane 배치에 가깝습니다.
 
 ```toml
 version = 2
@@ -222,7 +232,7 @@ CCB는 전문 agent를 패키징하기 위한 host-neutral 명세인 [Agent Role
 
 ## 설정과 공유 메모리
 
-windows를 어떻게 묶을지, workers가 몇 명 필요한지, 어떤 agents가 worktrees를 써야 하는지, 어떤 agents가 별도 모델이나 API routes가 필요한지 확실하지 않다면 현재 작업 공간의 `ccb_self`에 물어보세요. `ccb_self`는 CCB 내장 self-agent로, CCB 명령, 설정 권한, roles, windows, reload 경계, 일반적인 복구 경로를 이해하며 전용 `ccb-config` skill로 함께 설정을 설계할 수 있습니다. 빈 프로젝트에는 `ccb_self`가 포함됩니다. 기존 사용자 설정에는 `ccb roles add agentroles.ccb_self:codex`로 추가할 수 있습니다.
+일반 프로젝트 설정에는 **⚙ 설정** 제어판을 사용하세요. Agent 기반 설정 지원과 runtime 진단이 필요하면 `ccb_self`를 선택적 Role Pack으로 `ccb roles add agentroles.ccb_self:codex` 명령을 통해 추가할 수 있습니다.
 
 `.ccb/ccb_memory.md`는 프로젝트 전체 공유 메모리 문서입니다. 팀 협업 규칙, 프로젝트 제약, 장기 컨텍스트, agent 인계 규칙을 기록하는 데 사용하세요. 여러 provider private memory에 같은 내용을 복사하기보다 안정적인 cross-agent 정보는 여기에 두는 편이 더 안정적입니다.
 

@@ -21,7 +21,7 @@ def _spec(name: str, provider: str) -> AgentSpec:
 
 def test_namespace_topology_plan_projects_sidebar_outside_user_layout(monkeypatch) -> None:
     monkeypatch.delenv('CCB_TMUX_THEME_PROFILE', raising=False)
-    config = build_default_project_config()
+    config = build_default_project_config(provider='codex')
 
     plan = build_namespace_topology_plan(
         config,
@@ -32,11 +32,11 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout(monkeypatc
     assert plan.signature == config.topology_signature
     assert plan.entry_window == 'main'
     assert plan.sidebar_enabled is True
-    assert len(plan.windows) == 2
+    assert len(plan.windows) == 1
     window = plan.windows[0]
     assert window.name == 'main'
-    assert window.user_layout == 'agent1:codex, agent2:codex, agent3:claude'
-    assert window.realized_layout == 'sidebar; (agent1:codex, agent2:codex, agent3:claude)'
+    assert window.user_layout == 'demo:codex'
+    assert window.realized_layout == 'sidebar; (demo:codex)'
     assert window.sidebar is not None
     assert window.sidebar.width == '15%'
     assert window.sidebar.position == 'left'
@@ -49,10 +49,6 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout(monkeypatc
         '--pane-window',
         'main',
     )
-    ccb_self_window = plan.windows[1]
-    assert ccb_self_window.name == 'ccb_self'
-    assert ccb_self_window.user_layout == 'ccb_self:claude'
-    assert ccb_self_window.realized_layout == 'sidebar; (ccb_self:claude)'
 
 
 def test_namespace_topology_plan_projects_right_sidebar_after_user_layout() -> None:
@@ -80,7 +76,7 @@ def test_namespace_topology_plan_projects_right_sidebar_after_user_layout() -> N
 
 def test_namespace_topology_plan_keeps_sidebar_launch_args_theme_compatible(monkeypatch) -> None:
     monkeypatch.setenv('CCB_TMUX_THEME_PROFILE', 'light')
-    config = build_default_project_config()
+    config = build_default_project_config(provider='codex')
 
     plan = build_namespace_topology_plan(
         config,

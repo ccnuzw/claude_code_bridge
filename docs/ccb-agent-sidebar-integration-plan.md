@@ -219,10 +219,13 @@ If `.ccb/ccb.config` is missing, bootstrap should use the built-in default:
 entry_window = "main"
 
 [windows]
-main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"
+main = "demo:codex"
 ```
 
-The sidebar defaults are implicit and need not be written unless the user overrides them.
+The provider shown above is the fallback. Runtime config loading selects the
+first locally available supported provider CLI and keeps exactly one `demo`
+agent. The sidebar defaults are implicit and need not be written unless the
+user overrides them.
 
 ### 4.4 Parser And Normalization Rules
 
@@ -1796,7 +1799,7 @@ Current implementation notes:
 - `ProjectConfig` now normalizes `windows`, `entry_window`, `sidebar`, and `topology_signature` for both legacy compact config and new TOML topology config.
 - New missing-config bootstrap uses the built-in topology shape:
   - `entry_window = "main"`
-  - `[windows] main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"`
+  - `[windows] main = "demo:<first-available-provider>"`
 - Existing compact configs remain accepted and are normalized into one logical `main` window with the legacy `cmd` leaf pruned out of `ProjectConfig.windows`.
 - New TOML `windows` topology rejects `cmd`, duplicate agents across windows, missing provider declarations, unknown `entry_window`, mixed `layout`, mixed `cmd_enabled`, and explicit `default_agents`.
 - Explicit `windows` config may still use `[agents.<name>]` for richer agent fields, but the provider declared in that table must not conflict with the provider declared in the window leaf.

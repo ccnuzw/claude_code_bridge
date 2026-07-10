@@ -8,7 +8,7 @@
 <p>
   <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
-  <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
+  <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
 
 <p>
@@ -109,9 +109,19 @@ mkdir -p .ccb
 
 <a id="configure-agents"></a>
 
-### 2. Create Project Config
+### 2. Configure The Workspace
 
-Create `.ccb/ccb.config` in the project root. The recommended v2 `[windows]` topology uses `,` and `;` to control vertical stacking and horizontal splits inside each window, so `A,B;C,D` is close to a four-pane layout.
+A blank project starts light: CCB opens one `main` window with a single agent named `demo`, selecting the first supported CLI available on the machine (Codex, Claude, Gemini, then other providers). It no longer mounts a multi-agent team by default.
+
+Click the **⚙ Settings** icon at the top-left of the CCB sidebar to open the local configuration control panel. You can also run `ccb config ui` from the project directory.
+
+<p align="center">
+  <img src="assets/readme_v7/config-control-panel.png" alt="CCB configuration control panel editing the default demo agent" width="960">
+</p>
+
+The panel edits windows, pane splits, providers, models, thinking levels, API overrides, workspaces, Rich mode, and sidebar settings. It validates changes before saving and supports reload dry-runs and guarded hot reload. Saving creates `.ccb/ccb.config` and pins the selected provider and topology for this project.
+
+For an advanced multi-agent topology, edit it visually or create `.ccb/ccb.config` manually. In v2 `[windows]`, `,` and `;` control vertical stacking and horizontal splits inside each window, so `A,B;C,D` is close to a four-pane layout.
 
 ```toml
 version = 2
@@ -227,7 +237,7 @@ CCB supports [Agent Roles Spec](https://github.com/SeemSeam/agent-roles-spec), a
 
 ## Config And Shared Memory
 
-If you are not sure how to group windows, how many workers you need, which agents should use worktrees, or which agents need separate models or API routes, ask `ccb_self` in the current workspace. It is CCB's built-in self-agent: it understands CCB commands, config authority, roles, windows, reload boundaries, and common recovery paths, and it can use its private `ccb-config` skill to design a config with you. Blank projects include `ccb_self`; existing custom configs can add it with `ccb roles add agentroles.ccb_self:codex`.
+Use the **⚙ Settings** control panel for normal project configuration. If you want agent-assisted configuration and runtime diagnosis, `ccb_self` remains available as an optional Role Pack and can be added with `ccb roles add agentroles.ccb_self:codex`.
 
 `.ccb/ccb_memory.md` is the project-wide shared memory document. Use it for team collaboration rules, project constraints, long-lived context, and agent handoff conventions. Stable cross-agent information belongs there instead of being copied into several provider-private memory files.
 

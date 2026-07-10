@@ -8,7 +8,7 @@
 <p>
   <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
-  <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
+  <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
 
 <p>
@@ -111,7 +111,17 @@ mkdir -p .ccb
 
 ### 2. إنشاء إعداد المشروع
 
-أنشئ `.ccb/ccb.config` في جذر المشروع. تستخدم طوبولوجيا v2 `[windows]` الموصى بها الرمزين `,` و `;` للتحكم في التكديس العمودي والتقسيم الأفقي داخل كل window؛ لذلك يشبه `A,B;C,D` تخطيط أربع panes.
+يبدأ المشروع الفارغ بشكل خفيف: يفتح CCB نافذة `main` واحدة فقط، ويختار أول CLI مدعوم متاح على الجهاز، وينشئ agent واحدا باسم `demo`. لم يعد فريق متعدد الوكلاء يركب افتراضيا.
+
+انقر على **⚙ الإعدادات** في أعلى يسار sidebar الخاصة بـ CCB لفتح لوحة الإعداد المحلية. ويمكن أيضا تشغيلها عبر `ccb config ui`.
+
+<p align="center">
+  <img src="../assets/readme_v7/config-control-panel.png" alt="لوحة إعداد CCB للـ agent الافتراضي demo" width="960">
+</p>
+
+تتيح اللوحة إعداد windows وتقسيم panes وproviders والنماذج ومستويات thinking وAPI overrides وworkspaces ووضع Rich وsidebar. وتتحقق من التغييرات قبل الحفظ، مع reload dry-run وhot reload محمي.
+
+لطوبولوجيا متعددة الوكلاء متقدمة، أضف agents بصريا أو أنشئ `.ccb/ccb.config` يدويا. يتحكم `,` و `;` في التكديس العمودي والتقسيم الأفقي، ويقارب `A,B;C,D` تخطيط أربع panes.
 
 ```toml
 version = 2
@@ -222,7 +232,7 @@ ccb update rich
 
 ## الإعداد والذاكرة المشتركة
 
-إذا لم تكن متأكدا من كيفية تجميع windows، أو عدد workers المطلوب، أو أي agents يجب أن تستخدم worktrees، أو أي agents تحتاج نماذج أو API routes منفصلة، فاسأل `ccb_self` في مساحة العمل الحالية. إنه self-agent مدمج في CCB: يفهم أوامر CCB وسلطة الإعداد و roles و windows وحدود reload ومسارات الاسترداد الشائعة، ويمكنه استخدام skill الخاص `ccb-config` لتصميم إعداد معك. تتضمن المشاريع الفارغة `ccb_self`؛ ويمكن للإعدادات المخصصة القائمة إضافته عبر `ccb roles add agentroles.ccb_self:codex`.
+للإعداد العادي للمشروع استخدم لوحة **⚙ الإعدادات**. وإذا أردت إعدادا بمساعدة agent وتشخيص runtime، يبقى `ccb_self` متاحا كـ Role Pack اختياري ويمكن إضافته عبر `ccb roles add agentroles.ccb_self:codex`.
 
 `.ccb/ccb_memory.md` هو مستند الذاكرة المشتركة على مستوى المشروع. استخدمه لقواعد تعاون الفريق، وقيود المشروع، والسياق طويل العمر، واتفاقيات تسليم agents. المعلومات المستقرة عبر agents يجب أن توضع هناك بدلا من نسخها في عدة ملفات ذاكرة خاصة بالـ providers.
 

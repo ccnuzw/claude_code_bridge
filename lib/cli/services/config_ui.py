@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
-from agents.config_loader import ConfigValidationError, render_project_config_text, validate_project_config
+from agents.config_loader import (
+    ConfigValidationError,
+    render_default_project_config_text,
+    render_project_config_text,
+    validate_project_config,
+)
 from agents.config_loader_runtime.defaults_runtime.rendering_runtime.service import render_config_document_text
 from agents.config_loader_runtime.io_runtime import parse_config_document_text
 from agents.models import parse_layout_spec
@@ -573,13 +578,23 @@ def _config_payload(
     include_editor: bool = False,
 ) -> dict[str, object]:
     if not config_path.is_file():
-        return {
+        payload: dict[str, object] = {
             'schema_version': 1,
             'exists': False,
             'path': str(config_path),
             'text': '',
             'digest': None,
         }
+        if include_editor:
+            assert project_root is not None
+            default_text = render_default_project_config_text()
+            payload['text'] = default_text
+            payload['editor'] = _editor_payload(
+                default_text,
+                config_path=config_path,
+                project_root=project_root,
+            )
+        return payload
     raw = config_path.read_bytes()
     try:
         text = raw.decode('utf-8')

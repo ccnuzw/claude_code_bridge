@@ -1500,7 +1500,7 @@
           </div>
           <div class="preview-row">
             <span class="preview-label" data-i18n="compactPreview">Preview</span>
-            <span class="code-line" id="staticCompactPreview">main = "agent1:codex"</span>
+            <span class="code-line" id="staticCompactPreview">main = "demo:codex"</span>
             <span class="quick-drawers">
               <button class="btn ghost" data-drawer="validation" data-i18n="validationDetails">Validation details</button>
               <button class="btn ghost" data-drawer="toml" data-i18n="fullToml">Full TOML</button>
@@ -1542,7 +1542,7 @@
           </div>
           <div class="preview-row">
             <span class="preview-label" data-i18n="compactPreview">Preview</span>
-            <span class="code-line" id="basicCompactPreview">layout = "agent1:codex"</span>
+            <span class="code-line" id="basicCompactPreview">layout = "demo:codex"</span>
             <span class="quick-drawers">
               <button class="btn ghost" data-drawer="basicTools" data-i18n="optionalTools">Optional tools</button>
               <button class="btn ghost" data-drawer="toml" data-i18n="fullToml">Full TOML</button>
@@ -2535,7 +2535,7 @@ model = "gpt-5.5"</pre>
 entry_window = "main"
 
 [windows]
-main = "agent1:codex"
+main = "demo:codex"
 `;
     }
 
@@ -2605,12 +2605,12 @@ main = "agent1:codex"
         document: {
           version: 2,
           entry_window: "main",
-          windows: { main: "agent1:codex" }
+          windows: { main: "demo:codex" }
         },
         windows: [{
           name: "main",
-          layout: "agent1:codex",
-          tree: { kind: "leaf", name: "agent1", provider: "codex", workspace_mode: "inplace", percent: null }
+          layout: "demo:codex",
+          tree: { kind: "leaf", name: "demo", provider: "codex", workspace_mode: "inplace", percent: null }
         }]
       };
     }

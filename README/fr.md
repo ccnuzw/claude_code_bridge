@@ -8,7 +8,7 @@
 <p>
   <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
-  <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
+  <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
 
 <p>
@@ -111,7 +111,17 @@ mkdir -p .ccb
 
 ### 2. Créer la configuration du projet
 
-Créez `.ccb/ccb.config` à la racine du projet. La topologie v2 `[windows]` recommandée utilise `,` et `;` pour contrôler les empilements verticaux et les divisions horizontales dans chaque window ; `A,B;C,D` ressemble ainsi à une disposition en quatre panneaux.
+Un projet vierge démarre de façon légère : CCB ouvre une seule window `main` avec un agent nommé `demo` et sélectionne le premier CLI pris en charge disponible sur la machine. Aucune équipe multi-agent n'est montée par défaut.
+
+Cliquez sur **⚙ Paramètres** en haut à gauche de la sidebar CCB pour ouvrir le panneau de configuration local. Vous pouvez aussi exécuter `ccb config ui`.
+
+<p align="center">
+  <img src="../assets/readme_v7/config-control-panel.png" alt="Panneau de configuration CCB pour l'agent demo par défaut" width="960">
+</p>
+
+Le panneau configure les windows, divisions de panes, providers, modèles, niveaux de thinking, API overrides, workspaces, mode Rich et sidebar. Il valide avant l'enregistrement et prend en charge le reload dry-run et le hot reload protégé.
+
+Pour une topologie multi-agent avancée, ajoutez des agents visuellement ou créez `.ccb/ccb.config` manuellement. `,` et `;` contrôlent les empilements verticaux et divisions horizontales ; `A,B;C,D` correspond environ à quatre panes.
 
 ```toml
 version = 2
@@ -222,7 +232,7 @@ CCB prend en charge [Agent Roles Spec](https://github.com/SeemSeam/agent-roles-s
 
 ## Configuration et mémoire partagée
 
-Si vous ne savez pas comment regrouper les windows, combien de workers utiliser, quels agents doivent utiliser des worktrees, ou quels agents ont besoin de modèles ou routes API séparés, demandez à `ccb_self` dans l'espace de travail courant. C'est le self-agent intégré de CCB : il comprend les commandes CCB, l'autorité de configuration, les roles, windows, limites de reload et chemins de récupération courants, et peut utiliser son skill privé `ccb-config` pour concevoir une configuration avec vous. Les projets vierges incluent `ccb_self`; les configurations personnalisées existantes peuvent l'ajouter avec `ccb roles add agentroles.ccb_self:codex`.
+Pour la configuration courante du projet, utilisez le panneau **⚙ Paramètres**. Pour une configuration assistée par agent et le diagnostic runtime, `ccb_self` reste disponible comme Role Pack optionnel et peut être ajouté avec `ccb roles add agentroles.ccb_self:codex`.
 
 `.ccb/ccb_memory.md` est le document de mémoire partagée du projet. Utilisez-le pour les règles de collaboration d'équipe, les contraintes de projet, le contexte durable et les conventions de passation entre agents. Les informations stables entre agents doivent y vivre plutôt que d'être copiées dans plusieurs fichiers de mémoire privés des providers.
 

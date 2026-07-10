@@ -24,9 +24,18 @@ It is the authoritative design anchor for:
 - `~/.ccb/ccb.config` is the user-level config file used only when project config is absent.
 - CCB must not auto-create, reconstruct, or rewrite `.ccb/ccb.config`; it is a user-authored project file.
 - When both `.ccb/ccb.config` and `~/.ccb/ccb.config` are absent, config loading must use the built-in default project config from code and report the source kind as `builtin_default`.
-- The built-in default project config must provide a usable maintenance route:
-  `agent1:codex`, `agent2:codex`, `agent3:claude`, and `ccb_self:codex`
-  in the main window, with `ccb_self` bound to `agentroles.ccb_self`.
+- The built-in default project config contains exactly one `demo` agent in the
+  `main` window. It selects the first locally available supported provider CLI,
+  preferring `codex`, then `claude`, then `gemini`, followed by the remaining
+  built-in providers in registry order.
+- Provider availability uses the effective provider executable, including a
+  configured `*_START_CMD` override. If no supported provider executable is
+  available, the default remains `demo:codex` so startup fails with the normal
+  actionable missing-executable diagnostic instead of inventing an invalid
+  empty topology.
+- Built-in provider selection is evaluated while the built-in default is in
+  use. Saving from the config control panel creates an explicit project config
+  and therefore pins the selected provider and topology.
 - User help text, validation output, diagnostics, and docs must report the active config source kind: `project_config`, `user_config`, or `builtin_default`.
 - `.ccb/config.yaml` is not part of the contract and must not be read or written by current code.
 
@@ -102,12 +111,13 @@ Examples:
 - Each configured agent must appear exactly once in the layout.
 - Built-in provider keys are currently `codex`, `claude`, `gemini`,
   `opencode`, `droid`, `agy`, `kimi`, `deepseek`, `mimo`, `qwen`, `cursor`,
-  `copilot`, `crush`, `kiro`, and `pi`. The `deepseek` provider key launches the
+  `copilot`, `crush`, `kiro`, `pi`, `zai`, and `grok`. The `deepseek` provider key launches the
   DeepSeek-oriented Deep Code CLI command `deepcode` by default; `mimo`
   launches Xiaomi MiMo Code with command `mimo`; `qwen`, `cursor`, `copilot`,
   `crush`, `kiro`, and `pi` launch `qwen`, `agent`, `copilot`, `crush`,
-  `kiro-cli`, and `pi` respectively unless overridden by their provider start-command
-  environment variable.
+  `kiro-cli`, and `pi` respectively; `zai` and `grok` launch `zai` and `grok`.
+  Each command may be overridden by its provider start-command environment
+  variable.
 - The command pane remains a runtime anchor outside the `[windows]` agent leaf
   grammar.
 - Compact config leaf order defines `default_agents`.
