@@ -36,9 +36,29 @@ void main() {
       find.byKey(const ValueKey('ccb-live-terminal-view')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('terminal-connection-status')),
+      findsNothing,
+    );
+    expect(find.textContaining('gateway terminal stream'), findsNothing);
     expect(transport.requests, hasLength(1));
     expect(transport.requests.single.target.projectId, 'proj-demo');
     expect(transport.requests.single.target.agent, 'lead');
+
+    transport.openErrors.add(
+      const TerminalTransportException('terminal stream disconnected'),
+    );
+    await transport.sessions.single.endOutput();
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('terminal-compact-connection-status')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('terminal-compact-reconnect')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('connection details route helper shows supplied panel', (

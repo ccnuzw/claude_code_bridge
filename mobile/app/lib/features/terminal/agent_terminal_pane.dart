@@ -544,6 +544,16 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
                         key: const ValueKey('ccb-live-terminal-view'),
                         autofocus: true,
                       ),
+                      if (!widget.showHeader && disconnected)
+                        Positioned(
+                          top: 8,
+                          left: 12,
+                          right: 12,
+                          child: _CompactTerminalConnectionStatus(
+                            status: status,
+                            onReconnect: canReconnect ? _reconnect : null,
+                          ),
+                        ),
                       Positioned(
                         left: 12,
                         bottom: 12,
@@ -570,6 +580,51 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
           ],
         );
       },
+    );
+  }
+}
+
+class _CompactTerminalConnectionStatus extends StatelessWidget {
+  const _CompactTerminalConnectionStatus({
+    required this.status,
+    required this.onReconnect,
+  });
+
+  final String status;
+  final VoidCallback? onReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.topRight,
+      child: Material(
+        key: const ValueKey('terminal-compact-connection-status'),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(status),
+              if (onReconnect != null) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const ValueKey('terminal-compact-reconnect'),
+                  onPressed: onReconnect,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                  ),
+                  child: const Text('Reconnect'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

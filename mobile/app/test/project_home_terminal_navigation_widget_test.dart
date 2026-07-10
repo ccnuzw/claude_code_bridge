@@ -145,7 +145,7 @@ void main() {
 
     expect(repository.focusAgentCalls, isEmpty);
     expect(find.byType(TerminalView), findsOneWidget);
-    expect(find.text('demo / lead'), findsNWidgets(2));
+    expect(find.text('demo / lead'), findsOneWidget);
 
     await tester.pageBack();
     await tester.pumpAndSettle();

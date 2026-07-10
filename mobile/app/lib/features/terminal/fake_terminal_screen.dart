@@ -69,6 +69,7 @@ class _FakeTerminalScreenState extends State<FakeTerminalScreen> {
                     target: model.target,
                     terminalTransport: widget.terminalTransport,
                     gatewayTerminal: widget.gatewayTerminal,
+                    showHeader: false,
                   ),
         );
       },
