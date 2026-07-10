@@ -268,6 +268,56 @@ void main() {
       );
     });
 
+    test(
+      'prunes attachment-only local message covered by markdown pane echo',
+      () {
+        final local = CcbConversationItem.userMessage(
+          id: 'local-image',
+          agentName: 'mobile_probe',
+          body: '',
+          attachments: const [
+            CcbMessageAttachment(
+              fileId: 'mobile-file-1',
+              fileName: 'ccb-upload-smoke.png',
+              mimeType: 'image/png',
+              sizeBytes: 228266,
+              kind: CcbMessageAttachmentKind.image,
+              state: CcbMessageAttachmentState.available,
+            ),
+          ],
+          state: CcbConversationDeliveryState.sent,
+        );
+        final remoteItem = _user(
+          id: 'remote-image-echo',
+          body:
+              'Attached files:\n'
+              '- [ccb-upload-smoke.png]('
+              '.ccb/mobile/uploads/mobile_probe/'
+              'mobile-file-1-ccb-upload-smoke.png) '
+              '(image/png, 228266 bytes, file id: mobile-file-1)',
+          state: CcbConversationDeliveryState.sent,
+        );
+        final remote = _conversation([remoteItem]);
+
+        expect(
+          pruneLocalMessagesCoveredByRemote(
+            localItems: [local],
+            remoteConversation: remote,
+          ),
+          isEmpty,
+        );
+        final normalized = normalizePaneAttachmentEcho(remoteItem);
+        expect(normalized.body, isEmpty);
+        expect(normalized.attachments, hasLength(1));
+        expect(normalized.attachments.single.fileName, 'ccb-upload-smoke.png');
+        expect(
+          normalized.attachments.single.projectRelativePath,
+          '.ccb/mobile/uploads/mobile_probe/'
+          'mobile-file-1-ccb-upload-smoke.png',
+        );
+      },
+    );
+
     test('detects jpg pane attachment echo from uploaded mobile file', () {
       final local = CcbConversationItem.userMessage(
         id: 'local-image',

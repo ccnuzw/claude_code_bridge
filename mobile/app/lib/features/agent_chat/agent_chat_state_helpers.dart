@@ -276,7 +276,12 @@ CcbMessageAttachment? _parsePaneAttachmentLine(String line) {
   if (match == null) {
     return null;
   }
-  final fileName = match.group(1)?.trim() ?? '';
+  final fileReference = match.group(1)?.trim() ?? '';
+  final markdownLink = RegExp(
+    r'^\[([^\]]+)\]\((.+)\)$',
+  ).firstMatch(fileReference);
+  final fileName = markdownLink?.group(1)?.trim() ?? fileReference;
+  final projectRelativePath = markdownLink?.group(2)?.trim();
   final mimeType = match.group(2)?.trim() ?? '';
   final sizeBytes = int.tryParse(match.group(3) ?? '') ?? 0;
   final fileId = match.group(4)?.trim() ?? '';
@@ -293,6 +298,8 @@ CcbMessageAttachment? _parsePaneAttachmentLine(String line) {
             ? CcbMessageAttachmentKind.image
             : CcbMessageAttachmentKind.document,
     state: CcbMessageAttachmentState.available,
+    projectRelativePath:
+        projectRelativePath?.isNotEmpty == true ? projectRelativePath : null,
   );
 }
 
