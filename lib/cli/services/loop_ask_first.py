@@ -87,12 +87,12 @@ def run_ask_first_execution_round(context, command, services=None) -> dict[str, 
     task_record = _task_record(deps.plan_task(context, SimpleNamespace(action='task-show', task_id=task_id)))
     artifact_refs = _artifact_refs(task_record)
     project_root_authority_required = _requires_project_root_authority(task_record, task_text)
-    orchestrator_agent = _configured_agent_for_role(
+    orchestrator_agent, orchestrator_is_configured = _agent_for_role(
         context,
         ORCHESTRATOR_ROLE_ID,
         fallback=ORCHESTRATOR_TARGET,
     )
-    round_reviewer_agent = _configured_agent_for_role(
+    round_reviewer_agent, round_reviewer_is_configured = _agent_for_role(
         context,
         ROUND_REVIEWER_ROLE_ID,
         fallback=ROUND_REVIEWER_TARGET,
@@ -115,6 +115,8 @@ def run_ask_first_execution_round(context, command, services=None) -> dict[str, 
         loop_id=loop_id,
         worker_agent=worker_agent,
         reviewer_agent=reviewer_agent,
+        orchestrator_agent=None if orchestrator_is_configured else orchestrator_agent,
+        round_reviewer_agent=None if round_reviewer_is_configured else round_reviewer_agent,
     )
     topology_failure = _topology_blocker(topology)
     if topology_failure is not None:
@@ -653,21 +655,21 @@ def _deps(services):
     )
 
 
-def _configured_agent_for_role(context, role_id: str, *, fallback: str) -> str:
+def _agent_for_role(context, role_id: str, *, fallback: str) -> tuple[str, bool]:
     try:
-        loaded = load_project_config(context.project.project_root)
+        loaded = load_project_config(context.project.project_root, include_loop_overlays=False)
         config = loaded.config
     except Exception:
-        return fallback
+        return fallback, False
     agents = getattr(config, 'agents', None)
     if not isinstance(agents, dict):
-        return fallback
+        return fallback, False
     if fallback in agents:
-        return fallback
+        return fallback, True
     for agent_name, spec in agents.items():
         if str(getattr(spec, 'role', '') or '').strip() == role_id:
-            return str(agent_name)
-    return fallback
+            return str(agent_name), True
+    return fallback, False
 
 
 def _apply_mount_topology(
@@ -678,6 +680,8 @@ def _apply_mount_topology(
     loop_id: str,
     worker_agent: str,
     reviewer_agent: str,
+    orchestrator_agent: str | None,
+    round_reviewer_agent: str | None,
 ) -> dict[str, object]:
     proposal_path = loop_dir / 'ask_first_mount_topology.proposal.json'
     proposal = {
@@ -712,6 +716,33 @@ def _apply_mount_topology(
             },
         ],
     }
+    control_agents = (
+        (orchestrator_agent, 'ccb_orchestrator', 0),
+        (round_reviewer_agent, 'ccb_round_reviewer', 1),
+    )
+    if any(agent_name for agent_name, _profile, _pane_order in control_agents):
+        proposal['windows'].append(
+            {
+                'name': 'ccb-plan',
+                'class': 'planning',
+                'max_panes': 6,
+                'layout_policy': 'append-or-create-window',
+            }
+        )
+    for agent_name, profile, pane_order in control_agents:
+        if not agent_name:
+            continue
+        proposal['agents'].append(
+            {
+                'id': agent_name,
+                'profile': profile,
+                'desired_state': 'present',
+                'window_name': 'ccb-plan',
+                'pane_order': pane_order,
+                'lifecycle': 'ephemeral',
+                'release_policy': 'auto',
+            }
+        )
     atomic_write_json(proposal_path, proposal)
     proposed: dict[str, object] = {}
     committed: dict[str, object] = {}

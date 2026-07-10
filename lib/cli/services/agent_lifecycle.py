@@ -971,17 +971,10 @@ def _optional_int(value: object) -> int | None:
 
 def _infer_role_class(role: object) -> str:
     text = str(role or '').lower()
-    if any(
-        token in text
-        for token in (
-            'ccb_frontdesk',
-            'ccb_planner',
-            'ccb_orchestrator',
-            'ccb_task_detailer',
-            'ccb_round_reviewer',
-        )
-    ):
+    if any(token in text for token in ('ccb_frontdesk', 'ccb_planner')):
         return 'long_lived_interactive'
+    if any(token in text for token in ('ccb_orchestrator', 'ccb_task_detailer', 'ccb_round_reviewer')):
+        return 'short_lived_execution'
     if any(token in text for token in ('coder', 'worker', 'checker', 'reviewer')):
         return 'short_lived_execution'
     if any(token in text for token in ('frontdesk', 'frontend', 'planner', 'orchestrator', 'round_checker', 'broker')):

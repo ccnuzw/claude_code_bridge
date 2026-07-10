@@ -1287,7 +1287,7 @@ def test_loop_topology_release_retains_busy_agents(
     assert reviewer_state['lifecycle_state'] == 'unloaded'
 
 
-def test_loop_topology_release_drains_resident_planning_group_without_unloading(
+def test_loop_topology_release_drains_residents_and_unloads_immaculate_roles(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1381,9 +1381,10 @@ def test_loop_topology_release_drains_resident_planning_group_without_unloading(
 
     assert result == 0, stderr
     assert released['loop_topology_status'] == 'released'
-    assert released['released_count'] == 0
-    expected_drained = ['p6bl0b-detailer', 'p6bl0b-frontdesk', 'p6bl0b-orchestrator', 'p6bl0b-planner']
-    assert released['drained_count'] == 4
+    assert released['released_count'] == 2
+    assert released['released_agents'] == ['p6bl0b-detailer', 'p6bl0b-orchestrator']
+    expected_drained = ['p6bl0b-frontdesk', 'p6bl0b-planner']
+    assert released['drained_count'] == 2
     assert released['drained_agents'] == expected_drained
     assert released['drain_reasons'] == {name: 'parked_after_release' for name in expected_drained}
     observed_after_release = json.loads(Path(str(released['observed_path'])).read_text(encoding='utf-8'))
@@ -1409,6 +1410,19 @@ def test_loop_topology_release_drains_resident_planning_group_without_unloading(
         )
         assert retained_state['lifecycle_state'] == 'parked'
         assert retained_state['dispatch_disabled'] is True
+    for agent_name in ('p6bl0b-detailer', 'p6bl0b-orchestrator'):
+        released_state = json.loads(
+            (
+                project_root
+                / '.ccb'
+                / 'runtime'
+                / 'agents'
+                / agent_name
+                / 'lifecycle.json'
+            ).read_text(encoding='utf-8')
+        )
+        assert released_state['lifecycle_state'] == 'unloaded'
+        assert released_state['role_class'] == 'short_lived_execution'
     result, status, stderr = _run_phase2(
         ['loop', 'topology', 'status', '--loop-id', 'p6bl0a', '--json'],
         cwd=project_root,
@@ -1436,9 +1450,8 @@ def test_loop_topology_release_drains_resident_planning_group_without_unloading(
         ['loop', 'topology', 'commit', '--loop-id', 'p6bl0c', '--proposal', 'p6bl0c-plan', '--apply', '--json'],
         cwd=project_root,
     )
-    assert result == 1
-    assert committed_b == {}
-    assert 'agent profile ccb_orchestrator exceeds max_instances=1' in stderr
+    assert result == 0, stderr
+    assert committed_b['loop_topology_status'] == 'committed'
 
 
 def test_loop_topology_release_keeps_other_loop_agents(

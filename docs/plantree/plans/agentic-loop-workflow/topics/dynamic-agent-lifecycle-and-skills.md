@@ -342,6 +342,13 @@ Core parameters:
 | `diagnostic` | `park` while incident is open, otherwise `unload` after idle. |
 | unknown | `park` unless operator explicitly chooses unload or kill. |
 
+Workflow lifetime mapping is semantic, not a statement about which window is
+visible. `ccb_frontdesk` and `ccb_planner` are `long_lived_interactive`.
+`ccb_task_detailer`, `ccb_orchestrator`, `ccb_round_reviewer`, coder, and code
+reviewer are immaculate task/round roles and use `short_lived_execution`, so
+automatic release unloads their provider session and pane instead of parking
+their context for reuse.
+
 The command output should always report the resolved policy. Example:
 
 ```json

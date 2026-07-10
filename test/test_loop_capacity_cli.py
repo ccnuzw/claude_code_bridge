@@ -2640,7 +2640,7 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
     assert payload['round_result_source'] == 'round_reviewer_reply'
     assert payload['task_status'] == 'done'
     assert payload['next_activation'] == 'stop'
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     assert payload['release']['retained_count'] == 0
     assert payload['topology']['status'] == 'ready'
     assert (project_root / 'lab_docs' / 'direct_execution_note.md').read_text(encoding='utf-8') == 'status: reviewed\n'
@@ -2698,7 +2698,22 @@ def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatc
     normalized_proposal = json.loads(Path(str(payload['topology']['proposal_path'])).read_text(encoding='utf-8'))
     desired = json.loads(Path(str(payload['topology']['desired_path'])).read_text(encoding='utf-8'))
     observed = json.loads(Path(str(payload['topology']['observed_path'])).read_text(encoding='utf-8'))
-    assert [agent['profile'] for agent in normalized_proposal['agents']] == ['coder', 'code_reviewer']
+    assert [agent['profile'] for agent in normalized_proposal['agents']] == [
+        'coder',
+        'code_reviewer',
+        'ccb_orchestrator',
+        'ccb_round_reviewer',
+    ]
+    assert {
+        agent['id']: agent['window_name']
+        for agent in normalized_proposal['agents']
+    } == {
+        f'loop-{payload["loop_id"]}-coder-1': 'ccb-exec',
+        f'loop-{payload["loop_id"]}-code_reviewer-1': 'ccb-exec',
+        'ccb_orchestrator': 'ccb-plan',
+        'ccb_round_reviewer': 'ccb-plan',
+    }
+    assert [window['name'] for window in normalized_proposal['windows']] == ['ccb-exec', 'ccb-plan']
     for persisted in (normalized_proposal, desired, observed):
         assert 'edges' not in persisted
         assert 'artifacts' not in persisted
@@ -2793,7 +2808,7 @@ def test_loop_runner_ask_first_round_reviewer_malformed_reply_gets_bounded_corre
     assert payload['round_result'] == 'pass'
     assert payload['round_result_source'] == 'round_reviewer_correction_reply'
     assert payload['task_status'] == 'done'
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     targets = [command.target for command in submitted]
     assert len(targets) == 5
     assert targets[3:] == ['ccb_round_reviewer', 'ccb_round_reviewer']
@@ -3010,7 +3025,7 @@ def test_loop_runner_ask_first_without_explicit_timeout_waits_for_natural_ask_te
     assert 'round_checker' not in round_json['agents']
     assert 'round_checker' not in round_json
     assert round_json['legacy_aliases']['round_checker']['field'] == 'ccb_round_reviewer'
-    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['topology']['release']['released_count'] == 4
     assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
     assert round_json['authority_update']['changed_files'] == ['lab_docs/direct_execution_note.md']
     assert round_json['authority_update']['allowed_change_paths'] == ['lab_docs/direct_execution_note.md']
@@ -3201,6 +3216,10 @@ def test_loop_runner_direct_execution_uses_configured_orchestrator_agent_name(
     assert targets[2] == 'orchestrator'
     assert payload['round_result'] == 'pass'
     assert payload['task_status'] == 'done'
+    assert payload['release']['released_count'] == 2
+    proposal = json.loads(Path(str(payload['topology']['proposal_path'])).read_text(encoding='utf-8'))
+    assert [agent['profile'] for agent in proposal['agents']] == ['coder', 'code_reviewer']
+    assert [window['name'] for window in proposal['windows']] == ['ccb-exec']
     round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['agents']['orchestrator'] == 'orchestrator'
     assert round_json['orchestrator']['target'] == 'orchestrator'
@@ -3907,7 +3926,7 @@ def test_loop_runner_direct_execution_resume_terminal_worker_failure_blocks(
     assert second['round_result'] == 'blocked'
     assert second['round_result_source'] == 'ask_job_incomplete'
     assert second['task_status'] == 'blocked'
-    assert second['release']['released_count'] == 2
+    assert second['release']['released_count'] == 4
     assert len(submitted) == 1
     round_json = json.loads(Path(str(second['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['worker']['status'] == 'failed'
@@ -4001,7 +4020,7 @@ def test_loop_runner_direct_execution_promotes_isolated_workspace_changes_before
     assert payload['round_result'] == 'pass'
     assert payload['round_result_source'] == 'round_reviewer_reply'
     assert payload['task_status'] == 'done'
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: reviewed\n'
     round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['round_result'] == 'pass'
@@ -4294,7 +4313,7 @@ def test_loop_runner_direct_execution_blocks_when_workspace_promotion_fails(
     assert payload['round_result'] == 'blocked'
     assert payload['round_result_source'] == 'isolated_workspace_promotion_failed'
     assert payload['task_status'] == 'blocked'
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: draft\n'
     round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['round_result'] == 'blocked'
@@ -5258,7 +5277,7 @@ def test_loop_runner_direct_execution_uses_one_bounded_rework_cycle(
     assert payload['loop_runner_status'] == 'ok'
     assert payload['round_result'] == expected_result
     assert payload['task_status'] == expected_status
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     assert [command.task_id for command in submitted] == [
         f'{payload["loop_id"]}-worker',
         f'{payload["loop_id"]}-reviewer',
@@ -5473,7 +5492,7 @@ def test_loop_runner_direct_execution_submit_failure_blocks_and_releases(
     assert payload['round_result'] == 'blocked'
     assert payload['round_result_source'] == 'ask_submission_failed'
     assert payload['task_status'] == 'blocked'
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     assert payload['release']['retained_count'] == 0
     assert len(submitted) == 1
     assert submitted[0].target.startswith(f'loop-{payload["loop_id"]}-coder-')
@@ -5486,7 +5505,7 @@ def test_loop_runner_direct_execution_submit_failure_blocks_and_releases(
     assert round_json['failure']['source'] == 'ask_submission_failed'
     assert round_json['failure']['stage'] == 'worker_ask'
     assert round_json['failure']['reason'] == 'submit transport failed'
-    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['topology']['release']['released_count'] == 4
     assert round_json['authority_import']['status'] == 'blocked'
     shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
     assert shown['task']['status'] == 'blocked'
@@ -5799,7 +5818,7 @@ def test_loop_runner_direct_execution_persisted_failed_terminal_blocks_with_evid
     assert blocked['round_result'] == 'blocked'
     assert blocked['round_result_source'] == 'ask_job_incomplete'
     assert blocked['task_status'] == 'blocked'
-    assert blocked['release']['released_count'] == 2
+    assert blocked['release']['released_count'] == 4
     round_json = json.loads(Path(str(blocked['round']['round_json_path'])).read_text(encoding='utf-8'))
     assert round_json['worker']['status'] == 'failed'
     assert round_json['worker']['watch_source'] == 'persisted_terminal'
@@ -6145,7 +6164,7 @@ def test_loop_runner_direct_execution_unknown_round_result_blocks_and_releases(
     assert payload['round_result'] == 'blocked'
     assert payload['round_result_source'] == 'unknown_round_result'
     assert payload['task_status'] == 'blocked'
-    assert payload['release']['released_count'] == 2
+    assert payload['release']['released_count'] == 4
     assert payload['release']['retained_count'] == 0
     assert len(submitted) == 5
     assert submitted[4].target == 'ccb_round_reviewer'
@@ -6161,7 +6180,7 @@ def test_loop_runner_direct_execution_unknown_round_result_blocks_and_releases(
     assert round_json['failure']['unknown_round_result'] == 'mystery'
     assert round_json['failure']['authority_rollback'] == 'restored_project_root'
     assert round_json['authority_update']['authority_rollback'] == 'restored_project_root'
-    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['topology']['release']['released_count'] == 4
     assert round_json['authority_import']['status'] == 'blocked'
     shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
     assert shown['task']['status'] == 'blocked'

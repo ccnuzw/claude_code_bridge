@@ -45,8 +45,8 @@ for usability only.
 
 | Logical Order | Window Class | Default Name | Contents | Max Panes |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | user interaction | `ccb-user` | V1 resident `ccb_frontdesk`, V1 resident `ccb_task_detailer`, future user-summoned dialog experts | 6 |
-| 2 | planning and orchestration | `ccb-plan` | V1 resident `ccb_planner`, V1 resident `ccb_orchestrator`, on-demand `ccb_round_reviewer` | 6 |
+| 1 | user interaction | `ccb-user` | resident `ccb_frontdesk`, on-demand immaculate `ccb_task_detailer`, future user-summoned dialog experts | 6 |
+| 2 | planning and orchestration | `ccb-plan` | resident `ccb_planner`, per-task immaculate `ccb_orchestrator`, per-round immaculate `ccb_round_reviewer` | 6 |
 | 3+ | execution workgroups | `ccb-exec`, `ccb-exec-2`, ... | `coder + code_reviewer` work units, packed three pairs per window | 6 |
 | later | runtime diagnostics | `runtime` | loop runner, ccbd logs, capacity, ask/job queue, monitor, recovery | 6 |
 | later | archived evidence | `archive-<loop-id>` | frozen panes or summaries retained for inspection | 6 |
@@ -62,23 +62,18 @@ When a class exceeds its pane limit:
 
 Purpose: visible user discussion space.
 
-V1 default panes:
+Resident pane:
 
 ```text
 ccb_frontdesk
-ccb_task_detailer
 ```
 
 Rules:
 
 - `ccb_frontdesk` is the default user-facing boundary.
-- V1 keeps `ccb_task_detailer` resident and visible in Window 1 so task-local
-  refinement and clarification can be dispatched without a hidden-agent
-  readiness problem.
-- `ccb_task_detailer` being resident is a process/topology simplification, not
-  a semantic authority change. It only handles a task after orchestrator
-  triage asks for detail, and it should reset or rehydrate task-scoped context
-  between tasks instead of becoming a long-lived planner.
+- `ccb_task_detailer` is created visibly in Window 1 only after a task route
+  requests detail work. Its reply is imported, then its task-scoped provider
+  session and pane are unloaded after the idle/evidence gate.
 - Dialog-facing roles do not own task status, loop status, runtime lifecycle,
   or execution authority.
 - Any task-affecting conversation should return through explicit artifacts or
@@ -89,7 +84,7 @@ Example:
 ```text
 ccb-user
   ccb_frontdesk
-  ccb_task_detailer
+  ccb_task_detailer  # only while a detail route is active
 ```
 
 ## Window 2: `ccb-plan`
@@ -97,25 +92,24 @@ ccb-user
 Purpose: planning, review, clarification, orchestration, and round-level
 verification workspace.
 
-V1 default panes:
+Resident pane:
 
 ```text
 ccb_planner
-ccb_orchestrator
 ```
 
 Rules:
 
-- V1 keeps `ccb_planner` and `ccb_orchestrator` resident and visible in Window
-  2. This gives the first production candidate a stable two-pane planning and
-  orchestration surface.
+- V1 keeps only `ccb_planner` resident in Window 2. `ccb_orchestrator` is
+  mounted visibly for one task/round and then unloaded.
 - `ccb_planner` owns macro plan/task state recommendations and plan-tree
   artifacts through script authority.
-- `ccb_orchestrator` lives here because it semantically decomposes work and
-  proposes desired topology; it does not directly create tmux windows or panes.
-- `ccb_round_reviewer` is still placed in `ccb-plan`, but it is on demand for
-  round-end verification rather than part of the V1 always-open four-agent
-  baseline.
+- `ccb_orchestrator` lives here while active because it semantically decomposes
+  work and proposes desired topology; it does not directly create tmux windows
+  or panes.
+- `ccb_round_reviewer` is mounted in `ccb-plan` only for round-end verification.
+  It is part of the same round topology and release transaction as the
+  execution agents.
 - Scripts and loop runner remain authority; these panes produce artifacts and
   recommendations.
 
@@ -123,9 +117,9 @@ Phase examples:
 
 | Phase | Expected Panes |
 | :--- | :--- |
-| planning | `ccb_planner`, `ccb_orchestrator` |
-| ready/execution start | `ccb_planner`, `ccb_orchestrator` |
-| round end | `ccb_round_reviewer`, optionally `ccb_planner` in stewardship mode |
+| planning | `ccb_planner`; add `ccb_orchestrator` when task orchestration starts |
+| ready/execution start | `ccb_planner`, active `ccb_orchestrator` |
+| round end | `ccb_planner`, active `ccb_orchestrator`, active `ccb_round_reviewer` |
 
 ## Window 3+: `ccb-exec` Execution Windows
 
