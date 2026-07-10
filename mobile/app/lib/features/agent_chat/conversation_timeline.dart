@@ -41,6 +41,7 @@ class ConversationTimeline extends StatelessWidget {
     required this.hasOlderItems,
     required this.onDownloadAttachment,
     required this.onOpenAttachment,
+    this.expandedItemKeyBuilder,
     this.bottomRevealPadding = conversationTimelineFollowLatestPadding,
     this.workingItemId,
     super.key,
@@ -67,6 +68,7 @@ class ConversationTimeline extends StatelessWidget {
   final bool hasOlderItems;
   final ValueChanged<CcbMessageAttachment> onDownloadAttachment;
   final ValueChanged<CcbMessageAttachment> onOpenAttachment;
+  final GlobalKey Function(String itemId)? expandedItemKeyBuilder;
   final double bottomRevealPadding;
   final String? workingItemId;
 
@@ -119,26 +121,32 @@ class ConversationTimeline extends StatelessWidget {
                 );
               }
               final item = items[index - loadingOffset];
-              return _ConversationTimelineItem(
+              final expanded = expandedItemIds.contains(item.id);
+              return KeyedSubtree(
                 key: conversationTimelineItemKey(item.id),
-                item: item,
-                timelineViewportHeight: constraints.maxHeight,
-                timelineScrollController: controller,
-                content:
-                    item.contentId == null ? null : contentById[item.contentId],
-                repository: repository,
-                view: view,
-                agent: agent,
-                initialHistory: initialHistory,
-                expanded: expandedItemIds.contains(item.id),
-                isWorking: item.id == workingItemId,
-                downloadingAttachmentIds: downloadingAttachmentIds,
-                downloadedAttachmentIds: downloadedAttachmentIds,
-                onRetry: onRetry,
-                onDeleteFailedMessage: onDeleteFailedMessage,
-                onToggleExpanded: onToggleExpanded,
-                onDownloadAttachment: onDownloadAttachment,
-                onOpenAttachment: onOpenAttachment,
+                child: _ConversationTimelineItem(
+                  key: expanded ? expandedItemKeyBuilder?.call(item.id) : null,
+                  item: item,
+                  timelineViewportHeight: constraints.maxHeight,
+                  timelineScrollController: controller,
+                  content:
+                      item.contentId == null
+                          ? null
+                          : contentById[item.contentId],
+                  repository: repository,
+                  view: view,
+                  agent: agent,
+                  initialHistory: initialHistory,
+                  expanded: expanded,
+                  isWorking: item.id == workingItemId,
+                  downloadingAttachmentIds: downloadingAttachmentIds,
+                  downloadedAttachmentIds: downloadedAttachmentIds,
+                  onRetry: onRetry,
+                  onDeleteFailedMessage: onDeleteFailedMessage,
+                  onToggleExpanded: onToggleExpanded,
+                  onDownloadAttachment: onDownloadAttachment,
+                  onOpenAttachment: onOpenAttachment,
+                ),
               );
             },
           );
@@ -148,14 +156,8 @@ class ConversationTimeline extends StatelessWidget {
   }
 }
 
-final _conversationTimelineItemKeys = <String, GlobalKey>{};
-
-GlobalKey conversationTimelineItemKey(String itemId) {
-  return _conversationTimelineItemKeys.putIfAbsent(
-    itemId,
-    () => GlobalKey(debugLabel: 'conversation-timeline-item-$itemId'),
-  );
-}
+Key conversationTimelineItemKey(String itemId) =>
+    ValueKey('conversation-timeline-item-$itemId');
 
 class _ConversationTimelineItem extends StatelessWidget {
   const _ConversationTimelineItem({

@@ -9,6 +9,63 @@ import 'support/project_home_test_driver.dart';
 import 'support/project_home_test_fakes.dart';
 
 void main() {
+  testWidgets('timeline item identity is safe across route recreation', (
+    tester,
+  ) async {
+    final repository = FakeMobileCcbRepository.demo();
+    final view = CcbProjectView.fromProjectViewPayload(demoProjectViewFixture);
+    final agent = view.agentByName('lead')!;
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final item = CcbConversationItem(
+      id: 'shared-provider-item',
+      agentName: agent.name,
+      kind: CcbConversationItemKind.agentReply,
+      title: 'Agent reply',
+      body: 'Stable provider reply',
+      source: 'provider_native/codex',
+    );
+
+    Widget timeline() {
+      return MaterialApp(
+        home: SizedBox(
+          height: 600,
+          child: ConversationTimeline(
+            repository: repository,
+            view: view,
+            agent: agent,
+            contentItems: const [],
+            initialHistory: null,
+            items: [item],
+            isLoading: false,
+            controller: controller,
+            expandedItemIds: const {},
+            downloadingAttachmentIds: const {},
+            downloadedAttachmentIds: const {},
+            onRetry: (_) {},
+            onDeleteFailedMessage: (_) {},
+            onToggleExpanded: (_) {},
+            onNearEnd: () {},
+            onUserNearEnd: () {},
+            onNearStart: () {},
+            onUserScrollDirectionChanged: (_) {},
+            hasOlderItems: false,
+            onDownloadAttachment: (_) {},
+            onOpenAttachment: (_) {},
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(timeline());
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpWidget(timeline());
+    await tester.pump();
+
+    expect(find.text('Stable provider reply'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('readable terminal history scrolls through retained blocks', (
     tester,
   ) async {

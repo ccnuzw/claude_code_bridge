@@ -24,7 +24,6 @@ import 'agent_local_message_store.dart';
 import 'agent_message_submit_coordinator.dart';
 import 'agent_pane_event_coordinator.dart';
 import 'agent_pane_message_submitter.dart';
-import 'conversation_timeline.dart';
 import 'pane_chat_controller.dart';
 import 'selected_agent_workspace_model.dart';
 import 'selected_agent_workspace_view.dart';
@@ -135,6 +134,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
   final Set<String> _downloadingAttachmentIds = {};
   final Map<String, String> _downloadedAttachmentPaths = {};
   final Map<String, double> _preExpansionTimelineOffsets = {};
+  final Map<String, GlobalKey> _expandedTimelineItemKeys = {};
   final Set<String> _awaitingPaneResponseAgentNames = {};
   final Map<String, _AwaitingReplyBaseline> _awaitingReplyBaselines = {};
   final Set<String> _sourceWorkingAgentNames = {};
@@ -416,7 +416,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       if (!mounted) {
         return;
       }
-      final itemContext = conversationTimelineItemKey(itemId).currentContext;
+      final itemContext = _expandedTimelineItemKey(itemId).currentContext;
       if (itemContext == null) {
         return;
       }
@@ -427,6 +427,14 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  GlobalKey _expandedTimelineItemKey(String itemId) {
+    final scope = '${widget.view.project.id}:${widget.agent?.name}:$itemId';
+    return _expandedTimelineItemKeys.putIfAbsent(
+      scope,
+      () => GlobalKey(debugLabel: 'expanded-conversation-item-$scope'),
+    );
   }
 
   void _restoreTimelineOffset(String agentName, double offset) {
@@ -886,7 +894,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
           _localExceptionStatusAgentNames.add(event.agentName);
         } else {
           _localExceptionStatusAgentNames.remove(event.agentName);
-          _markAwaitingPaneResponse(event.agentName);
         }
       });
       return;
@@ -1231,6 +1238,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
                 label: 'Esc',
               );
             },
+            expandedItemKeyBuilder: _expandedTimelineItemKey,
             sendEnabled:
                 widget.sendEnabled && widget.view.namespaceEpoch != null,
             sendDisabledReason: widget.sendDisabledReason,

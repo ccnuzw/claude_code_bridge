@@ -60,6 +60,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
     required this.onSend,
     required this.onSendTab,
     required this.onSendEscape,
+    this.expandedItemKeyBuilder,
     this.sendEnabled = true,
     this.sendDisabledReason,
     super.key,
@@ -93,6 +94,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onSendTab;
   final VoidCallback onSendEscape;
+  final GlobalKey Function(String itemId)? expandedItemKeyBuilder;
   final bool sendEnabled;
   final String? sendDisabledReason;
 
@@ -151,6 +153,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
                         hasOlderItems: model.hasOlderConversation,
                         onDownloadAttachment: onDownloadAttachment,
                         onOpenAttachment: onOpenAttachment,
+                        expandedItemKeyBuilder: expandedItemKeyBuilder,
                       ),
                     ),
                   ),

@@ -1823,6 +1823,88 @@ void main() {
     expect(find.textContaining('stream-only-visible-status'), findsNothing);
   });
 
+  testWidgets('unsolicited idle terminal repaint does not start working', (
+    tester,
+  ) async {
+    final terminalTransport = RecordingTerminalTransport();
+    final repository = ControlledCompletedReplyConversationRepository();
+    final controller = SelectedAgentWorkspaceController();
+    var refreshCount = 0;
+    var view = _workspaceView(
+      _statusAgent(
+        activityState: 'idle',
+        activitySource: 'provider_pane',
+        activityReason: 'provider_prompt_idle',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              final agent = view.agentByName('mobile')!;
+              return SelectedAgentWorkspace(
+                repository: repository,
+                terminalTransport: terminalTransport,
+                usePaneInputForMessages: true,
+                view: view,
+                agent: agent,
+                enableComposerCollapse: true,
+                controller: controller,
+                onRefreshView: () async {
+                  refreshCount += 1;
+                  final refreshed = _workspaceView(
+                    _statusAgent(
+                      activityState: refreshCount == 1 ? 'active' : 'idle',
+                      activitySource:
+                          refreshCount == 1 ? 'codex_runtime' : 'provider_pane',
+                      activityReason:
+                          refreshCount == 1
+                              ? 'codex_working_status_line'
+                              : 'provider_prompt_idle',
+                    ),
+                  );
+                  setState(() {
+                    view = refreshed;
+                  });
+                  return refreshed;
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'work before idle repaint',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+    await tester.pump();
+    expect(terminalTransport.sessions, hasLength(1));
+    repository.releaseReply();
+    controller.refreshLatest();
+    await tester.pumpAndSettle();
+    controller.refreshLatest();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('conversation-working-status-text')),
+      findsNothing,
+    );
+
+    terminalTransport.sessions.single.addOutput('idle prompt repaint\n');
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('conversation-working-status-text')),
+      findsNothing,
+    );
+    expect(find.textContaining('idle prompt repaint'), findsNothing);
+  });
+
   testWidgets(
     'paired terminal interruption takes priority until activity resumes',
     (tester) async {
