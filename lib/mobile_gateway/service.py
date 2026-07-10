@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 from pathlib import Path
+from queue import Empty, Full, Queue
 import re
 import shutil
 import sqlite3
@@ -54,7 +55,14 @@ _PAIRING_CAPABILITIES = (
 )
 _REDACTED_NAMESPACE_KEYS = ('socket_path', 'session_name')
 _DEFAULT_ROUTE_PROVIDER = 'lan'
-_PROJECT_LIST_HEALTH_WORKERS = 8
+_PROJECT_HEALTH_CACHE_TTL_SECONDS = 5.0
+_PROJECT_HEALTH_CACHE_MAX_STALE_SECONDS = 30.0
+_PROJECT_HEALTH_CACHE_MAX_ENTRIES = 256
+_PROJECT_HEALTH_REFRESH_WORKERS = 4
+_PROJECT_HEALTH_REFRESH_QUEUE_MAX = 256
+_PROJECT_HEALTH_REFRESH_BUDGET = 256
+_PROJECT_HEALTH_FAILURE_BACKOFF_SECONDS = 2.0
+_PROJECT_HEALTH_FAILURE_BACKOFF_MAX_SECONDS = 30.0
 _DEFAULT_PAIRING_SCOPES = (
     'view',
     'content',
@@ -116,6 +124,270 @@ class _ConversationPageCacheEntry:
     byte_size: int
 
 
+@dataclass(frozen=True)
+class _ProjectHealthCacheEntry:
+    payload: dict[str, object]
+    checked_at: str
+    checked_monotonic: float
+    next_refresh_monotonic: float
+    failure_count: int
+
+
+class _BoundedDaemonExecutor:
+    """Small daemon executor used by the gateway's non-request refresh work."""
+
+    def __init__(self, *, workers: int, max_pending: int) -> None:
+        self._queue: Queue[tuple[Future[object], Callable[[], object]] | None] = Queue(
+            maxsize=max(1, int(max_pending))
+        )
+        self._closed = threading.Event()
+        self._threads = [
+            threading.Thread(
+                target=self._run,
+                name=f'ccb-mobile-refresh-{index}',
+                daemon=True,
+            )
+            for index in range(max(1, int(workers)))
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def submit(self, task: Callable[[], object]) -> Future[object] | None:
+        if self._closed.is_set():
+            return None
+        future: Future[object] = Future()
+        try:
+            self._queue.put_nowait((future, task))
+        except Full:
+            return None
+        return future
+
+    def close(self) -> None:
+        self._closed.set()
+        for _thread in self._threads:
+            try:
+                self._queue.put_nowait(None)
+            except Full:
+                break
+
+    def _run(self) -> None:
+        while not self._closed.is_set() or not self._queue.empty():
+            try:
+                item = self._queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if item is None:
+                return
+            future, task = item
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(task())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+
+class _ProjectHealthCache:
+    """Per-project ping cache with bounded stale-while-revalidate scheduling."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], str],
+        monotonic_clock: Callable[[], float],
+        submit: Callable[[Callable[[], object]], Future[object] | None],
+        ping: Callable[[MobileGatewayProject], dict[str, object]],
+    ) -> None:
+        self._clock = clock
+        self._monotonic_clock = monotonic_clock
+        self._submit = submit
+        self._ping = ping
+        self._entries: OrderedDict[str, _ProjectHealthCacheEntry] = OrderedDict()
+        self._registry_ids: tuple[str, ...] = ()
+        self._active_ids: set[str] = set()
+        self._refreshing: set[str] = set()
+        self._observed_ids: set[str] = set()
+        self._available_ids: set[str] = set()
+        self._observed_active_count = 0
+        self._overview_updated_monotonic: float | None = None
+        self._overview_available_project_ids: tuple[str, ...] = ()
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def prime(self, projects: tuple[MobileGatewayProject, ...]) -> None:
+        """Record registry identity without pinging it, so host health stays O(1)."""
+        with self._lock:
+            self._reconcile_locked(projects)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._refreshing.clear()
+
+    def health_by_project(
+        self,
+        projects: tuple[MobileGatewayProject, ...],
+    ) -> dict[str, dict[str, object]]:
+        now = self._monotonic_clock()
+        candidates: list[MobileGatewayProject] = []
+        results: dict[str, dict[str, object]] = {}
+        with self._lock:
+            self._reconcile_locked(projects)
+            for project in projects:
+                entry = self._entries.get(project.project_id)
+                if (
+                    len(candidates) < _PROJECT_HEALTH_REFRESH_BUDGET
+                    and self._needs_refresh_locked(project.project_id, entry, now=now)
+                ):
+                    self._refreshing.add(project.project_id)
+                    candidates.append(project)
+                results[project.project_id] = self._snapshot_locked(
+                    project.project_id,
+                    entry,
+                    now=now,
+                )
+        for project in candidates:
+            future = self._submit(lambda project=project: self._refresh(project))
+            if future is None:
+                with self._lock:
+                    self._refreshing.discard(project.project_id)
+        return results
+
+    def overview(self) -> dict[str, object]:
+        """Return the last observed project health without registry work or pings."""
+        now = self._monotonic_clock()
+        with self._lock:
+            project_count = len(self._registry_ids)
+            complete = self._observed_active_count == project_count
+            updated_at = self._overview_updated_monotonic
+            available_count = len(self._available_ids)
+            available_ids = self._overview_available_project_ids
+        if not complete or updated_at is None:
+            freshness = 'unknown'
+        elif now - updated_at <= _PROJECT_HEALTH_CACHE_TTL_SECONDS:
+            freshness = 'cached'
+        elif now - updated_at <= _PROJECT_HEALTH_CACHE_MAX_STALE_SECONDS:
+            freshness = 'stale'
+        else:
+            freshness = 'unknown'
+        return {
+            'project_count': project_count,
+            'available_project_count': available_count if freshness != 'unknown' else None,
+            'available_project_ids': list(available_ids) if freshness != 'unknown' else [],
+            'health_freshness': freshness,
+        }
+
+    def _reconcile_locked(self, projects: tuple[MobileGatewayProject, ...]) -> None:
+        project_ids = tuple(project.project_id for project in projects)
+        active_ids = set(project_ids)
+        if active_ids != self._active_ids:
+            self._overview_updated_monotonic = None
+        self._registry_ids = project_ids
+        self._active_ids = active_ids
+        for project_id in tuple(self._entries):
+            if project_id not in active_ids:
+                self._entries.pop(project_id, None)
+        self._observed_ids.intersection_update(active_ids)
+        self._available_ids.intersection_update(active_ids)
+        self._observed_active_count = len(self._observed_ids)
+        self._overview_available_project_ids = tuple(sorted(self._available_ids))[:10]
+        self._refreshing.intersection_update(active_ids)
+
+    def _snapshot_locked(
+        self,
+        project_id: str,
+        entry: _ProjectHealthCacheEntry | None,
+        *,
+        now: float,
+    ) -> dict[str, object]:
+        if entry is None:
+            return {
+                'health': 'unknown',
+                'mount_state': 'unknown',
+                'health_freshness': 'unknown',
+                'health_refreshing': project_id in self._refreshing,
+            }
+        age = max(0.0, now - entry.checked_monotonic)
+        if age <= _PROJECT_HEALTH_CACHE_TTL_SECONDS:
+            freshness = 'fresh'
+        elif age <= _PROJECT_HEALTH_CACHE_MAX_STALE_SECONDS:
+            freshness = 'stale'
+        else:
+            return {
+                'health': 'unknown',
+                'mount_state': 'unknown',
+                'health_freshness': 'unknown',
+                'health_refreshing': project_id in self._refreshing,
+            }
+        return {
+            **entry.payload,
+            'health_freshness': freshness,
+            'health_checked_at': entry.checked_at,
+            'health_refreshing': project_id in self._refreshing,
+        }
+
+    def _needs_refresh_locked(
+        self,
+        project_id: str,
+        entry: _ProjectHealthCacheEntry | None,
+        *,
+        now: float,
+    ) -> bool:
+        return (
+            not self._closed
+            and project_id not in self._refreshing
+            and (entry is None or now >= entry.next_refresh_monotonic)
+        )
+
+    def _refresh(self, project: MobileGatewayProject) -> None:
+        now = self._monotonic_clock()
+        try:
+            payload = dict(self._ping(project) or {})
+        except Exception:
+            payload = {
+                'health': 'unreachable',
+                'mount_state': 'unavailable',
+                'error': 'project unavailable',
+            }
+        failure = _project_health_refresh_failed(payload)
+        with self._lock:
+            prior = self._entries.get(project.project_id)
+            failure_count = (prior.failure_count if prior is not None else 0) + 1 if failure else 0
+            if failure:
+                delay = min(
+                    _PROJECT_HEALTH_FAILURE_BACKOFF_MAX_SECONDS,
+                    _PROJECT_HEALTH_FAILURE_BACKOFF_SECONDS * (2 ** max(0, failure_count - 1)),
+                )
+            else:
+                delay = _PROJECT_HEALTH_CACHE_TTL_SECONDS
+            if not self._closed and project.project_id in self._active_ids:
+                if project.project_id not in self._observed_ids:
+                    self._observed_ids.add(project.project_id)
+                    self._observed_active_count += 1
+                if _project_available_for_mobile_list(payload):
+                    self._available_ids.add(project.project_id)
+                else:
+                    self._available_ids.discard(project.project_id)
+                self._entries[project.project_id] = _ProjectHealthCacheEntry(
+                    payload=payload,
+                    checked_at=self._clock(),
+                    checked_monotonic=now,
+                    next_refresh_monotonic=now + delay,
+                    failure_count=failure_count,
+                )
+                self._entries.move_to_end(project.project_id)
+                while len(self._entries) > _PROJECT_HEALTH_CACHE_MAX_ENTRIES:
+                    evicted_project_id, _entry = self._entries.popitem(last=False)
+                    if evicted_project_id in self._observed_ids:
+                        self._observed_ids.discard(evicted_project_id)
+                        self._observed_active_count -= 1
+                    self._available_ids.discard(evicted_project_id)
+                if self._observed_active_count == len(self._registry_ids):
+                    self._overview_updated_monotonic = now
+                    self._overview_available_project_ids = tuple(sorted(self._available_ids))[:10]
+            self._refreshing.discard(project.project_id)
+
+
 class MobileGatewayError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 400) -> None:
         super().__init__(message)
@@ -132,8 +404,11 @@ class MobileGatewayService:
         mobile_dir: Path | None = None,
         pairing_store: MobileGatewayPairingStore | None = None,
         project_registry: MobileGatewayProjectRegistry | None = None,
+        project_registry_provider: Callable[[], MobileGatewayProjectRegistry] | None = None,
         mode: str = 'loopback_current_project',
         clock: Callable[[], str] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
+        background_executor: object | None = None,
         terminal_session_factory: Callable[[TerminalAttachTarget], object] | None = None,
         terminal_history_factory: Callable[[TerminalHistoryTarget], dict[str, object]] | None = None,
         terminal_message_sender: Callable[[PaneMessageTarget, str], dict[str, object]] | None = None,
@@ -146,8 +421,13 @@ class MobileGatewayService:
             project_root=self._project_root,
             ccbd_client_factory=self._ccbd_client_factory,
         )
+        self._project_registry_provider = project_registry_provider
         self._mode = str(mode or 'loopback_current_project').strip() or 'loopback_current_project'
         self._clock = clock or _utc_now
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._background_executor = background_executor
+        self._owns_background_executor = False
+        self._closed = False
         self._terminal_session_factory = terminal_session_factory or create_tmux_terminal_session
         self._terminal_history_factory = terminal_history_factory or create_tmux_terminal_history
         self._terminal_message_sender = terminal_message_sender or send_tmux_pane_message
@@ -165,6 +445,17 @@ class MobileGatewayService:
         ] = OrderedDict()
         self._conversation_page_cache_bytes = 0
         self._conversation_page_cache_lock = threading.Lock()
+        self._project_activity_refreshing: set[str] = set()
+        self._project_activity_refresh_lock = threading.Lock()
+        self._project_health_cache: _ProjectHealthCache | None = None
+        if self._mode == 'loopback_server_registry':
+            self._project_health_cache = _ProjectHealthCache(
+                clock=self._clock,
+                monotonic_clock=self._monotonic_clock,
+                submit=self._submit_background,
+                ping=self._project_list_health,
+            )
+            self._project_health_cache.prime(self._project_registry.projects())
 
     @property
     def project_id(self) -> str:
@@ -199,33 +490,33 @@ class MobileGatewayService:
         }
 
     def _server_registry_health_payload(self) -> dict[str, object]:
-        registry_projects = self._project_registry.projects()
-        health_by_project = self._project_list_health_by_project(registry_projects)
-        available = [
-            project_id
-            for project_id, health in health_by_project.items()
-            if _project_available_for_mobile_list(health)
-        ]
-        status = 'ok' if available else 'degraded'
+        cache = self._project_health_cache
+        overview = cache.overview() if cache is not None else {
+            'project_count': 0,
+            'available_project_count': None,
+            'available_project_ids': [],
+            'health_freshness': 'unknown',
+        }
         return {
             'schema_version': _SCHEMA_VERSION,
-            'status': status,
+            'status': 'ok',
             'server_time': self._clock(),
             'mode': self._mode,
             'project_id': self._project_id,
             'capabilities': self._capabilities(),
             'ccbd': {
-                'reachable': bool(available),
-                'project_count': len(registry_projects),
-                'available_project_count': len(available),
-                'available_project_ids': available[:10],
+                'reachable': None,
+                **overview,
             },
         }
 
     def projects_payload(self) -> dict[str, object]:
         projects: list[dict[str, object]] = []
-        registry_projects = self._project_registry.projects()
-        health_by_project = self._project_list_health_by_project(registry_projects)
+        registry_projects = self._registry_projects(refresh=True)
+        if self._project_health_cache is not None:
+            health_by_project = self._project_health_cache.health_by_project(registry_projects)
+        else:
+            health_by_project = self._project_list_health_by_project(registry_projects)
         capabilities = self._capabilities()
         activity_refreshes_remaining = _PROJECT_ACTIVITY_REFRESH_LIMIT
         activity_deadline = time.monotonic() + _PROJECT_ACTIVITY_REFRESH_BUDGET_SECONDS
@@ -239,8 +530,13 @@ class MobileGatewayService:
                 'root': str(project.project_root),
                 'health': str(ccbd.get('health') or 'unknown'),
                 'mount_state': str(ccbd.get('mount_state') or ''),
+                'health_freshness': str(ccbd.get('health_freshness') or 'unknown'),
                 'capabilities': capabilities,
             }
+            if ccbd.get('health_checked_at'):
+                item['health_checked_at'] = str(ccbd.get('health_checked_at') or '')
+            if ccbd.get('health_refreshing'):
+                item['health_refreshing'] = True
             allow_activity_refresh = (
                 activity_refreshes_remaining > 0
                 and time.monotonic() < activity_deadline
@@ -1195,8 +1491,45 @@ class MobileGatewayService:
         redacted['focus'] = dict(focus or {}) if isinstance(focus, dict) else {}
         return redacted
 
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._project_health_cache is not None:
+            self._project_health_cache.close()
+        if self._owns_background_executor and self._background_executor is not None:
+            close = getattr(self._background_executor, 'close', None)
+            if callable(close):
+                close()
+
+    def _registry_projects(self, *, refresh: bool = False) -> tuple[MobileGatewayProject, ...]:
+        if refresh and self._project_registry_provider is not None:
+            try:
+                self._project_registry = self._project_registry_provider()
+            except Exception:
+                pass
+        return self._project_registry.projects()
+
+    def _submit_background(self, task: Callable[[], object]) -> Future[object] | None:
+        if self._closed:
+            return None
+        executor = self._background_executor
+        if executor is None:
+            executor = _BoundedDaemonExecutor(
+                workers=_PROJECT_HEALTH_REFRESH_WORKERS,
+                max_pending=_PROJECT_HEALTH_REFRESH_QUEUE_MAX,
+            )
+            self._background_executor = executor
+            self._owns_background_executor = True
+        submit = getattr(executor, 'submit', None)
+        if not callable(submit):
+            return None
+        return submit(task)
+
     def _require_project(self, project_id: str) -> MobileGatewayProject:
         requested = str(project_id or '').strip()
+        if self._project_registry_provider is not None:
+            self._registry_projects(refresh=True)
         project = self._project_registry.get(requested)
         if project is None:
             raise MobileGatewayError('unknown project', status_code=404)
@@ -1277,18 +1610,10 @@ class MobileGatewayService:
         self,
         projects: tuple[MobileGatewayProject, ...],
     ) -> dict[str, dict[str, object]]:
-        if len(projects) <= 1:
-            return {
-                project.project_id: self._project_list_health(project)
-                for project in projects
-            }
-        max_workers = min(_PROJECT_LIST_HEALTH_WORKERS, len(projects))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            health_items = executor.map(self._project_list_health, projects)
-            return {
-                project.project_id: health
-                for project, health in zip(projects, health_items)
-            }
+        return {
+            project.project_id: self._project_list_health(project)
+            for project in projects
+        }
 
     def _project_list_health(self, project: MobileGatewayProject) -> dict[str, object]:
         try:
@@ -1307,6 +1632,11 @@ class MobileGatewayService:
         allow_refresh: bool,
         deadline: float,
     ) -> tuple[dict[str, object], bool]:
+        if self._mode == 'loopback_server_registry':
+            return self._server_project_activity_summary(
+                project,
+                allow_refresh=allow_refresh,
+            )
         store_record = (
             self._project_activity_store.project(project.project_id)
             if self._project_activity_store is not None
@@ -1353,6 +1683,49 @@ class MobileGatewayService:
         merged.update(fresh_summary)
         return merged, attempted_refresh
 
+    def _server_project_activity_summary(
+        self,
+        project: MobileGatewayProject,
+        *,
+        allow_refresh: bool,
+    ) -> tuple[dict[str, object], bool]:
+        if self._project_activity_store is None:
+            return {}, False
+        store_record = self._project_activity_store.project(project.project_id)
+        summary = _project_activity_summary_from_record(store_record)
+        if not allow_refresh or not _project_activity_record_stale(
+            store_record,
+            now_text=self._clock(),
+            max_age_seconds=_PROJECT_ACTIVITY_REFRESH_TTL_SECONDS,
+        ):
+            return summary, False
+        with self._project_activity_refresh_lock:
+            if project.project_id in self._project_activity_refreshing:
+                return summary, False
+            self._project_activity_refreshing.add(project.project_id)
+        future = self._submit_background(lambda: self._refresh_server_project_activity(project))
+        if future is None:
+            with self._project_activity_refresh_lock:
+                self._project_activity_refreshing.discard(project.project_id)
+            return summary, False
+        return summary, True
+
+    def _refresh_server_project_activity(self, project: MobileGatewayProject) -> None:
+        try:
+            view_payload = self._request_project_view(project)
+            fresh_summary = _project_activity_summary_from_view(view_payload)
+            if self._project_activity_store is not None:
+                self._project_activity_store.record_summary(
+                    project_id=project.project_id,
+                    summary=fresh_summary,
+                    checked_at=self._clock(),
+                )
+        except Exception:
+            pass
+        finally:
+            with self._project_activity_refresh_lock:
+                self._project_activity_refreshing.discard(project.project_id)
+
     def _record_project_opened(self, project_id: str) -> None:
         if self._project_activity_store is None:
             return
@@ -1392,15 +1765,14 @@ class MobileGatewayService:
     ) -> dict[str, object]:
         if self._project_activity_store is None:
             return self._request_project_view(project)
-        executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(self._request_project_view, project)
+        future = self._submit_background(lambda: self._request_project_view(project))
+        if future is None:
+            raise MobileGatewayError('project activity refresh is busy', status_code=503)
         try:
             return future.result(timeout=max(0.01, timeout_seconds))
         except FutureTimeoutError as exc:
             future.cancel()
             raise MobileGatewayError('project activity unavailable', status_code=503) from exc
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
     def _terminal_attach_target(self, record: dict[str, object]) -> TerminalAttachTarget:
         project = self._require_project(str(record.get('project_id') or ''))
@@ -1714,7 +2086,12 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
                 raise ValueError('request body too large')
             return self.rfile.read(length) if length else b''
 
-    return ThreadingHTTPServer((listen.host, listen.port), _Handler)
+    class _GatewayServer(ThreadingHTTPServer):
+        def server_close(self) -> None:
+            service.close()
+            super().server_close()
+
+    return _GatewayServer((listen.host, listen.port), _Handler)
 
 
 def _redact_project_view_payload(payload: dict[str, object]) -> dict[str, object]:
@@ -1940,6 +2317,12 @@ def _project_available_for_mobile_list(payload: dict[str, object]) -> bool:
         str(payload.get('health') or '').strip().lower() == 'healthy'
         and str(payload.get('mount_state') or '').strip().lower() == 'mounted'
     )
+
+
+def _project_health_refresh_failed(payload: dict[str, object]) -> bool:
+    health = str(payload.get('health') or '').strip().lower()
+    mount_state = str(payload.get('mount_state') or '').strip().lower()
+    return health in {'', 'unknown', 'unreachable'} or mount_state in {'', 'unknown', 'unavailable'}
 
 
 def _is_loopback_host(host: str) -> bool:

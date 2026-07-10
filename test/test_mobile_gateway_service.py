@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import Future
 import json
 import os
 import socket
@@ -294,6 +295,54 @@ class _SlowActivityCcbdClient(_FakeActivityCcbdClient):
         return payload
 
 
+class _ManualClock:
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def text(self) -> str:
+        return f'2026-06-18T00:00:{int(self.now):02d}Z'
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _ManualExecutor:
+    def __init__(self) -> None:
+        self.pending: list[tuple[Future[object], object]] = []
+
+    def submit(self, task) -> Future[object]:
+        future: Future[object] = Future()
+        self.pending.append((future, task))
+        return future
+
+    def run_next(self) -> None:
+        future, task = self.pending.pop(0)
+        if future.set_running_or_notify_cancel():
+            try:
+                future.set_result(task())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+    def run_all(self) -> None:
+        while self.pending:
+            self.run_next()
+
+
+class _ToggleHealthCcbdClient(_FakeCcbdClient):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.available = True
+
+    def ping(self, target: str = 'ccbd') -> dict[str, object]:
+        if not self.available:
+            self.calls.append(('ping', target))
+            raise RuntimeError('ccbd unavailable at /tmp/private.sock')
+        return super().ping(target)
+
+
 def _service(
     fake: _FakeCcbdClient,
     *,
@@ -315,6 +364,38 @@ def _service(
         terminal_session_factory=terminal_session_factory,
         terminal_history_factory=terminal_history_factory,
         terminal_message_sender=terminal_message_sender,
+    )
+
+
+def _server_registry_service(
+    clients: list[_FakeCcbdClient],
+    *,
+    clock: _ManualClock | None = None,
+    executor: _ManualExecutor | None = None,
+    registry_provider=None,
+    mobile_dir: Path | None = None,
+) -> MobileGatewayService:
+    registry = MobileGatewayProjectRegistry([
+        MobileGatewayProject(
+            project_id=client.project_id,
+            project_root=Path(client.project_root),
+            display_name=client.display_name,
+            ccbd_client_factory=lambda client=client: client,
+        )
+        for client in clients
+    ])
+    controlled_clock = clock or _ManualClock()
+    return MobileGatewayService(
+        project_id='host-test',
+        project_root=Path('/tmp/mobile-host'),
+        ccbd_client_factory=registry.default_project.client,
+        mobile_dir=mobile_dir,
+        project_registry=registry,
+        project_registry_provider=registry_provider,
+        mode='loopback_server_registry',
+        clock=controlled_clock.text,
+        monotonic_clock=controlled_clock.monotonic,
+        background_executor=executor or _ManualExecutor(),
     )
 
 
@@ -623,74 +704,174 @@ def test_projects_payload_omits_unreachable_registry_projects() -> None:
     assert stale.calls == [('ping', 'ccbd')]
 
 
-def test_server_registry_health_ignores_stale_default_when_project_is_available() -> None:
-    stale = _FailingCcbdClient()
-    healthy = _FakeCcbdClient(
-        project_id='proj-one',
-        project_root='/srv/one',
-        display_name='one',
-    )
-    service = MobileGatewayService(
-        project_id='host-test',
-        project_root=Path('/tmp/mobile-host'),
-        ccbd_client_factory=lambda: stale,
-        project_registry=MobileGatewayProjectRegistry(
-            [
-                MobileGatewayProject(
-                    project_id='proj-stale',
-                    project_root=Path('/srv/stale'),
-                    display_name='stale',
-                    ccbd_client_factory=lambda: stale,
-                ),
-                MobileGatewayProject(
-                    project_id='proj-one',
-                    project_root=Path('/srv/one'),
-                    display_name='one',
-                    ccbd_client_factory=lambda: healthy,
-                ),
-            ]
-        ),
-        mode='loopback_server_registry',
-        clock=lambda: '2026-06-18T00:00:00Z',
-    )
+def test_server_registry_health_does_not_scan_projects_when_cache_is_unknown() -> None:
+    clients = [
+        _FakeCcbdClient(
+            project_id=f'proj-{index:02d}',
+            project_root=f'/srv/project-{index:02d}',
+            display_name=f'project-{index:02d}',
+        )
+        for index in range(12)
+    ]
+    service = _server_registry_service(clients, executor=_ManualExecutor())
 
     health = service.health_payload()
 
     assert health['status'] == 'ok'
-    assert health['ccbd']['reachable'] is True
-    assert health['ccbd']['project_count'] == 2
-    assert health['ccbd']['available_project_count'] == 1
-    assert health['ccbd']['available_project_ids'] == ['proj-one']
-    assert stale.calls == [('ping', 'ccbd')]
-    assert healthy.calls == [('ping', 'ccbd')]
+    assert health['ccbd']['reachable'] is None
+    assert health['ccbd']['project_count'] == 12
+    assert health['ccbd']['available_project_count'] is None
+    assert health['ccbd']['health_freshness'] == 'unknown'
+    assert all(client.calls == [] for client in clients)
 
 
-def test_server_registry_health_degrades_when_no_project_is_available() -> None:
-    stale = _FailingCcbdClient()
-    service = MobileGatewayService(
-        project_id='host-test',
-        project_root=Path('/tmp/mobile-host'),
-        ccbd_client_factory=lambda: stale,
-        project_registry=MobileGatewayProjectRegistry(
-            [
-                MobileGatewayProject(
-                    project_id='proj-stale',
-                    project_root=Path('/srv/stale'),
-                    display_name='stale',
-                    ccbd_client_factory=lambda: stale,
-                ),
-            ]
-        ),
-        mode='loopback_server_registry',
-        clock=lambda: '2026-06-18T00:00:00Z',
+def test_server_projects_warm_cache_does_not_repeat_ping() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    service = _server_registry_service([client], clock=clock, executor=executor)
+
+    assert service.projects_payload()['projects'] == []
+    assert len(executor.pending) == 1
+    executor.run_all()
+
+    warm = service.projects_payload()['projects']
+
+    assert [item['id'] for item in warm] == ['proj-one']
+    assert warm[0]['health'] == 'healthy'
+    assert warm[0]['health_freshness'] == 'fresh'
+    assert client.calls == [('ping', 'ccbd')]
+    assert executor.pending == []
+
+
+def test_server_health_reports_cached_then_stale_without_refreshing_projects() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    service = _server_registry_service([client], clock=clock, executor=executor)
+    service.projects_payload()
+    executor.run_all()
+
+    cached = service.health_payload()['ccbd']
+    clock.advance(service_module._PROJECT_HEALTH_CACHE_TTL_SECONDS + 0.1)
+    stale = service.health_payload()['ccbd']
+    clock.advance(service_module._PROJECT_HEALTH_CACHE_MAX_STALE_SECONDS)
+    unknown = service.health_payload()['ccbd']
+
+    assert cached['health_freshness'] == 'cached'
+    assert cached['available_project_count'] == 1
+    assert stale['health_freshness'] == 'stale'
+    assert stale['available_project_count'] == 1
+    assert unknown['health_freshness'] == 'unknown'
+    assert unknown['available_project_count'] is None
+    assert client.calls == [('ping', 'ccbd')]
+
+
+def test_server_projects_slow_refresh_does_not_block_list_response() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _FakeCcbdClient(project_id='proj-slow', project_root='/srv/slow', display_name='slow')
+    service = _server_registry_service([client], clock=clock, executor=executor)
+
+    started = time.monotonic()
+    payload = service.projects_payload()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.1
+    assert payload['projects'] == []
+    assert len(executor.pending) == 1
+    assert client.calls == []
+
+
+def test_server_projects_activity_refresh_uses_the_same_background_executor(tmp_path: Path) -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _FakeActivityCcbdClient(
+        project_id='proj-one',
+        project_root='/srv/one',
+        display_name='one',
     )
+    service = _server_registry_service(
+        [client],
+        clock=clock,
+        executor=executor,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    service.projects_payload()
+    executor.run_all()
 
-    health = service.health_payload()
+    warm = service.projects_payload()['projects']
 
-    assert health['status'] == 'degraded'
-    assert health['ccbd']['reachable'] is False
-    assert health['ccbd']['project_count'] == 1
-    assert health['ccbd']['available_project_count'] == 0
+    assert 'has_working_agents' not in warm[0]
+    assert len(executor.pending) == 1
+    assert client.calls == [('ping', 'ccbd')]
+    executor.run_all()
+    assert service.projects_payload()['projects'][0]['has_working_agents'] is True
+
+
+def test_server_projects_concurrent_requests_dedupe_refresh() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    service = _server_registry_service([client], clock=clock, executor=executor)
+
+    service.projects_payload()
+    service.projects_payload()
+
+    assert len(executor.pending) == 1
+    executor.run_all()
+    assert client.calls == [('ping', 'ccbd')]
+
+
+def test_server_projects_marks_ttl_expiry_stale_and_refreshes_asynchronously() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    service = _server_registry_service([client], clock=clock, executor=executor)
+    service.projects_payload()
+    executor.run_all()
+    clock.advance(service_module._PROJECT_HEALTH_CACHE_TTL_SECONDS + 0.1)
+
+    stale = service.projects_payload()['projects']
+
+    assert stale[0]['health'] == 'healthy'
+    assert stale[0]['health_freshness'] == 'stale'
+    assert stale[0]['health_refreshing'] is True
+    assert client.calls == [('ping', 'ccbd')]
+    assert len(executor.pending) == 1
+    executor.run_all()
+    assert service.projects_payload()['projects'][0]['health_freshness'] == 'fresh'
+    assert client.calls == [('ping', 'ccbd'), ('ping', 'ccbd')]
+
+
+def test_server_projects_health_failure_and_recovery_converge() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    client = _ToggleHealthCcbdClient(
+        project_id='proj-one',
+        project_root='/srv/one',
+        display_name='one',
+    )
+    service = _server_registry_service([client], clock=clock, executor=executor)
+    service.projects_payload()
+    executor.run_all()
+    client.available = False
+    clock.advance(service_module._PROJECT_HEALTH_CACHE_TTL_SECONDS + 0.1)
+
+    stale = service.projects_payload()['projects']
+    assert stale[0]['health_freshness'] == 'stale'
+    executor.run_all()
+    assert service.projects_payload()['projects'] == []
+
+    client.available = True
+    clock.advance(service_module._PROJECT_HEALTH_FAILURE_BACKOFF_SECONDS + 0.1)
+    assert service.projects_payload()['projects'] == []
+    executor.run_all()
+    recovered = service.projects_payload()['projects']
+
+    assert recovered[0]['id'] == 'proj-one'
+    assert recovered[0]['health_freshness'] == 'fresh'
+    assert client.calls == [('ping', 'ccbd'), ('ping', 'ccbd'), ('ping', 'ccbd')]
 
 
 def test_projects_payload_omits_registered_projects_that_are_not_mounted_and_healthy() -> None:
@@ -742,52 +923,83 @@ def test_projects_payload_omits_registered_projects_that_are_not_mounted_and_hea
     assert degraded.calls == [('ping', 'ccbd')]
 
 
-def test_projects_payload_checks_many_project_health_states_concurrently() -> None:
-    lock = threading.Lock()
-    activity = {'active': 0, 'max_active': 0}
+def test_server_projects_reconciles_registry_additions_and_removals() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    first = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    second = _FakeCcbdClient(project_id='proj-two', project_root='/srv/two', display_name='two')
+    registry_clients = [first]
 
-    class _SlowCcbdClient(_FakeCcbdClient):
-        def ping(self, target: str = 'ccbd') -> dict[str, object]:
-            with lock:
-                activity['active'] += 1
-                activity['max_active'] = max(activity['max_active'], activity['active'])
-            try:
-                time.sleep(0.04)
-                return super().ping(target)
-            finally:
-                with lock:
-                    activity['active'] -= 1
+    def registry_provider() -> MobileGatewayProjectRegistry:
+        return MobileGatewayProjectRegistry([
+            MobileGatewayProject(
+                project_id=client.project_id,
+                project_root=Path(client.project_root),
+                display_name=client.display_name,
+                ccbd_client_factory=lambda client=client: client,
+            )
+            for client in registry_clients
+        ])
 
-    clients = [
-        _SlowCcbdClient(
-            project_id=f'proj-{index:02d}',
-            project_root=f'/srv/project-{index:02d}',
-            display_name=f'project-{index:02d}',
-        )
-        for index in range(12)
-    ]
-    service = _service(
-        clients[0],
-        project_registry=MobileGatewayProjectRegistry(
-            [
-                MobileGatewayProject(
-                    project_id=client.project_id,
-                    project_root=Path(client.project_root),
-                    ccbd_client_factory=lambda client=client: client,
-                )
-                for client in clients
-            ]
-        ),
+    service = _server_registry_service(
+        [first],
+        clock=clock,
+        executor=executor,
+        registry_provider=registry_provider,
     )
+    service.projects_payload()
+    executor.run_all()
+    registry_clients.append(second)
 
-    projects = service.projects_payload()
+    added = service.projects_payload()['projects']
+    assert [item['id'] for item in added] == ['proj-one']
+    executor.run_all()
+    assert [item['id'] for item in service.projects_payload()['projects']] == ['proj-one', 'proj-two']
 
-    assert [item['id'] for item in projects['projects']] == [
-        f'proj-{index:02d}' for index in range(12)
+    registry_clients[:] = [second]
+    assert [item['id'] for item in service.projects_payload()['projects']] == ['proj-two']
+    health = service.health_payload()
+    assert health['ccbd']['project_count'] == 1
+    assert 'proj-one' not in service._project_health_cache._entries  # type: ignore[union-attr]
+
+
+def test_server_projects_mix_fresh_and_stale_health_summaries() -> None:
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    first = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    second = _FakeCcbdClient(project_id='proj-two', project_root='/srv/two', display_name='two')
+    service = _server_registry_service([first, second], clock=clock, executor=executor)
+    service.projects_payload()
+    executor.run_all()
+    clock.advance(service_module._PROJECT_HEALTH_CACHE_TTL_SECONDS + 0.1)
+
+    service.projects_payload()
+    executor.run_next()
+    mixed = service.projects_payload()['projects']
+    freshness = {item['id']: item['health_freshness'] for item in mixed}
+
+    assert freshness == {'proj-one': 'fresh', 'proj-two': 'stale'}
+    executor.run_all()
+
+
+def test_server_project_health_refresh_budget_and_cache_size_are_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service_module, '_PROJECT_HEALTH_REFRESH_BUDGET', 1)
+    monkeypatch.setattr(service_module, '_PROJECT_HEALTH_CACHE_MAX_ENTRIES', 1)
+    clock = _ManualClock()
+    executor = _ManualExecutor()
+    clients = [
+        _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one'),
+        _FakeCcbdClient(project_id='proj-two', project_root='/srv/two', display_name='two'),
     ]
-    assert activity['max_active'] > 1
-    assert all(client.calls[0] == ('ping', 'ccbd') for client in clients)
-    assert sum(('project_view', 1) in client.calls for client in clients) <= 3
+    service = _server_registry_service(clients, clock=clock, executor=executor)
+
+    service.projects_payload()
+
+    assert len(executor.pending) == 1
+    executor.run_all()
+    assert len(service._project_health_cache._entries) == 1  # type: ignore[union-attr]
 
 
 def test_project_view_redacts_server_tmux_evidence() -> None:

@@ -358,5 +358,5 @@ def test_prepare_server_mobile_gateway_uses_host_registry_without_socket_leak(tm
     assert summary['pairing']['project_id'] == 'host-test'
     assert summary['pairing']['gateway_url'].startswith('http://127.0.0.1:')
     assert 'ccbd.sock' not in json.dumps(summary)
-    assert first.calls == [('ping', 'ccbd')]
-    assert second.calls == [('ping', 'ccbd')]
+    assert first.calls == []
+    assert second.calls == []

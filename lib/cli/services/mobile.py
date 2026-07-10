@@ -98,10 +98,21 @@ def prepare_server_mobile_gateway(
         ccbd_client_factory=default_project.client,
         mobile_dir=state_dir,
         project_registry=registry,
+        project_registry_provider=_running_server_project_registry,
         mode='loopback_server_registry',
     )
-    projects = service.projects_payload().get('projects')
-    project_summaries = list(projects) if isinstance(projects, list) else []
+    # Startup must not synchronously ping every registered project.  The
+    # running gateway will fill its bounded health cache in the background.
+    project_summaries = [
+        {
+            'id': project.project_id,
+            'display_name': project.public_display_name,
+            'root': str(project.project_root),
+            'health': 'unknown',
+            'health_freshness': 'unknown',
+        }
+        for project in registry.projects()
+    ]
     server = build_mobile_gateway_server(listen, service)
     try:
         host, port = server.server_address[:2]
