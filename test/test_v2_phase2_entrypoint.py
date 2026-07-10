@@ -5680,10 +5680,22 @@ def test_ccb_gemini_real_adapter_recovers_after_ccbd_restart_and_waits_for_post_
         else:
             raise AssertionError('expected session_snapshot before restart')
 
-        running = _wait_for_phase2_status(project_root, 'demo', 'running')
-        assert f'job_id: {job_id}' in running
-        assert 'reply: partial stable' in running
-        assert 'completion_reason: None' in running
+        deadline = time.time() + 3.0
+        last_stdout = ''
+        while time.time() < deadline:
+            code, running, stderr = _run_phase2_local(['pend', 'demo'], cwd=project_root)
+            assert code == 0, stderr
+            last_stdout = running
+            if (
+                f'job_id: {job_id}' in running
+                and 'status: running' in running
+                and 'reply: partial stable' in running
+            ):
+                assert 'completion_reason: None' in running
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(f'expected running partial preview before restart; last={last_stdout!r}')
 
         app1.request_shutdown()
         thread1.join(timeout=2)
