@@ -123,6 +123,7 @@ class ConversationTimeline extends StatelessWidget {
                 key: conversationTimelineItemKey(item.id),
                 item: item,
                 timelineViewportHeight: constraints.maxHeight,
+                timelineScrollController: controller,
                 content:
                     item.contentId == null ? null : contentById[item.contentId],
                 repository: repository,
@@ -160,6 +161,7 @@ class _ConversationTimelineItem extends StatelessWidget {
   const _ConversationTimelineItem({
     required this.item,
     required this.timelineViewportHeight,
+    required this.timelineScrollController,
     required this.content,
     required this.repository,
     required this.view,
@@ -179,6 +181,7 @@ class _ConversationTimelineItem extends StatelessWidget {
 
   final CcbConversationItem item;
   final double timelineViewportHeight;
+  final ScrollController timelineScrollController;
   final CcbContentItem? content;
   final MobileCcbRepository repository;
   final CcbProjectView view;
@@ -201,6 +204,7 @@ class _ConversationTimelineItem extends StatelessWidget {
         item: item,
         expanded: expanded,
         timelineViewportHeight: timelineViewportHeight,
+        timelineScrollController: timelineScrollController,
         isWorking: isWorking,
         onToggleExpanded: onToggleExpanded,
         child: AgentReadableHistoryLoader(
@@ -222,6 +226,7 @@ class _ConversationTimelineItem extends StatelessWidget {
         item: item,
         expanded: expanded,
         timelineViewportHeight: timelineViewportHeight,
+        timelineScrollController: timelineScrollController,
         isWorking: isWorking,
         onToggleExpanded: onToggleExpanded,
         child: AgentContentReader(items: [contentItem]),
@@ -235,6 +240,7 @@ class _ConversationTimelineItem extends StatelessWidget {
       item: item,
       expanded: expanded,
       timelineViewportHeight: timelineViewportHeight,
+      timelineScrollController: timelineScrollController,
       isWorking: isWorking,
       onToggleExpanded: onToggleExpanded,
       onRetry:
