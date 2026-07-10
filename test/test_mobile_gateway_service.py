@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+import mobile_gateway.pairing as pairing_module
 import mobile_gateway.service as service_module
 from mobile_gateway import (
     MobileGatewayError,
@@ -3225,6 +3226,114 @@ def test_terminal_replacement_handle_rejects_previous_handle_resume_cursor(tmp_p
         )
 
     assert denied.value.reason == 'stale_resume_cursor'
+
+
+def test_terminal_state_index_reads_only_appended_jsonl_tail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[int] = []
+    original = pairing_module._read_jsonl_from_offset
+
+    def recording_read(path: Path, offset: int):
+        reads.append(offset)
+        return original(path, offset)
+
+    monkeypatch.setattr(pairing_module, '_read_jsonl_from_offset', recording_read)
+    store = MobileGatewayPairingStore(tmp_path / 'mobile')
+    handle = store.create_terminal_handle(
+        project_id='proj-demo',
+        device_id='dev-demo',
+        target_epoch=4,
+        target_summary={'project_id': 'proj-demo', 'agent': 'mobile'},
+        geometry={'columns': 80, 'rows': 24},
+    )
+
+    store.record_terminal_input_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=1,
+    )
+    store.record_terminal_output_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=1,
+    )
+    store.record_terminal_input_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=2,
+    )
+
+    assert reads[0] == 0
+    assert reads[1] > 0
+    assert reads[2] > reads[1]
+    assert reads[2] - reads[1] < 2048
+
+
+def test_terminal_state_index_observes_external_appends(tmp_path: Path) -> None:
+    mobile_dir = tmp_path / 'mobile'
+    first_store = MobileGatewayPairingStore(mobile_dir)
+    handle = first_store.create_terminal_handle(
+        project_id='proj-demo',
+        device_id='dev-demo',
+        target_epoch=4,
+        target_summary={'project_id': 'proj-demo', 'agent': 'mobile'},
+        geometry={'columns': 80, 'rows': 24},
+    )
+    first_store.record_terminal_input_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=1,
+    )
+
+    second_store = MobileGatewayPairingStore(mobile_dir)
+    second_store.record_terminal_input_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=2,
+    )
+
+    record = first_store.authenticate_terminal_token(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+    )
+    assert record['last_input_seq'] == 2
+
+
+def test_terminal_state_log_compacts_to_latest_handle_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pairing_module, '_TERMINAL_LOG_COMPACT_BYTES', 1)
+    store = MobileGatewayPairingStore(tmp_path / 'mobile')
+    handle = store.create_terminal_handle(
+        project_id='proj-demo',
+        device_id='dev-demo',
+        target_epoch=4,
+        target_summary={'project_id': 'proj-demo', 'agent': 'mobile'},
+        geometry={'columns': 80, 'rows': 24},
+    )
+    store.record_terminal_input_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=3,
+    )
+    store.record_terminal_output_sequence(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+        sequence=4,
+    )
+
+    record = store.authenticate_terminal_token(
+        terminal_id=str(handle['terminal_id']),
+        terminal_token=str(handle['terminal_token']),
+    )
+    lines = store.terminal_tokens_path.read_text(encoding='utf-8').splitlines()
+
+    assert len(lines) == 1
+    assert record['last_input_seq'] == 3
+    assert record['last_output_seq'] == 4
 
 
 def test_terminal_open_requires_terminal_scope_and_mints_hashed_token(tmp_path: Path) -> None:

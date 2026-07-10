@@ -17,6 +17,7 @@ _TERMINAL_HASH_PREFIX = 'ccb-mobile-terminal-v1:'
 _DEFAULT_PAIRING_EXPIRES_SECONDS = 10 * 60
 _DEFAULT_DEVICE_SCOPES = ('view',)
 _DEFAULT_TERMINAL_EXPIRES_SECONDS = 5 * 60
+_TERMINAL_LOG_COMPACT_BYTES = 8 * 1024 * 1024
 
 
 class MobileGatewayPairingError(RuntimeError):
@@ -56,6 +57,10 @@ class MobileGatewayPairingStore:
         self._token_factory = token_factory or _token_urlsafe
         self._id_factory = id_factory or _random_id
         self._lock = threading.RLock()
+        self._terminal_state_cache: dict[str, dict[str, object]] | None = None
+        self._terminal_state_cache_identity: tuple[int, int] | None = None
+        self._terminal_state_cache_offset = 0
+        self._terminal_state_cache_mtime_ns = 0
 
     @property
     def gateway_path(self) -> Path:
@@ -706,14 +711,61 @@ class MobileGatewayPairingStore:
         return state
 
     def _terminal_state_by_id(self) -> dict[str, dict[str, object]]:
-        state: dict[str, dict[str, object]] = {}
         if not self.terminal_tokens_path.exists():
-            return state
-        for record in _read_jsonl(self.terminal_tokens_path):
+            self._reset_terminal_state_cache()
+            return {}
+        stat = self.terminal_tokens_path.stat()
+        identity = (int(stat.st_dev), int(stat.st_ino))
+        cache_invalid = (
+            self._terminal_state_cache is None
+            or self._terminal_state_cache_identity != identity
+            or stat.st_size < self._terminal_state_cache_offset
+            or (
+                stat.st_size == self._terminal_state_cache_offset
+                and stat.st_mtime_ns != self._terminal_state_cache_mtime_ns
+            )
+        )
+        if cache_invalid:
+            self._terminal_state_cache = {}
+            self._terminal_state_cache_identity = identity
+            self._terminal_state_cache_offset = 0
+        records, offset = _read_jsonl_from_offset(
+            self.terminal_tokens_path,
+            self._terminal_state_cache_offset,
+        )
+        state = self._terminal_state_cache or {}
+        for record in records:
             terminal_id = str(record.get('terminal_id') or '')
             if terminal_id:
                 state[terminal_id] = record
-        return state
+        self._terminal_state_cache = state
+        self._terminal_state_cache_offset = offset
+        current_stat = self.terminal_tokens_path.stat()
+        self._terminal_state_cache_identity = (
+            int(current_stat.st_dev),
+            int(current_stat.st_ino),
+        )
+        self._terminal_state_cache_mtime_ns = int(current_stat.st_mtime_ns)
+        if (
+            self._terminal_state_cache_offset == current_stat.st_size
+            and current_stat.st_size > _TERMINAL_LOG_COMPACT_BYTES
+        ):
+            self._compact_terminal_state_log()
+        return dict(self._terminal_state_cache)
+
+    def _reset_terminal_state_cache(self) -> None:
+        self._terminal_state_cache = None
+        self._terminal_state_cache_identity = None
+        self._terminal_state_cache_offset = 0
+        self._terminal_state_cache_mtime_ns = 0
+
+    def _compact_terminal_state_log(self) -> None:
+        state = self._terminal_state_cache or {}
+        _write_jsonl_records(self.terminal_tokens_path, state.values())
+        stat = self.terminal_tokens_path.stat()
+        self._terminal_state_cache_identity = (int(stat.st_dev), int(stat.st_ino))
+        self._terminal_state_cache_offset = int(stat.st_size)
+        self._terminal_state_cache_mtime_ns = int(stat.st_mtime_ns)
 
     def _validate_terminal_record(self, record: dict[str, object]) -> None:
         terminal_id = str(record.get('terminal_id') or '')
@@ -924,11 +976,49 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return records
 
 
+def _read_jsonl_from_offset(
+    path: Path,
+    offset: int,
+) -> tuple[list[dict[str, object]], int]:
+    records: list[dict[str, object]] = []
+    start = max(0, int(offset))
+    try:
+        with path.open('rb') as handle:
+            handle.seek(start)
+            data = handle.read()
+    except OSError:
+        return records, start
+    complete_end = data.rfind(b'\n') + 1
+    if complete_end <= 0:
+        return records, start
+    for raw_line in data[:complete_end].splitlines():
+        text = raw_line.decode('utf-8', errors='replace').strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(dict(payload))
+    return records, start + complete_end
+
+
 def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a', encoding='utf-8') as handle:
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         handle.write('\n')
+
+
+def _write_jsonl_records(path: Path, records: Iterable[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f'.{path.name}.tmp')
+    with tmp.open('w', encoding='utf-8') as handle:
+        for payload in records:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            handle.write('\n')
+    tmp.replace(path)
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
