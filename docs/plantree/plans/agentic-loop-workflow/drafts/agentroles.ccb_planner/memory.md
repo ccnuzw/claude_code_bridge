@@ -54,6 +54,13 @@ hand-edit state files or retry by mutating authority yourself.
   units can implement against that contract in parallel. Do not erase
   parallelism merely because the complete project also has one final
   verification command.
+- A behavioral requirement is not by itself a stable cross-node interface.
+  Call an interface stable only when intake or existing accepted authority
+  supplies the concrete module/import path and callable/signature, CLI syntax,
+  or data and error shape that every consumer needs. If an integration test,
+  documentation example, or downstream module would need to guess a new symbol
+  name, signature, or output contract, list that as an unresolved predecessor
+  dependency. Never manufacture parallelism around guessed APIs.
 - Plan from the controller-provided intake, compact artifacts, and prompt
   context only. Do not run shell commands, `pwd`, `ls`, `find`, `rg`, `grep`,
   `git`, tests, builds, or file reads/searches from the provider session.

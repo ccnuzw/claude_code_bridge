@@ -70,10 +70,16 @@ Apply these selection rules before emitting the candidate:
 - Add dependencies only for real data, schema, generated artifact, or accepted
   predecessor evidence. Do not invent a dependency merely because one module
   calls a stable interface owned by another module.
+- Treat an interface as stable only when the supplied artifacts give the exact
+  module/import path and callable/signature, CLI contract, or data/error shape
+  required by cross-node consumers. Behavioral acceptance prose is not enough.
+  If a downstream implementation, test, or documentation example would need to
+  guess a new symbol name, signature, or output shape, add the producer as a
+  dependency or keep the work in one node.
 - Use `serial` or `mixed_dag` only when `Unresolved ordering constraints
   requiring predecessor output` names a newly produced artifact or accepted
-  result. Stable interface calls, contract-based mocks, documentation examples,
-  and final root verification do not justify a dependency edge.
+  result. Calls and examples against a concrete supplied interface and final
+  root verification do not justify a dependency edge; guessed APIs do.
 - Use one node only when candidate units have unavoidable path overlap or one
   cannot be implemented and reviewed against the supplied contract without a
   predecessor result. State that concrete reason in `selection.rationale`.

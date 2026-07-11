@@ -42,7 +42,7 @@ Route: <direct_execution|needs_detail|macro_adjustment_request|blocked|partial_c
 ## Acceptance Criteria
 - <observable behavior; preserve every intake requirement>
 ## Interface Contracts
-- <stable interface, data shape, or None declared>
+- <concrete module/import path, callable/signature, CLI, data/error shape, or None declared>
 ## Constraints And Non-Goals
 - <constraint or explicit non-goal>
 ## Execution Decomposition Inputs
@@ -73,6 +73,11 @@ A stable interface is parallelization evidence, not a predecessor edge. Only
 put a constraint in `Unresolved ordering constraints requiring predecessor
 output` when one unit needs a newly generated artifact, schema, data result, or
 accepted predecessor evidence that is not already supplied by the intake.
+Behavioral prose alone is not a stable interface. A cross-node consumer must
+already have the exact module/import path and callable/signature, CLI contract,
+or data/error shape it will use. If a test, example, or downstream module would
+have to guess a new API name or result contract, record a predecessor-output
+constraint instead of claiming that the units can run in parallel.
 
 ````markdown
 **task-set.json**

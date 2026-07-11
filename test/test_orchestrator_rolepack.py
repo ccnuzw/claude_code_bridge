@@ -391,6 +391,7 @@ def test_planner_rolepack_is_closed_reply_only_planning_surface() -> None:
     assert 'do not use it to pre-slice one' in combined
     assert '## Acceptance Criteria' in combined
     assert '## Interface Contracts' in combined
+    assert 'Behavioral prose alone is not a stable interface.' in combined
     assert '## Execution Decomposition Inputs' in combined
     assert 'A stable interface is parallelization evidence' in combined
 
@@ -504,6 +505,8 @@ def test_p1_orchestrator_rolepack_declares_adaptive_bundle_contract() -> None:
     assert 'A stable public interface, shared final root verification' in combined_single_line
     assert 'emit separate nodes in the same ready parallel group' in combined_single_line
     assert 'Do not invent a dependency merely because one module calls a stable interface' in combined_single_line
+    assert 'Behavioral acceptance prose is not enough.' in combined_single_line
+    assert 'would need to guess a new symbol name' in combined_single_line
     assert 'Emit `serial` or `mixed_dag` edges only when' in combined_single_line
     assert 'final root verification do not justify a dependency edge' in combined_single_line
     assert 'Do not merge the fourth unit merely to avoid execution window overflow' in combined_single_line
