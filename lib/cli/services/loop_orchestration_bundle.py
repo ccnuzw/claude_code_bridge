@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from typing import Iterable
 
+from agents.models_runtime.names import AgentValidationError, normalize_agent_name
+
 from .loop_execution_scope import (
     declared_allowed_change_paths,
     normalize_scope_paths,
@@ -210,8 +212,8 @@ def normalize_bundle_candidate(
         if not isinstance(raw_node, dict):
             raise ValueError(f'{field_name} must be an object')
         _reject_unknown_keys(raw_node, _CANDIDATE_NODE_KEYS, field_name=field_name)
-        node_id = _segment(raw_node.get('node_id'), field_name=f'{field_name}.node_id')
-        workgroup_id = _segment(raw_node.get('workgroup_id'), field_name=f'{field_name}.workgroup_id')
+        node_id = _agent_name_segment(raw_node.get('node_id'), field_name=f'{field_name}.node_id')
+        workgroup_id = _agent_name_segment(raw_node.get('workgroup_id'), field_name=f'{field_name}.workgroup_id')
         if node_id in node_ids:
             raise ValueError(f'duplicate orchestration bundle node_id: {node_id}')
         if workgroup_id in workgroup_ids:
@@ -228,7 +230,10 @@ def normalize_bundle_candidate(
         if node_id in depends_on:
             raise ValueError(f'{field_name}.depends_on cannot reference itself')
         parallel_group = _segment(raw_node.get('parallel_group'), field_name=f'{field_name}.parallel_group')
-        work_packet = str(raw_node.get('work_packet') or '').strip()
+        raw_work_packet = raw_node.get('work_packet')
+        if not isinstance(raw_work_packet, str):
+            raise ValueError(f'{field_name}.work_packet must be a string')
+        work_packet = raw_work_packet.strip()
         if not work_packet:
             raise ValueError(f'{field_name}.work_packet must be non-empty')
         if len(work_packet.encode('utf-8')) > 65536:
@@ -392,8 +397,8 @@ def validate_normalized_bundle(
         missing_node_fields = sorted(_NORMALIZED_NODE_KEYS - set(node))
         if missing_node_fields:
             raise ValueError(f'{field_name} missing fields: {", ".join(missing_node_fields)}')
-        node_id = _segment(node.get('node_id'), field_name=f'{field_name}.node_id')
-        workgroup_id = _segment(node.get('workgroup_id'), field_name=f'{field_name}.workgroup_id')
+        node_id = _agent_name_segment(node.get('node_id'), field_name=f'{field_name}.node_id')
+        workgroup_id = _agent_name_segment(node.get('workgroup_id'), field_name=f'{field_name}.workgroup_id')
         if node_id in node_ids:
             raise ValueError(f'duplicate orchestration bundle node_id: {node_id}')
         if workgroup_id in workgroup_ids:
@@ -785,6 +790,13 @@ def _segment(value: object, *, field_name: str) -> str:
     if not _SEGMENT_RE.fullmatch(text):
         raise ValueError(f'{field_name} must match {_SEGMENT_RE.pattern}: {text!r}')
     return text
+
+
+def _agent_name_segment(value: object, *, field_name: str) -> str:
+    try:
+        return normalize_agent_name(str(value or ''))
+    except AgentValidationError as exc:
+        raise ValueError(f'{field_name} is invalid: {exc}') from exc
 
 
 def _positive_int(value: object, *, field_name: str) -> int:

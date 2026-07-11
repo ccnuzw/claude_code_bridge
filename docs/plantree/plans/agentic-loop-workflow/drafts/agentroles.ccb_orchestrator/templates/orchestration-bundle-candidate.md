@@ -23,8 +23,8 @@ orchestration_bundle:
   },
   "nodes": [
     {
-      "node_id": "<stable-node-id>",
-      "workgroup_id": "<stable-workgroup-id>",
+      "node_id": "<short-agent-name-safe-node-id-max-32-chars>",
+      "workgroup_id": "<short-agent-name-safe-workgroup-id-max-32-chars>",
       "worker_profile": "coder",
       "reviewer_profile": "code_reviewer",
       "depends_on": ["<predecessor-node-id-if-any>"],
@@ -51,3 +51,15 @@ orchestration_bundle:
 Candidate root fields are exactly the seven fields shown. Capacity is a
 ceiling, not a target. Structural ambiguity is `replan_required`; never hide it
 with serialization, node-count reduction, scope shrinkage, or fallback.
+Verification refs must point to artifacts with `Verification:` or
+`Verification Commands:` bullet entries that are direct argv commands executed
+without a shell. Do not use `Verification Contract:` prose as executable
+verification evidence.
+
+Use the policy literal values exactly as shown: `on_required_node_failure` is
+`partial_or_blocked` and `on_structural_failure` is `replan_required`. Do not
+substitute semantic alternatives such as rework, retry, fail, or
+return_failed_node_for_rework.
+Both integration arrays must be non-empty. For one-node bundles, copy the
+execution-contract artifact ref into both `verification_refs` and
+`project_root_verification_refs`; never leave project-root verification empty.

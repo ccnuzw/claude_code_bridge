@@ -16,6 +16,7 @@ from .ask import submit_ask
 from .loop_orchestration_bundle import (
     ORCHESTRATION_BUNDLE_CANDIDATE_SCHEMA,
     build_single_node_candidate,
+    normalize_bundle_candidate,
     task_revision,
 )
 from .loop_effective_capacity import (
@@ -597,7 +598,8 @@ def _consume_planner_task_set(
     for task in tuple(parsed.get('tasks') or ()):
         if not isinstance(task, dict):
             continue
-        task_id = str(task.get('task_id') or '')
+        requested_task_id = str(task.get('task_id') or '')
+        task_id = _task_set_import_task_id(context, deps, requested_task_id=requested_task_id, job_id=job_id)
         title = str(task.get('title') or _task_title_from_packet(str(task.get('task_packet') or ''))).strip()
         task_payload = _ensure_task(
             context,
@@ -657,6 +659,7 @@ def _consume_planner_task_set(
         imported_tasks.append(
             {
                 'task_id': task_id,
+                'planner_task_id': requested_task_id,
                 'title': title,
                 'route': task.get('route'),
                 'readiness': task.get('readiness'),
@@ -925,6 +928,22 @@ def _consume_orchestrator(
                     'workflow_mode': capacity_snapshot.get('workflow_mode'),
                 },
             )
+        if isinstance(candidate, dict):
+            candidate_check = _prevalidate_orchestrator_bundle_candidate(
+                context,
+                deps,
+                task_id=task_id,
+                candidate=candidate,
+                capacity_snapshot=capacity_snapshot,
+            )
+            if candidate_check is not None:
+                return _blocked_payload(
+                    context,
+                    job_id=job_id,
+                    agent_name=str(snapshot.get('agent_name') or ''),
+                    reason='orchestrator_bundle_candidate_invalid',
+                    evidence=candidate_check,
+                )
     expected_revision = _expected_revision_for_task(
         context,
         deps,
@@ -960,21 +979,35 @@ def _consume_orchestrator(
             bundle_source = 'loop_runner_deterministic_single_node'
         candidate_path = import_root / 'orchestration_bundle.candidate.json'
         atomic_write_json(candidate_path, candidate)
-        bundle_import = deps.plan_task(
-            context,
-            SimpleNamespace(
-                action='task-artifact',
-                task_id=task_id,
-                artifact_kind='orchestration_bundle',
-                file_path=str(candidate_path),
-                actor_source=bundle_source,
-                actor='loop_runner',
+        try:
+            bundle_import = deps.plan_task(
+                context,
+                SimpleNamespace(
+                    action='task-artifact',
+                    task_id=task_id,
+                    artifact_kind='orchestration_bundle',
+                    file_path=str(candidate_path),
+                    actor_source=bundle_source,
+                    actor='loop_runner',
+                    job_id=job_id,
+                    expected_task_revision=task_revision(task_record),
+                    effective_capacity_snapshot=capacity_snapshot,
+                    source_reply_digest=hashlib.sha256(reply.encode('utf-8')).hexdigest(),
+                ),
+            )
+        except ValueError as exc:
+            return _blocked_payload(
+                context,
                 job_id=job_id,
-                expected_task_revision=task_revision(task_record),
-                effective_capacity_snapshot=capacity_snapshot,
-                source_reply_digest=hashlib.sha256(reply.encode('utf-8')).hexdigest(),
-            ),
-        )
+                agent_name=str(snapshot.get('agent_name') or ''),
+                reason='orchestrator_bundle_import_failed',
+                evidence={
+                    'task_id': task_id,
+                    'route': parsed['route'],
+                    'error': str(exc),
+                    'candidate_path': str(candidate_path.relative_to(Path(context.project.project_root))),
+                },
+            )
     record = _log_import(
         context,
         {
@@ -1006,6 +1039,32 @@ def _consume_orchestrator(
             'next_activation': _next_activation_for_route(str(parsed['route'])),
         },
     )
+
+
+def _prevalidate_orchestrator_bundle_candidate(
+    context,
+    deps,
+    *,
+    task_id: str,
+    candidate: dict[str, object],
+    capacity_snapshot: dict[str, object],
+) -> dict[str, object] | None:
+    try:
+        shown = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+        record = shown.get('task') if isinstance(shown.get('task'), dict) else {}
+        normalize_bundle_candidate(
+            candidate,
+            record=record,
+            project_root=Path(context.project.project_root),
+            capacity_snapshot=capacity_snapshot,
+        )
+    except ValueError as exc:
+        return {
+            'task_id': task_id,
+            'error': str(exc),
+            'schema': candidate.get('schema'),
+        }
+    return None
 
 
 def _single_task_set_fields(imported_tasks: list[dict[str, object]]) -> dict[str, object]:
@@ -1558,7 +1617,14 @@ def _parse_planner_reply(reply: str) -> dict[str, object]:
             'expected_readiness': sorted(_NEEDS_DETAIL_READINESS),
         }
     allowed_paths = _string_list(readiness.get('allowed_paths'))
-    verification = _canonicalize_verification_commands(_string_list(readiness.get('verification')))
+    try:
+        verification = _canonicalize_verification_commands(_string_list(readiness.get('verification')))
+    except ValueError as exc:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_readiness_invalid_verification',
+            'error': str(exc),
+        }
     blockers = _string_list(readiness.get('blockers'))
     missing_fields = []
     if route in _EXECUTION_ROUTES and not allowed_paths:
@@ -1576,15 +1642,12 @@ def _parse_planner_reply(reply: str) -> dict[str, object]:
             'reason': 'planner_readiness_invalid_allowed_paths',
             'invalid_allowed_paths': invalid_allowed_paths,
         }
-    execution_contract = _fenced_section(reply, ('execution-contract.md', 'execution_contract.md'))
-    if not execution_contract:
-        execution_contract = _normalized_execution_contract(
-            route=route,
-            allowed_paths=allowed_paths,
-            verification=verification,
-        )
-    else:
-        execution_contract = _canonicalize_verification_text(execution_contract)
+    execution_contract = _task_set_execution_contract(
+        raw_contract=_fenced_section(reply, ('execution-contract.md', 'execution_contract.md')),
+        route=route,
+        allowed_paths=allowed_paths,
+        verification=verification,
+    )
     title = _task_title_from_packet(task_packet)
     return {
         'status': 'ok',
@@ -1772,7 +1835,16 @@ def _parse_planner_task_set_item(raw_task: object, *, index: int) -> dict[str, o
     readiness_value = str(raw_task.get('readiness') or '').strip().lower()
     title = str(raw_task.get('title') or '').strip() or _task_title_from_packet(task_packet)
     allowed_paths = _string_list(raw_task.get('allowed_paths'))
-    verification = _canonicalize_verification_commands(_string_list(raw_task.get('verification')))
+    try:
+        verification = _canonicalize_verification_commands(_string_list(raw_task.get('verification')))
+    except ValueError as exc:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_invalid_verification',
+            'task_index': index,
+            'task_id': task_id,
+            'error': str(exc),
+        }
     blockers = _string_list(raw_task.get('blockers'))
     missing_fields: list[str] = []
     if not task_packet:
@@ -2150,10 +2222,13 @@ def _task_set_execution_contract(
     raw_contract = _canonicalize_verification_text(raw_contract)
     if route not in _EXECUTION_ROUTES or not allowed_paths:
         return raw_contract
-    if _execution_contract_declares_allowed_change_paths(raw_contract):
-        return raw_contract
-    lines = [raw_contract.rstrip(), '', 'Allowed Change Paths:']
-    lines.extend(f'- {path}' for path in allowed_paths)
+    lines = [raw_contract.rstrip()]
+    if not _execution_contract_declares_allowed_change_paths(raw_contract):
+        lines.extend(['', 'Allowed Change Paths:'])
+        lines.extend(f'- {path}' for path in allowed_paths)
+    if verification and not _execution_contract_declares_verification_commands(raw_contract):
+        lines.extend(['', 'Verification:'])
+        lines.extend(f'- {item}' for item in verification)
     return '\n'.join(lines)
 
 
@@ -2183,8 +2258,44 @@ def _execution_contract_declares_allowed_change_paths(text: str) -> bool:
     return False
 
 
+def _execution_contract_declares_verification_commands(text: str) -> bool:
+    for raw_line in str(text or '').splitlines():
+        heading = raw_line.strip().lstrip('#').strip().rstrip(':').lower()
+        if heading in {'verification', 'verification commands'}:
+            return True
+    return False
+
+
 def _canonicalize_verification_commands(commands: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(_canonicalize_unittest_file_command(command) for command in commands)
+    canonical: list[str] = []
+    for command in commands:
+        normalized = _canonicalize_unittest_file_command(command)
+        _validate_direct_verification_command(normalized)
+        canonical.append(normalized)
+    return tuple(canonical)
+
+
+def _validate_direct_verification_command(command: str) -> None:
+    text = str(command or '').strip()
+    if not text:
+        raise ValueError('verification command must not be empty')
+    if '\n' in text or '\r' in text:
+        raise ValueError('verification command must be a single line')
+    if '$(' in text or '`' in text:
+        raise ValueError('verification command must not use shell command substitution')
+    try:
+        argv = shlex.split(text)
+    except ValueError as exc:
+        raise ValueError(f'verification command is not valid argv syntax: {exc}') from exc
+    if not argv:
+        raise ValueError('verification command must produce argv')
+    if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', argv[0]):
+        raise ValueError('verification command must not rely on shell environment assignment')
+    if argv[0] in {'cd', 'source', '.', 'export', 'alias'}:
+        raise ValueError('verification command must be directly executable, not a shell state mutation')
+    shell_tokens = {'&&', '||', '|', ';', '>', '<', '>>', '<<'}
+    if any(token in shell_tokens for token in argv):
+        raise ValueError('verification command must be one direct argv command, not a shell compound')
 
 
 def _canonicalize_verification_text(text: str) -> str:
@@ -2302,6 +2413,62 @@ def _ensure_task(
     )
     payload['created'] = True
     return payload
+
+
+def _task_set_import_task_id(context, deps, *, requested_task_id: str, job_id: str) -> str:
+    existing = _show_task_optional(context, deps, task_id=requested_task_id)
+    if existing is None or _task_payload_source_job_id(existing) == job_id:
+        return requested_task_id
+    suffix = _task_set_job_suffix(job_id)
+    candidate = _suffixed_task_id(requested_task_id, suffix)
+    existing_candidate = _show_task_optional(context, deps, task_id=candidate)
+    if existing_candidate is None or _task_payload_source_job_id(existing_candidate) == job_id:
+        return candidate
+    for index in range(2, 100):
+        alternate = _suffixed_task_id(requested_task_id, f'{suffix}{index}')
+        existing_alternate = _show_task_optional(context, deps, task_id=alternate)
+        if existing_alternate is None or _task_payload_source_job_id(existing_alternate) == job_id:
+            return alternate
+    raise ValueError(f'unable to allocate unique task_id for planner task-set child: {requested_task_id}')
+
+
+def _show_task_optional(context, deps, *, task_id: str) -> dict[str, object] | None:
+    try:
+        return deps.plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+    except ValueError:
+        return None
+
+
+def _task_payload_source_job_id(payload: dict[str, object] | None) -> str:
+    if not isinstance(payload, dict):
+        return ''
+    record = payload.get('task') if isinstance(payload.get('task'), dict) else payload
+    if not isinstance(record, dict):
+        return ''
+    trace = record.get('authority_trace')
+    if not isinstance(trace, dict):
+        return ''
+    source_job = trace.get('source_job')
+    if not isinstance(source_job, dict):
+        return ''
+    return str(source_job.get('job_id') or '').strip()
+
+
+def _task_set_job_suffix(job_id: str) -> str:
+    seed = str(job_id or '').strip()
+    if seed.startswith('job_'):
+        seed = seed[4:]
+    token = re.sub(r'[^A-Za-z0-9]+', '', seed)
+    if not token:
+        token = hashlib.sha256(str(job_id).encode('utf-8')).hexdigest()[:13]
+    return 'j' + token[:13]
+
+
+def _suffixed_task_id(task_id: str, suffix: str) -> str:
+    suffix = re.sub(r'[^A-Za-z0-9_-]+', '', str(suffix or '').strip()) or 'jtask'
+    budget = max(1, 80 - len(suffix) - 1)
+    prefix = str(task_id or '').strip()[:budget].rstrip('-_') or 'task'
+    return f'{prefix}-{suffix}'
 
 
 def _resolve_or_bootstrap_plan(
@@ -2584,7 +2751,9 @@ def _planner_task_set_from_frontdesk_message(activation: dict[str, object], fron
         '- Each task_id must be stable, unique, and match [A-Za-z0-9][A-Za-z0-9_-]{0,79}.\n'
         '- Routes must be direct_execution, needs_detail, macro_adjustment_request, blocked, or partial_completion.\n'
         '- direct_execution and partial_completion tasks must be readiness "ready" with non-empty allowed_paths and verification.\n'
-        '- For direct_execution and partial_completion, execution_contract must declare Allowed Change Paths matching allowed_paths.\n'
+        '- For direct_execution and partial_completion, execution_contract must declare Allowed Change Paths matching allowed_paths and a Verification section.\n'
+        '- Each verification entry must be one direct argv command executed without a shell; do not use &&, ||, pipes, redirection, command substitution, variable assignment, cd, source, or export.\n'
+        '- Split multi-step smoke verification into multiple verification entries. Use fixed project-relative scratch paths under .ccb/runtime/verification/ when state must persist across commands.\n'
         '- Do not require git diff, git status, or any git-only scope check; real-provider lab projects may not be git repositories.\n'
         '- Scope verification must be repo-independent: use allowed_paths plus file existence/content checks or explicit manifest checks.\n'
         '- needs_detail tasks may use readiness "needs_clarification" with blockers, allowed_paths [], and verification.\n'
@@ -2755,9 +2924,14 @@ def _activation_already_satisfied(context, deps, *, activation: dict[str, object
     if target == 'orchestrator':
         artifact = artifacts.get('orchestration_notes')
         reason = str(activation.get('reason_for_activation') or '')
+        if not isinstance(artifact, dict):
+            return False
         if reason == 'orchestrator_route_needs_detail_detail_ready':
             return _artifact_imported_from_job(artifact, job_id=job_id)
-        return isinstance(artifact, dict)
+        route = str(artifact.get('orchestrator_route') or '').strip()
+        if route in _EXECUTION_ROUTES:
+            return isinstance(artifacts.get('orchestration_bundle'), dict)
+        return True
     if target == 'planner':
         return _artifact_imported_from_job(
             artifacts.get('task_packet'),

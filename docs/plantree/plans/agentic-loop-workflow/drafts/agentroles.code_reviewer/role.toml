@@ -18,7 +18,7 @@ responsibilities = [
   "Check changed paths against allowed paths and declared scope",
   "Check acceptance and verification refs against coder evidence",
   "Audit hidden fallback, degradation, scope shrinkage, and missing evidence",
-  "Return pass, rework_required, blocked, or non_converged"
+  "Return a parser-stable first-line status: pass, rework_required, blocked, or non_converged"
 ]
 non_goals = [
   "Primary implementation",

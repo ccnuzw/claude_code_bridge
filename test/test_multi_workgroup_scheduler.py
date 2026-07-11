@@ -13,6 +13,7 @@ from cli.services.loop_runner import loop_runner_auto
 from cli.services.loop_orchestration_bundle import bundle_digest, task_input_digest
 from cli.services.multi_workgroup_scheduler import (
     MultiWorkgroupScheduler,
+    _verification_commands,
     resume_pending_multi_workgroup_scheduler,
 )
 from cli.services.workgroup_integration import GitIntegrationError
@@ -473,6 +474,130 @@ def test_scheduler_orders_review_integration_round_release_and_cleanup(tmp_path:
     assert ('cleanup', ()) in integration.calls
     assert final['topology']['observed_evidence']['source'] == 'release_payload'
     assert 'agents' not in final['topology']['status_after_release']['observed']
+
+
+def test_scheduler_accepts_legacy_bare_node_reviewer_pass_first_line(tmp_path: Path) -> None:
+    scheduler, harness, integration = _scheduler(tmp_path, 1)
+    scheduler.run_once()
+    harness.complete('node-001', 'worker')
+    scheduler.run_once()
+    harness.complete(
+        'node-001',
+        'reviewer',
+        reply='pass\n\nReviewed exact tree and found no blockers.',
+    )
+    scheduler.run_once()
+    harness.complete('round', 'ccb_round_reviewer', reply='round_result: pass')
+
+    final = scheduler.run_once()
+
+    assert final['round_result'] == 'pass'
+    assert final['controller_status'] == 'pass'
+    assert integration.payload['nodes']['node-001']['reviewed_commit'] == 'commit-node-001'
+    assert integration.payload['status'] == 'accepted'
+
+
+def test_scheduler_node_reviewer_prompt_requires_parser_stable_status_line(tmp_path: Path) -> None:
+    scheduler, harness, _integration = _scheduler(tmp_path, 1)
+    scheduler.run_once()
+    harness.complete('node-001', 'worker')
+
+    scheduler.run_once()
+
+    request = harness.job_attempts[('node-001', 'reviewer', 1)]
+    # Fake submitter ignores the message, so call the scheduler prompt directly
+    # against the persisted node state for the parser contract regression.
+    state = json.loads(scheduler.state_path.read_text(encoding='utf-8'))
+    node = state['nodes']['node-001']
+    message = scheduler._node_message(state, node, purpose='reviewer')
+    assert 'first non-empty line must be exactly status: pass|rework_required|blocked|non_converged' in message
+    assert request['purpose'] == 'reviewer'
+
+
+def test_verification_parser_stops_before_scope_notes_bullets(tmp_path: Path) -> None:
+    contract = tmp_path / 'execution_contract.md'
+    contract.write_text(
+        '# Execution Contract\n'
+        'Route: direct_execution\n\n'
+        'Verification:\n'
+        '- python -m unittest discover -s tests -p test_todo.py\n'
+        '\n'
+        'Scope notes:\n'
+        '- Do not change implementation in this task.\n'
+        '- Keep changes within the allowed path.\n',
+        encoding='utf-8',
+    )
+
+    commands = _verification_commands(tmp_path, ['execution_contract.md'], prefix='root')
+
+    assert [command.argv for command in commands] == [
+        ('python', '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_todo.py')
+    ]
+
+
+def test_scheduler_accepts_legacy_round_result_field_with_space(tmp_path: Path) -> None:
+    scheduler, harness, integration = _scheduler(tmp_path, 1)
+    scheduler.run_once()
+    harness.complete('node-001', 'worker')
+    scheduler.run_once()
+    harness.complete('node-001', 'reviewer', reply='status: pass')
+    scheduler.run_once()
+    harness.complete('round', 'ccb_round_reviewer', reply='round result: pass\n\nNo blockers.')
+
+    final = scheduler.run_once()
+
+    assert final['round_result'] == 'pass'
+    assert final['controller_status'] == 'pass'
+    assert integration.payload['status'] == 'accepted'
+
+
+def test_scheduler_accepts_unique_noncanonical_late_round_result_with_source(
+    tmp_path: Path,
+) -> None:
+    scheduler, harness, integration = _scheduler(tmp_path, 1)
+    scheduler.run_once()
+    harness.complete('node-001', 'worker')
+    scheduler.run_once()
+    harness.complete('node-001', 'reviewer', reply='status: pass')
+    scheduler.run_once()
+    harness.complete(
+        'round',
+        'ccb_round_reviewer',
+        reply=(
+            '根据角色定义，我需要审查证据。\n\n'
+            '**证据分析：**\n'
+            '- 集成验证通过\n'
+            '- 清理验证通过\n\n'
+            'round result: pass'
+        ),
+    )
+
+    final = scheduler.run_once()
+
+    assert final['round_result'] == 'pass'
+    assert final['round_result_source'] == 'round_reviewer_reply_noncanonical'
+    assert final['controller_status'] == 'pass'
+    assert integration.payload['status'] == 'accepted'
+
+
+def test_scheduler_rejects_conflicting_round_result_lines(tmp_path: Path) -> None:
+    scheduler, harness, integration = _scheduler(tmp_path, 1)
+    scheduler.run_once()
+    harness.complete('node-001', 'worker')
+    scheduler.run_once()
+    harness.complete('node-001', 'reviewer', reply='status: pass')
+    scheduler.run_once()
+    harness.complete(
+        'round',
+        'ccb_round_reviewer',
+        reply='round result: pass\n\nround_result: blocked',
+    )
+
+    final = scheduler.run_once()
+
+    assert final['round_result'] == 'replan_required'
+    assert final['round_result_source'] == 'conflicting_round_result'
+    assert ('rollback', 'round_reviewer:replan_required') in integration.calls
 
 
 def test_scheduler_final_round_topology_is_control_only_after_four_nodes_integrate(

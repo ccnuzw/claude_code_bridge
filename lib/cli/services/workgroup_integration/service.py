@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import shutil
 from typing import Callable, Iterable
 
 from project.ids import compute_project_id
@@ -474,8 +475,8 @@ class WorkgroupGitIntegration:
                         'failed node HEAD changed before controller exclusion',
                         details={'expected': base_commit, 'observed': head},
                     )
-                changed_paths = git.changed_paths(workspace, base_commit)
-                deleted_paths = git.deleted_paths(workspace, base_commit)
+                changed_paths = git.changed_paths(workspace, base_commit, ignore_controller_state=True)
+                deleted_paths = git.deleted_paths(workspace, base_commit, ignore_controller_state=True)
                 self._validate_changed_paths(node, changed_paths)
                 self._validate_changed_paths(node, deleted_paths)
                 untracked_paths = git.untracked_paths(workspace)
@@ -483,8 +484,8 @@ class WorkgroupGitIntegration:
                     **expected,
                     'status': 'captured',
                     'head': head,
-                    'tree_digest': git.current_tree_digest(workspace),
-                    'worktree_status': list(git.status_lines(workspace)),
+                    'tree_digest': git.current_tree_digest(workspace, ignore_controller_state=True),
+                    'worktree_status': list(git.status_lines(workspace, ignore_controller_state=True)),
                     'changed_paths': list(changed_paths),
                     'deleted_paths': list(deleted_paths),
                     'untracked_paths': list(untracked_paths),
@@ -519,8 +520,8 @@ class WorkgroupGitIntegration:
             if failure.get('status') == 'restoring':
                 current = {
                     'head': git.head(workspace),
-                    'tree_digest': git.current_tree_digest(workspace),
-                    'status': list(git.status_lines(workspace)),
+                    'tree_digest': git.current_tree_digest(workspace, ignore_controller_state=True),
+                    'status': list(git.status_lines(workspace, ignore_controller_state=True)),
                 }
                 expected_current = {
                     'head': failure['head'],
@@ -541,8 +542,8 @@ class WorkgroupGitIntegration:
                     self._checkpoint('after_node_failure_worktree_restore', state)
                     current = {
                         'head': git.head(workspace),
-                        'tree_digest': git.current_tree_digest(workspace),
-                        'status': list(git.status_lines(workspace)),
+                        'tree_digest': git.current_tree_digest(workspace, ignore_controller_state=True),
+                        'status': list(git.status_lines(workspace, ignore_controller_state=True)),
                     }
                 if current != restored:
                     raise self._state_error(
@@ -606,7 +607,7 @@ class WorkgroupGitIntegration:
                 else:
                     intent = _mapping(intent_value)
                     self._validate_node_intent_record(state, node, intent)
-                commit = git.commit_all(workspace, str(intent['message']))
+                commit = git.commit_all(workspace, str(intent['message']), ignore_controller_state=True)
                 self._checkpoint('after_node_commit', state)
             else:
                 intent_value = node.get('commit_intent')
@@ -630,7 +631,7 @@ class WorkgroupGitIntegration:
                     'controller commit does not match the reviewed tree',
                     details={'reviewed_tree': reviewed_tree, 'commit_tree': commit_tree},
                 )
-            post_commit_status = git.status_lines(workspace)
+            post_commit_status = git.status_lines(workspace, ignore_controller_state=True)
             if post_commit_status:
                 raise self._state_error(
                     state,
@@ -855,6 +856,7 @@ class WorkgroupGitIntegration:
                 git.run_verification(self.project_root, command)
                 for command in self.root_verification
             ]
+            _remove_generated_runtime_state(self.project_root)
             signature = self._root_signature(git)
             status = tuple(str(item) for item in signature['status'])
             generated_untracked = tuple(
@@ -1186,7 +1188,7 @@ class WorkgroupGitIntegration:
                 path = Path(path_text)
                 if not path.exists():
                     missing.append(path_text)
-                elif git.status_lines(path):
+                elif git.status_lines(path, ignore_controller_state=True):
                     dirty.append(path_text)
             terminal = str(state.get('status')) in {
                 'accepted',
@@ -1324,7 +1326,7 @@ class WorkgroupGitIntegration:
                     'owned_worktree_missing',
                     str(path),
                 )
-            status = git.status_lines(path)
+            status = git.status_lines(path, ignore_controller_state=True)
             if status:
                 raise self._cleanup_error(
                     state,
@@ -1412,7 +1414,7 @@ class WorkgroupGitIntegration:
                     'cleanup_replay_authority_drift',
                     str(path),
                 )
-            dirty = self._git().status_lines(path)
+            dirty = self._git().status_lines(path, ignore_controller_state=True)
             if dirty:
                 raise self._cleanup_error(
                     state,
@@ -1421,6 +1423,7 @@ class WorkgroupGitIntegration:
                     str(path),
                     details={'status': list(dirty)},
                 )
+            _remove_cleanup_local_controller_state(path)
             if status == 'pending':
                 item['status'] = 'removing'
                 self._save_state(state)
@@ -1643,7 +1646,7 @@ class WorkgroupGitIntegration:
                 'controller worktree HEAD does not match durable state',
                 details={'expected': expected_head, 'observed': head},
             )
-        status = git.status_lines(workspace)
+        status = git.status_lines(workspace, ignore_controller_state=True)
         if status:
             raise self._error(
                 'controller_worktree_dirty',
@@ -1678,7 +1681,7 @@ class WorkgroupGitIntegration:
         head = git.head(workspace)
         reviewed_commit = str(node.get('reviewed_commit') or '')
         if reviewed_commit:
-            if head != reviewed_commit or git.status_lines(workspace):
+            if head != reviewed_commit or git.status_lines(workspace, ignore_controller_state=True):
                 raise self._state_error(
                     state,
                     'reviewed_commit_worktree_drift',
@@ -1748,7 +1751,7 @@ class WorkgroupGitIntegration:
                 'node HEAD changed before controller-owned finalize',
                 details={'expected': base_commit, 'observed': head},
             )
-        changed_paths = git.changed_paths(workspace, base_commit)
+        changed_paths = git.changed_paths(workspace, base_commit, ignore_controller_state=True)
         if not changed_paths:
             raise self._error(
                 'node_has_no_changes',
@@ -1756,11 +1759,11 @@ class WorkgroupGitIntegration:
                 'node worktree has no reviewable delta',
             )
         self._validate_changed_paths(node, changed_paths)
-        deleted_paths = git.deleted_paths(workspace, base_commit)
+        deleted_paths = git.deleted_paths(workspace, base_commit, ignore_controller_state=True)
         self._validate_changed_paths(node, deleted_paths)
         return {
             'head': head,
-            'tree_digest': git.current_tree_digest(workspace),
+            'tree_digest': git.current_tree_digest(workspace, ignore_controller_state=True),
             'changed_paths': list(changed_paths),
             'deleted_paths': list(deleted_paths),
         }
@@ -2001,7 +2004,7 @@ class WorkgroupGitIntegration:
                     'identity': identity,
                 },
             )
-        if git.status_lines(workspace):
+        if git.status_lines(workspace, ignore_controller_state=True):
             raise self._state_error(
                 state,
                 'integration_worktree_dirty',
@@ -2021,7 +2024,7 @@ class WorkgroupGitIntegration:
         git = self._git()
         before = str(integration['head'])
         actual = git.head(workspace)
-        if actual != before or git.status_lines(workspace):
+        if actual != before or git.status_lines(workspace, ignore_controller_state=True):
             raise self._state_error(
                 state,
                 'integration_worktree_drift',
@@ -2091,7 +2094,7 @@ class WorkgroupGitIntegration:
                     'identity': identity,
                 },
             )
-        post_merge_status = git.status_lines(workspace)
+        post_merge_status = git.status_lines(workspace, ignore_controller_state=True)
         if post_merge_status:
             raise self._state_error(
                 state,
@@ -2163,13 +2166,13 @@ class WorkgroupGitIntegration:
             git.run_verification(workspace, command)
             for command in self.integration_verification
         ]
-        status = git.status_lines(workspace)
+        status = git.status_lines(workspace, ignore_controller_state=True)
         passed = all(result['result'] == 'pass' for result in results) and not status
         check = {
             'key': key,
             'layer': layer,
             'head': git.head(workspace),
-            'tree_digest': git.current_tree_digest(workspace),
+            'tree_digest': git.current_tree_digest(workspace, ignore_controller_state=True),
             'results': results,
             'post_status': list(status),
             'status': 'pass' if passed else 'failed',
@@ -2644,6 +2647,29 @@ def _required_text(value: object, *, field_name: str) -> str:
     if not text:
         raise ValueError(f'{field_name} must be non-empty')
     return text
+
+
+def _remove_cleanup_local_controller_state(workspace: Path) -> None:
+    binding = workspace / '.ccb-workspace.json'
+    if binding.is_file() or binding.is_symlink():
+        binding.unlink()
+    _remove_generated_runtime_state(workspace)
+
+
+def _remove_generated_runtime_state(workspace: Path) -> None:
+    for relative in ('.pytest_cache', '.mypy_cache', '.ruff_cache', '__pycache__'):
+        path = workspace / relative
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.is_file() or path.is_symlink():
+            path.unlink()
+    for cache_dir in workspace.rglob('__pycache__'):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir)
+    for suffix in ('*.pyc', '*.pyo'):
+        for path in workspace.rglob(suffix):
+            if path.is_file() or path.is_symlink():
+                path.unlink()
 
 
 def _now() -> str:

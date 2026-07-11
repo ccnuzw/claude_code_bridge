@@ -683,8 +683,10 @@ class MultiWorkgroupScheduler:
         integration,
     ) -> None:
         round_result, source = _round_decision(str(result.get('reply') or ''))
-        if str(result.get('status') or '') != 'completed' or round_result is None:
+        if str(result.get('status') or '') != 'completed':
             round_result, source = 'replan_required', 'malformed_round_review'
+        elif round_result is None:
+            round_result = 'replan_required'
         if round_result == 'pass':
             integration.accept()
         else:
@@ -977,7 +979,8 @@ class MultiWorkgroupScheduler:
             f'Allowed paths: {json.dumps(source["allowed_paths"])}\n'
             f'Work packet ref: {source["work_packet_ref"]}\n'
             f'Acceptance refs: {json.dumps(source["acceptance_refs"])}\n'
-            f'Verification refs: {json.dumps(source["verification_refs"])}{evidence}\n\n{task_text}'
+            f'Verification refs: {json.dumps(source["verification_refs"])}{evidence}'
+            f'{_node_reviewer_response_contract(purpose)}\n\n{task_text}'
         )
 
     def _round_reviewer_message(self, state: dict[str, object], integration_state: dict[str, object]) -> str:
@@ -997,7 +1000,7 @@ class MultiWorkgroupScheduler:
             f'Nodes: {json.dumps(compact_nodes, sort_keys=True)}\n'
             f'Integration: {json.dumps(integration_state["integration"], sort_keys=True)}\n'
             f'Root: {json.dumps(integration_state["root"], sort_keys=True)}\n'
-            'First non-empty line must be exactly round_result: pass|partial|replan_required|blocked.'
+            'First non-empty line must be exactly round result: pass|partial|replan_required|blocked.'
         )
 
     def _all_nodes_integrated(self, state: dict[str, object]) -> bool:
@@ -1292,8 +1295,12 @@ def _verification_commands(
                 continue
             if in_section and line.startswith('#'):
                 break
-            if not in_section or not re.match(r'^[-*]\s+', line):
+            if not in_section:
                 continue
+            if not line:
+                continue
+            if not re.match(r'^[-*]\s+', line):
+                break
             argv = tuple(shlex.split(re.sub(r'^[-*]\s+', '', line)))
             if argv and argv not in seen:
                 seen.add(argv)
@@ -1309,31 +1316,67 @@ def _verification_commands(
         )
     return tuple(commands)
 
-
 def _review_decision(reply: str) -> str:
+    allowed = {'pass', 'rework_required', 'blocked', 'non_converged'}
+    first_nonempty = True
     for raw_line in reply.splitlines():
         line = raw_line.strip().lstrip('-').strip()
-        if not line.lower().startswith('status:'):
+        if not line:
+            continue
+        lowered = line.lower()
+        if first_nonempty:
+            first_nonempty = False
+            if lowered in allowed:
+                return lowered
+        if not lowered.startswith('status:'):
             continue
         value = line.split(':', 1)[1].strip().lower()
-        if value in {'pass', 'rework_required', 'blocked', 'non_converged'}:
+        if value in allowed:
             return value
         return 'malformed'
     return 'malformed'
 
 
+def _node_reviewer_response_contract(purpose: str) -> str:
+    if purpose not in {'reviewer', 'reviewer_recheck'}:
+        return ''
+    return (
+        '\nReviewer response contract: first non-empty line must be exactly '
+        'status: pass|rework_required|blocked|non_converged. '
+        'Any explanatory evidence must follow after that machine line.'
+    )
+
+
 def _round_decision(reply: str) -> tuple[str | None, str]:
+    first_nonempty_seen = False
+    valid: list[tuple[str, str]] = []
+    invalid_machine_line = False
     for raw_line in reply.splitlines():
         line = raw_line.strip().lower()
         if not line:
             continue
-        if not line.startswith('round_result:'):
-            return None, 'malformed_round_review'
-        value = line.split(':', 1)[1].strip()
+        is_first = not first_nonempty_seen
+        first_nonempty_seen = True
+        if line.startswith('round_result:'):
+            value = line.split(':', 1)[1].strip()
+        elif line.startswith('round result:'):
+            value = line.split(':', 1)[1].strip()
+        else:
+            continue
         if value in {'pass', 'partial', 'replan_required', 'blocked'}:
-            return value, 'round_reviewer_reply'
-        return None, 'unknown_round_result'
-    return None, 'missing_round_result'
+            valid.append((value, 'round_reviewer_reply' if is_first else 'round_reviewer_reply_noncanonical'))
+        else:
+            invalid_machine_line = True
+    if not valid:
+        if invalid_machine_line:
+            return None, 'unknown_round_result'
+        return None, 'malformed_round_review' if first_nonempty_seen else 'missing_round_result'
+    values = {value for value, _source in valid}
+    if len(values) != 1:
+        return None, 'conflicting_round_result'
+    canonical_sources = {source for _value, source in valid}
+    source = 'round_reviewer_reply' if canonical_sources == {'round_reviewer_reply'} else 'round_reviewer_reply_noncanonical'
+    return valid[0][0], source
 
 
 def _active_workspaces(

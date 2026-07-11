@@ -278,6 +278,39 @@ def test_bundle_rejects_more_than_four_workgroups_and_missing_root_fields(tmp_pa
         )
 
 
+@pytest.mark.parametrize(
+    ('field', 'value'),
+    [
+        ('node_id', 'todo-cli-json-core-implementation'),
+        ('workgroup_id', 'todo-cli-json-core-workgroup-too-long'),
+    ],
+)
+def test_bundle_rejects_node_identity_not_safe_for_agent_names(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    project_root = tmp_path / 'repo'
+    record = _record(project_root)
+    contract_ref = str(record['artifacts']['execution_contract']['path'])
+    node = _node(
+        node_id='node-001',
+        workgroup_id='wg-001',
+        allowed_paths=['src/core/'],
+        execution_contract_ref=contract_ref,
+        integration_order=10,
+    )
+    node[field] = value
+
+    with pytest.raises(ValueError, match=fr'nodes\[0\]\.{field} is invalid: agent name must match'):
+        normalize_bundle_candidate(
+            _candidate(record, [node]),
+            record=record,
+            project_root=project_root,
+            capacity_snapshot=_capacity_snapshot(),
+        )
+
+
 def test_bundle_rejects_parallel_scope_overlap(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     record = _record(project_root)

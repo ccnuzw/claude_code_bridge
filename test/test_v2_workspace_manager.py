@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -177,6 +178,11 @@ def test_workspace_group_binding_can_target_controller_owned_worktree(tmp_path: 
     assert reviewer.workspace_path == controller_path.resolve()
     assert worker.branch_name == 'ccb/workgroup/tx/node-001'
     assert reviewer.branch_name == worker.branch_name
+    local_binding = controller_path / '.ccb-workspace.json'
+    assert local_binding.exists()
+    record = json.loads(local_binding.read_text(encoding='utf-8'))
+    assert record['target_project'] == str(project_root.resolve())
+    assert record['workspace_path'] == str(controller_path.resolve())
 
 
 def test_workspace_validator_reports_missing_binding(tmp_path: Path) -> None:

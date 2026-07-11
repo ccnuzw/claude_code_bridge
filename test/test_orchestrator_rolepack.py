@@ -471,6 +471,22 @@ def test_p1_orchestrator_rolepack_declares_adaptive_bundle_contract() -> None:
     }
     assert candidate['nodes'][0]['worker_profile'] == 'coder'
     assert candidate['nodes'][0]['reviewer_profile'] == 'code_reviewer'
+    assert 'worker_profile' in combined
+    assert 'reviewer_profile' in combined
+    combined_single_line = ' '.join(combined.split())
+    assert 'Do not emit nested `coder` or `code_reviewer` objects' in combined_single_line
+    assert '`work_packet` must be one JSON string' in combined_single_line
+    assert '`node_id` and `workgroup_id` must be short agent-name-safe identifiers' in combined_single_line
+    assert 'contain at most 32 characters total' in combined_single_line
+    assert 'integration` fields are exactly `verification_refs` and `project_root_verification_refs`' in combined_single_line
+    assert 'Both integration arrays must be non-empty' in combined_single_line
+    assert 'never emit an empty `project_root_verification_refs` list' in combined_single_line
+    assert 'do not emit `mode`, `order`' in combined_single_line
+    assert 'policy` fields are exactly `max_node_rework_rounds`, `on_required_node_failure`, and `on_structural_failure`' in combined_single_line
+    assert '`on_required_node_failure` must be `partial_or_blocked`' in combined_single_line
+    assert '`on_structural_failure` must be `replan_required`' in combined_single_line
+    assert 'return_failed_node_for_rework' in combined_single_line
+    assert 'logical `coder` and' not in combined_single_line
     assert 'exactly one route decision' in combined
     assert 'Config V3' in combined
     assert 'direct_execution' in combined
@@ -480,6 +496,10 @@ def test_p1_orchestrator_rolepack_declares_adaptive_bundle_contract() -> None:
     assert 'Structural ambiguity requires `replan_required`' in combined
     assert 'silent serialization' in combined
     assert 'parallel_group is evidence only' in combined
+    assert 'Verification Commands' in combined
+    assert 'direct argv commands' in combined
+    assert 'without a shell' in combined
+    assert 'Verification Contract:' in combined
     assert 'do not submit downstream asks' in combined.lower()
     assert 'normal post-worker orchestrator activation' in combined
     assert '"workgroup_count": 1' not in template

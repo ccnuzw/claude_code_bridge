@@ -26,7 +26,22 @@ effective-capacity snapshot, and expected bundle revision.
 Candidate root fields are exactly `schema`, `task_id`, `bundle_revision`,
 `selection`, `nodes`, `integration`, and `policy`. Selection fields are exactly
 `workgroup_count`, `complexity`, `cutability`, `execution_shape`, and
-`rationale`. `workgroup_count` must equal the node count.
+`rationale`. `workgroup_count` must equal the node count. `integration` fields
+are exactly `verification_refs` and `project_root_verification_refs`; do not
+emit `mode`, `order`, merge strategy, dependency order, execution order, or
+controller-owned integration settings. Both integration arrays must be
+non-empty and must reference known task artifacts containing direct
+verification commands. For a one-node bundle, copy the execution-contract
+artifact ref into both `verification_refs` and
+`project_root_verification_refs`; never emit an empty
+`project_root_verification_refs` list. `policy` fields are exactly
+`max_node_rework_rounds`, `on_required_node_failure`, and
+`on_structural_failure`; do not emit capacity, workspace, release, topology, or
+runtime policy fields. Policy values are literal: `max_node_rework_rounds`
+must be the supplied integer within policy, `on_required_node_failure` must be
+`partial_or_blocked`, and `on_structural_failure` must be `replan_required`.
+Do not replace these with semantic alternatives such as rework, retry,
+return_failed_node_for_rework, fail, abort, or controller_owned.
 
 ## Adaptive Selection
 
@@ -42,13 +57,30 @@ acceptance and verification refs, safe allowed paths, and explicit
 dependencies where outputs interact. Independent nodes require disjoint
 allowed paths.
 
-Each node must include `node_id`, `workgroup_id`, logical `coder` and
-`code_reviewer` profiles, `depends_on`, `parallel_group`, a complete bounded
+Each node must include `node_id`, `workgroup_id`, `worker_profile`,
+`reviewer_profile`, `depends_on`, `parallel_group`, a complete bounded
 `work_packet`, `allowed_paths`, `acceptance_refs`, `verification_refs`, and a
-unique deterministic `integration_order`. The work packet must state its goal,
-declared refs, scope, non-goals, dependency evidence, expected evidence, and
-verification obligations. `parallel_group` is evidence only; it is not a
-topology communication edge or dispatch instruction.
+unique deterministic `integration_order`. Set `worker_profile` to `coder` and
+`reviewer_profile` to `code_reviewer`. Do not emit nested `coder` or
+`code_reviewer` objects; put role-specific instructions inside `work_packet`.
+`node_id` and `workgroup_id` must be short agent-name-safe identifiers: start
+with a letter, use only letters, digits, `_`, or `-`, and contain at most 32
+characters total. Prefer compact IDs such as `node-001`, `node-cli`, `wg-001`,
+or `wg-cli`; do not use long task-title slugs.
+`work_packet` must be one JSON string, not an object, array, or nested schema.
+The work packet string must state its goal, declared refs, scope, non-goals,
+dependency evidence, expected evidence, and verification obligations.
+`parallel_group` is evidence only; it is not a topology communication edge or
+dispatch instruction.
+
+Every `verification_refs` and `project_root_verification_refs` artifact must
+contain a `Verification:` or `Verification Commands:` section whose bullet
+items are direct argv commands. They are executed without a shell by the
+controller. Do not rely on `Verification Contract:` prose, `&&`, pipes,
+redirection, command substitution, variable assignment, `cd`, `source`, or
+`export`. If supplied refs do not contain bounded direct verification commands,
+return structural `replan_required` evidence instead of emitting an execution
+bundle.
 
 Structural ambiguity requires `replan_required` evidence. Do not hide it with
 silent serialization, count reduction, overlapping independent scopes, scope

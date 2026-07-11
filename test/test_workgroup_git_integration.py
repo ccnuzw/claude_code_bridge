@@ -333,6 +333,39 @@ def test_rejected_dirty_preflight_does_not_create_branches_or_worktrees(tmp_path
     assert kernel.state_path.exists() is False
 
 
+def test_preflight_ignores_controller_owned_plan_tree_state(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    tracked_plan = root / 'docs' / 'plantree' / 'plans' / 'frontdesk-intake' / 'README.md'
+    tracked_plan.parent.mkdir(parents=True)
+    tracked_plan.write_text('tracked plan\n', encoding='utf-8')
+    _git(root, 'add', 'docs/plantree/plans/frontdesk-intake/README.md')
+    _git(root, 'commit', '-m', 'track controller plan root')
+    tracked_plan.write_text('updated by controller\n', encoding='utf-8')
+    generated_task = (
+        root
+        / 'docs'
+        / 'plantree'
+        / 'plans'
+        / 'frontdesk-intake'
+        / 'tasks'
+        / 'task-1'
+        / 'task_packet.md'
+    )
+    generated_task.parent.mkdir(parents=True)
+    generated_task.write_text('# Task\n', encoding='utf-8')
+    kernel = _kernel(root, (_node(1),))
+
+    preflight = kernel.preflight()
+
+    assert preflight['status'] == 'preflighted'
+    assert 'docs/plantree/plans/frontdesk-intake/README.md' in _git(
+        root, 'status', '--porcelain'
+    )
+    assert '?? docs/plantree/plans/frontdesk-intake/tasks/' in _git(
+        root, 'status', '--porcelain'
+    )
+
+
 def test_preflight_rejects_stale_controller_branch_without_resumable_state(tmp_path: Path) -> None:
     root = _init_repo(tmp_path)
     kernel = _kernel(root, (_node(1),))
@@ -409,6 +442,76 @@ def test_scope_violation_and_out_of_contract_deletion_block_before_review(tmp_pa
     assert 'protected.txt' in exc_info.value.details['changed_paths']
     assert _git(worktree, 'rev-parse', 'HEAD') == kernel.state()['task']['base_commit']
     assert _git(worktree, 'rev-list', '--count', '--all', '--not', kernel.state()['task']['base_commit']) == '0'
+
+
+def test_controller_workspace_binding_is_not_node_scope_or_commit_content(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(spec.node_id)
+    worktree = Path(str(_node_record(kernel, spec.node_id)['worktree_path']))
+    (worktree / '.ccb-workspace.json').write_text(
+        '{"target_project":"' + str(root.resolve()) + '"}\n',
+        encoding='utf-8',
+    )
+    _write_node_file(kernel, spec.node_id, spec.allowed_paths[0], 'first\n')
+
+    review = kernel.capture_review_input(spec.node_id, worker_job_id='worker-1')
+    finalized = kernel.record_review(
+        spec.node_id,
+        reviewer_job_id='reviewer-1',
+        result='pass',
+        input_digest=str(review['input_digest']),
+        tree_digest=str(review['tree_digest']),
+    )
+    committed = kernel.finalize_node(spec.node_id)
+
+    assert review['input']['changed_paths'] == [spec.allowed_paths[0]]
+    assert finalized['result'] == 'pass'
+    assert committed['status'] == 'integration_ready'
+    assert '.ccb-workspace.json' not in _git(worktree, 'ls-tree', '-r', '--name-only', 'HEAD').splitlines()
+    assert '?? .ccb-workspace.json' in _git(worktree, 'status', '--porcelain')
+
+
+def test_python_bytecode_cache_is_not_node_scope_or_commit_content(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    (root / '.gitignore').write_text('.ccb/\n', encoding='utf-8')
+    _git(root, 'add', '.gitignore')
+    _git(root, 'commit', '-m', 'stop ignoring python cache')
+    spec = _node(1, allowed_paths=('todo.py', 'tests/test_todo.py'))
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(spec.node_id)
+    worktree = Path(str(_node_record(kernel, spec.node_id)['worktree_path']))
+    _write_node_file(kernel, spec.node_id, 'todo.py', 'print("todo")\n')
+    _write_node_file(kernel, spec.node_id, 'tests/test_todo.py', 'def test_todo(): pass\n')
+    (worktree / '__pycache__').mkdir()
+    (worktree / '__pycache__' / 'todo.cpython-311.pyc').write_bytes(b'bytecode')
+    (worktree / 'tests' / '__pycache__').mkdir()
+    (worktree / 'tests' / '__pycache__' / 'test_todo.cpython-311.pyc').write_bytes(b'bytecode')
+
+    review = kernel.capture_review_input(spec.node_id, worker_job_id='worker-1')
+    finalized = kernel.record_review(
+        spec.node_id,
+        reviewer_job_id='reviewer-1',
+        result='pass',
+        input_digest=str(review['input_digest']),
+        tree_digest=str(review['tree_digest']),
+    )
+    committed = kernel.finalize_node(spec.node_id)
+
+    assert review['input']['changed_paths'] == ['tests/test_todo.py', 'todo.py']
+    assert finalized['result'] == 'pass'
+    assert committed['status'] == 'integration_ready'
+    committed_paths = _git(worktree, 'ls-tree', '-r', '--name-only', 'HEAD').splitlines()
+    assert 'todo.py' in committed_paths
+    assert 'tests/test_todo.py' in committed_paths
+    assert all('__pycache__' not in path for path in committed_paths)
+    assert '?? __pycache__/' in _git(worktree, 'status', '--porcelain')
+    assert '?? tests/__pycache__/' in _git(worktree, 'status', '--porcelain')
 
 
 def test_reviewer_input_and_tree_digests_are_exact_fences(tmp_path: Path) -> None:
@@ -570,6 +673,32 @@ def test_integration_verification_failure_never_promotes_root(tmp_path: Path) ->
     assert state['integration']['checks'][-1]['results'][0]['stderr'] == 'integration-err\n'
     assert _git(root, 'rev-parse', 'HEAD') == base
     assert not (root / spec.allowed_paths[0]).exists()
+
+
+def test_integration_verification_missing_executable_is_structured_failure(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    missing = VerificationCommand(
+        'missing-executable',
+        ('definitely-not-a-ccb-test-command',),
+        timeout_seconds=10,
+    )
+    kernel = _kernel(root, (spec,), integration_verification=(missing,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    base = kernel.state()['task']['base_commit']
+
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.integrate_ready()
+
+    result = kernel.state()['integration']['checks'][-1]['results'][0]
+    assert exc_info.value.code == 'integration_verification_failed'
+    assert result['result'] == 'failed'
+    assert result['exit_code'] is None
+    assert result['timed_out'] is False
+    assert 'FileNotFoundError' in result['stderr']
+    assert _git(root, 'rev-parse', 'HEAD') == base
 
 
 def test_integration_verification_timeout_is_bounded_and_recorded(tmp_path: Path) -> None:
@@ -1253,6 +1382,120 @@ def test_cleanup_rechecks_active_owned_workspace_at_execution_time(tmp_path: Pat
     assert kernel.state()['cleanup']['blocker']['details']['active_workspaces'] == [
         str(active)
     ]
+
+
+def test_cleanup_ignores_and_removes_controller_workspace_binding(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    kernel.accept()
+    node_worktree = Path(str(kernel.state()['nodes'][spec.node_id]['worktree_path']))
+    binding = node_worktree / '.ccb-workspace.json'
+    binding.write_text('{"controller_owned": true}\n', encoding='utf-8')
+    git_status = _git(node_worktree, 'status', '--porcelain')
+    assert git_status
+    assert '.ccb-workspace.json' in git_status
+
+    readiness = kernel.cleanup_readiness(evidence_captured=True)
+    cleaned = kernel.cleanup(active_workspaces=())
+
+    assert readiness['eligible'] is True
+    assert readiness['dirty_workspaces'] == []
+    assert cleaned['status'] == 'complete'
+    assert not node_worktree.exists()
+
+
+def test_cleanup_removes_generated_python_cache_before_clean_worktree_remove(
+    tmp_path: Path,
+) -> None:
+    root = _init_repo(tmp_path)
+    (root / '.gitignore').write_text('.ccb/\n', encoding='utf-8')
+    _git(root, 'add', '.gitignore')
+    _git(root, 'commit', '-m', 'stop ignoring python cache')
+    spec = _node(1, allowed_paths=('todo.py', 'tests/test_todo.py'))
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(spec.node_id)
+    _write_node_file(kernel, spec.node_id, 'todo.py', 'print("todo")\n')
+    _write_node_file(kernel, spec.node_id, 'tests/test_todo.py', 'def test_todo(): pass\n')
+    review = kernel.capture_review_input(spec.node_id, worker_job_id='worker-1')
+    kernel.record_review(
+        spec.node_id,
+        reviewer_job_id='reviewer-1',
+        result='pass',
+        input_digest=str(review['input_digest']),
+        tree_digest=str(review['tree_digest']),
+    )
+    kernel.finalize_node(spec.node_id)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    kernel.accept()
+    integration_worktree = Path(str(kernel.state()['integration']['worktree_path']))
+    cache = integration_worktree / 'tests' / '__pycache__'
+    cache.mkdir(parents=True)
+    (cache / 'test_todo.cpython-311.pyc').write_bytes(b'bytecode')
+    assert '?? tests/__pycache__/' in _git(integration_worktree, 'status', '--porcelain')
+
+    readiness = kernel.cleanup_readiness(evidence_captured=True)
+    cleaned = kernel.cleanup(active_workspaces=())
+
+    assert readiness['eligible'] is True
+    assert readiness['dirty_workspaces'] == []
+    assert cleaned['status'] == 'complete'
+    assert not integration_worktree.exists()
+
+
+def test_root_verification_removes_generated_python_cache_from_project_root(
+    tmp_path: Path,
+) -> None:
+    root = _init_repo(tmp_path)
+    (root / '.gitignore').write_text('.ccb/\n', encoding='utf-8')
+    _git(root, 'add', '.gitignore')
+    _git(root, 'commit', '-m', 'stop ignoring python cache')
+    spec = _node(1, allowed_paths=('todo.py', 'tests/test_todo.py'))
+    root_cache_command = VerificationCommand(
+        'root-creates-pycache',
+        (
+            sys.executable,
+            '-c',
+            'from pathlib import Path; '
+            'p=Path("tests/__pycache__"); '
+            'p.mkdir(parents=True, exist_ok=True); '
+            '(p/"test_todo.cpython-311.pyc").write_bytes(b"bytecode")',
+        ),
+        timeout_seconds=10,
+    )
+    kernel = _kernel(root, (spec,), root_verification=(root_cache_command,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(spec.node_id)
+    _write_node_file(kernel, spec.node_id, 'todo.py', 'print("todo")\n')
+    _write_node_file(kernel, spec.node_id, 'tests/test_todo.py', 'def test_todo(): pass\n')
+    review = kernel.capture_review_input(spec.node_id, worker_job_id='worker-1')
+    kernel.record_review(
+        spec.node_id,
+        reviewer_job_id='reviewer-1',
+        result='pass',
+        input_digest=str(review['input_digest']),
+        tree_digest=str(review['tree_digest']),
+    )
+    kernel.finalize_node(spec.node_id)
+    kernel.integrate_ready()
+    kernel.promote()
+
+    verified = kernel.verify_root()
+
+    assert verified['root']['checks'][-1]['status'] == 'pass'
+    assert not (root / 'tests' / '__pycache__').exists()
+    assert '__pycache__' not in _git(root, 'status', '--porcelain')
 
 
 def test_promotion_replay_recovers_applied_delta_without_second_promotion(tmp_path: Path) -> None:

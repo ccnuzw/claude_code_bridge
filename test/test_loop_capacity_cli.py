@@ -474,6 +474,58 @@ def _multi_workgroup_capacity_snapshot(*, max_workgroups: int = 4) -> dict[str, 
     }
 
 
+def _v3_two_node_candidate(task_id: str, contract_ref: str) -> dict[str, object]:
+    return {
+        'schema': 'ccb.loop.orchestration_bundle_candidate.v1',
+        'task_id': task_id,
+        'bundle_revision': 1,
+        'selection': {
+            'workgroup_count': 2,
+            'complexity': 'bounded',
+            'cutability': 'high',
+            'execution_shape': 'parallel',
+            'rationale': 'Core and CLI scopes are independently reviewable.',
+        },
+        'nodes': [
+            {
+                'node_id': 'node-001',
+                'workgroup_id': 'wg-core',
+                'worker_profile': 'coder',
+                'reviewer_profile': 'code_reviewer',
+                'depends_on': [],
+                'parallel_group': 'wave-1',
+                'work_packet': 'Implement the core slice.',
+                'allowed_paths': ['src/core/'],
+                'acceptance_refs': [contract_ref],
+                'verification_refs': [contract_ref],
+                'integration_order': 10,
+            },
+            {
+                'node_id': 'node-002',
+                'workgroup_id': 'wg-cli',
+                'worker_profile': 'coder',
+                'reviewer_profile': 'code_reviewer',
+                'depends_on': [],
+                'parallel_group': 'wave-1',
+                'work_packet': 'Implement the CLI slice.',
+                'allowed_paths': ['src/cli/'],
+                'acceptance_refs': [contract_ref],
+                'verification_refs': [contract_ref],
+                'integration_order': 20,
+            },
+        ],
+        'integration': {
+            'verification_refs': [contract_ref],
+            'project_root_verification_refs': [contract_ref],
+        },
+        'policy': {
+            'max_node_rework_rounds': 1,
+            'on_required_node_failure': 'partial_or_blocked',
+            'on_structural_failure': 'replan_required',
+        },
+    }
+
+
 def _project_with_default_orchestrator_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     project_root = tmp_path / 'repo-default-orchestrator-agent'
     role_store = tmp_path / 'roles-default-orchestrator-agent'
@@ -10333,6 +10385,220 @@ def test_loop_runner_single_task_set_exposes_task_id_for_supervisor_resume(
     assert replay['next_activation'] == 'orchestrator'
 
 
+def test_loop_runner_task_set_contract_appends_direct_verification_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_task_set_verification_contract_heading',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-task-set-verification-contract.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-task-set-verification-contract',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_task_set_verification_contract_heading',
+                'status': 'accepted',
+            },
+        },
+    )
+    task = {
+        'task_id': 'todo-cli-core-persistence',
+        'title': 'Implement TODO CLI with JSON persistence',
+        'route': 'direct_execution',
+        'readiness': 'ready',
+        'task_packet': '# Task: Implement TODO CLI with JSON persistence\nRoute: direct_execution\n',
+        'execution_contract': (
+            '# Execution Contract\n'
+            'Route: direct_execution\n\n'
+            'Allowed Change Paths:\n'
+            '- todo_cli/\n'
+            '- pyproject.toml\n\n'
+            'Verification Contract:\n'
+            '- Exercise add/list/complete/stats/remove with isolated storage.\n'
+        ),
+        'allowed_paths': ['todo_cli/', 'pyproject.toml'],
+        'verification': [
+            'test -d todo_cli',
+            'python -m unittest tests/test_todo_cli.py',
+        ],
+        'blockers': [],
+    }
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_set_verification_contract_heading',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': [task]}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['action'] == 'imported_planner_task_set_authority'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='todo-cli-core-persistence'))
+    contract = (
+        project_root / shown['task']['artifacts']['execution_contract']['path']
+    ).read_text(encoding='utf-8')
+    assert 'Verification Contract:' in contract
+    assert '\nVerification:\n- test -d todo_cli\n' in contract
+    assert 'python -m unittest discover -s tests -p test_todo_cli.py' in contract
+
+
+def test_loop_runner_task_set_uniquifies_existing_child_task_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_plan_task_record(
+        project_root,
+        task_id='todo-cli-core-persistence',
+        status='replan_required',
+        next_owner='planner',
+        activation_reason='round_summary:replan_required',
+    )
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_task_set_repeat_collision',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-task-set-repeat-collision.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-task-set-repeat-collision',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_task_set_repeat_collision',
+                'status': 'accepted',
+            },
+        },
+    )
+    task = {
+        'task_id': 'todo-cli-core-persistence',
+        'title': 'Implement TODO CLI with JSON persistence',
+        'route': 'direct_execution',
+        'readiness': 'ready',
+        'task_packet': '# Task: Implement TODO CLI with JSON persistence\nRoute: direct_execution\n',
+        'execution_contract': (
+            '# Execution Contract\n'
+            'Route: direct_execution\n\n'
+            'Allowed Change Paths:\n'
+            '- todo_cli/\n'
+        ),
+        'allowed_paths': ['todo_cli/'],
+        'verification': ['test -d todo_cli'],
+        'blockers': [],
+    }
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_set_repeat_collision',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': [task]}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['action'] == 'imported_planner_task_set_authority'
+    assert payload['task_count'] == 1
+    assert payload['task_ids'] == ['todo-cli-core-persistence-jtasksetrepeat']
+    old_task = plan_task(context, SimpleNamespace(action='task-show', task_id='todo-cli-core-persistence'))
+    assert old_task['task']['status'] == 'replan_required'
+    new_task = plan_task(context, SimpleNamespace(action='task-show', task_id='todo-cli-core-persistence-jtasksetrepeat'))
+    assert new_task['task']['status'] == 'ready_for_orchestration'
+    assert new_task['task']['activation_reason'] == 'planner_task_set_imported'
+
+
+def test_loop_runner_task_set_rejects_shell_compound_verification_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        plan_slug='demo-plan',
+        role_job_id='job_task_set_shell_verification',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-task-set-shell-verification.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-task-set-shell-verification',
+            'project_id': context.project.project_id,
+            'project_root': str(project_root),
+            'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan',
+            'planner_contract': 'task_set',
+            'ask': {
+                'target': 'planner',
+                'job_id': 'job_task_set_shell_verification',
+                'status': 'accepted',
+            },
+        },
+    )
+    task = {
+        'task_id': 'todo-cli-core-persistence',
+        'title': 'Implement TODO CLI with JSON persistence',
+        'route': 'direct_execution',
+        'readiness': 'ready',
+        'task_packet': '# Task: Implement TODO CLI with JSON persistence\nRoute: direct_execution\n',
+        'execution_contract': '# Execution Contract\nRoute: direct_execution\n\nAllowed Change Paths:\n- todo_cli/\n',
+        'allowed_paths': ['todo_cli/'],
+        'verification': [
+            'tmpfile=$(mktemp) && python -m todo_cli --data-file "$tmpfile" add sample-task',
+        ],
+        'blockers': [],
+    }
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_set_shell_verification',
+        agent_name='planner',
+        reply='**task-set.json**\n```json\n'
+        + json.dumps({'tasks': [task]}, indent=2)
+        + '\n```\n',
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
+
+    assert payload['loop_runner_status'] == 'blocked'
+    assert payload['action'] == 'role_output_import_blocked'
+    assert payload['reason'] == 'planner_task_set_invalid_verification'
+    assert 'shell command substitution' in payload['evidence']['error']
+    assert not (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').exists()
+
+
 def test_loop_runner_blocks_route_mix_task_set_with_drifted_task_ids_before_import(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -10651,7 +10917,7 @@ def test_loop_runner_imports_route_mix_task_set_with_negative_git_scope_guidance
                 'Verification is repo-independent and must use unittest, not git status.\n'
             ),
             'allowed_paths': ['src/l2_cli.py', 'tests/test_l2_cli.py'],
-            'verification': ['PYTHONPATH=. python -m unittest tests/test_l2_cli.py'],
+            'verification': ['python -m unittest discover -s tests -p test_l2_cli.py'],
             'blockers': [],
         },
         {
@@ -11953,6 +12219,225 @@ def test_loop_runner_rejects_stale_managed_orchestrator_activation_before_import
     assert shown['task']['task_revision'] == 2
     assert 'orchestration_notes' not in shown['task']['artifacts']
     assert 'orchestration_bundle' not in shown['task']['artifacts']
+
+
+def test_loop_runner_rejects_invalid_v3_orchestrator_bundle_before_notes_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_id = 'task-invalid-bundle'
+    _add_ready_plan_task(
+        project_root,
+        task_id=task_id,
+        execution_contract_text=(
+            'execution contract text\n'
+            'allowed_change_paths:\n'
+            '- src/core/\n'
+            '- src/cli/\n'
+        ),
+    )
+    task_root = f'docs/plantree/plans/demo-plan/tasks/{task_id}'
+    contract_ref = f'{task_root}/execution_contract.md'
+    candidate = _v3_two_node_candidate(task_id, contract_ref)
+    candidate['nodes'][0].pop('worker_profile')
+    candidate['nodes'][0].pop('reviewer_profile')
+    candidate['nodes'][0]['coder'] = {'profile': 'coder'}
+    candidate['nodes'][0]['code_reviewer'] = {'profile': 'code_reviewer'}
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_invalid_nested_bundle',
+        agent_name='orchestrator',
+        reply=(
+            'route: direct_execution\n\n'
+            'orchestration_notes: invalid nested role profile objects must not partially import.\n\n'
+            'orchestration_bundle:\n'
+            '```json\n'
+            f'{json.dumps(candidate, ensure_ascii=False, indent=2)}\n'
+            '```\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        task_id=task_id,
+        role_job_id='job_invalid_nested_bundle',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            plan_task=plan_task,
+            effective_capacity_snapshot=lambda _context: _multi_workgroup_capacity_snapshot(),
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'blocked'
+    assert payload['action'] == 'role_output_import_blocked'
+    assert payload['reason'] == 'orchestrator_bundle_candidate_invalid'
+    assert 'nodes[0] contains unknown fields: code_reviewer, coder' in payload['evidence']['error']
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+    assert set(shown['task']['artifacts']) == {'task_packet', 'execution_contract'}
+
+
+def test_loop_runner_rejects_structured_v3_work_packet_before_notes_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_id = 'task-structured-work-packet'
+    _add_ready_plan_task(
+        project_root,
+        task_id=task_id,
+        execution_contract_text=(
+            'execution contract text\n'
+            'allowed_change_paths:\n'
+            '- src/core/\n'
+            '- src/cli/\n'
+        ),
+    )
+    task_root = f'docs/plantree/plans/demo-plan/tasks/{task_id}'
+    contract_ref = f'{task_root}/execution_contract.md'
+    candidate = _v3_two_node_candidate(task_id, contract_ref)
+    candidate['nodes'][0]['work_packet'] = {'goal': 'nested objects are not a bundle v1 work packet'}
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_structured_work_packet',
+        agent_name='orchestrator',
+        reply=(
+            'route: direct_execution\n\n'
+            'orchestration_notes: invalid structured work packet must not partially import.\n\n'
+            'orchestration_bundle:\n'
+            '```json\n'
+            f'{json.dumps(candidate, ensure_ascii=False, indent=2)}\n'
+            '```\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        task_id=task_id,
+        role_job_id='job_structured_work_packet',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            plan_task=plan_task,
+            effective_capacity_snapshot=lambda _context: _multi_workgroup_capacity_snapshot(),
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'blocked'
+    assert payload['action'] == 'role_output_import_blocked'
+    assert payload['reason'] == 'orchestrator_bundle_candidate_invalid'
+    assert payload['evidence']['error'] == 'nodes[0].work_packet must be a string'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+    assert set(shown['task']['artifacts']) == {'task_packet', 'execution_contract'}
+
+
+def test_loop_runner_auto_consumes_v3_orchestrator_activation_with_partial_notes_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_id = 'task-half-import'
+    _add_ready_plan_task(
+        project_root,
+        task_id=task_id,
+        execution_contract_text=(
+            'execution contract text\n'
+            'allowed_change_paths:\n'
+            '- src/core/\n'
+            '- src/cli/\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    notes_path = project_root / 'drafts' / 'half-import-orchestration-notes.md'
+    _write(notes_path, 'route: direct_execution\norchestration_notes: previous crash left only notes.\n')
+    notes_import = plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='orchestration_notes',
+            file_path=str(notes_path),
+            route='direct_execution',
+            actor_source='loop_runner_role_output_import',
+            actor='loop_runner',
+            job_id='job_half_import_orchestrator',
+            expected_task_revision=1,
+        ),
+    )
+    assert set(notes_import['task']['artifacts']) == {
+        'task_packet',
+        'execution_contract',
+        'orchestration_notes',
+    }
+    task_root = f'docs/plantree/plans/demo-plan/tasks/{task_id}'
+    contract_ref = f'{task_root}/execution_contract.md'
+    candidate = _v3_two_node_candidate(task_id, contract_ref)
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-half-import.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_orchestrator_activation',
+            'activation_id': 'act-half-import',
+            'action': 'activate_orchestrator',
+            'task_id': task_id,
+            'task_revision': 1,
+            'reason_for_activation': 'ready_for_orchestration',
+            'ask': {
+                'target': 'orchestrator',
+                'job_id': 'job_half_import_orchestrator',
+                'status': 'accepted',
+            },
+        },
+    )
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_half_import_orchestrator',
+        agent_name='orchestrator',
+        reply=(
+            'route: direct_execution\n\n'
+            'orchestration_notes: retry should complete the missing bundle import.\n\n'
+            'orchestration_bundle:\n'
+            '```json\n'
+            f'{json.dumps(candidate, ensure_ascii=False, indent=2)}\n'
+            '```\n'
+        ),
+    )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            plan_task=plan_task,
+            effective_capacity_snapshot=lambda _context: _multi_workgroup_capacity_snapshot(),
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'imported_orchestration_notes'
+    assert payload['route'] == 'direct_execution'
+    assert payload['orchestration_bundle']['bundle_source'] == 'loop_runner_role_output_import'
+    assert payload['orchestration_bundle']['node_count'] == 2
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+    assert set(shown['task']['artifacts']) == {
+        'task_packet',
+        'execution_contract',
+        'orchestration_notes',
+        'orchestration_bundle',
+    }
 
 
 def test_loop_runner_role_output_imports_explicit_multi_workgroup_bundle(

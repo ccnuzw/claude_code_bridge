@@ -1,9 +1,10 @@
 # Node Check Result
 
+status: pass|rework_required|blocked|non_converged
+
 node id: <node-id>
 workgroup id: <workgroup-id>
 code reviewer: <agent-name>
-status: pass|rework_required|blocked|non_converged
 
 ## Exact Node Workspace
 

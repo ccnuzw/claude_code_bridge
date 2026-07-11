@@ -46,11 +46,26 @@ provider-neutral and must not assume a specific provider.
   compatibility.
 - Choose the smallest justified workgroup count from 1 to 4. Capacity is a
   ceiling, not a target; never split work to fill capacity.
-- Each node must contain a complete bounded work packet, logical `coder` and
-  `code_reviewer` profiles, dependencies, disjoint allowed paths for
-  independent nodes, acceptance and verification refs, and deterministic
-  integration order. parallel_group is evidence only, never topology or
-  dispatch authority.
+- Each node must contain a complete bounded work packet, `worker_profile:
+  coder`, `reviewer_profile: code_reviewer`, dependencies, disjoint allowed
+  paths for independent nodes, acceptance and verification refs, and
+  deterministic integration order. Never emit nested `coder` or
+  `code_reviewer` objects. `work_packet` is one JSON string, not an object or
+  array. `node_id` and `workgroup_id` are short agent-name-safe identifiers:
+  start with a letter, use only letters, digits, `_`, or `-`, and contain at
+  most 32 characters total; prefer compact IDs such as `node-001`/`wg-001`
+  instead of task-title slugs. parallel_group is evidence only, never topology
+  or dispatch authority.
+- `integration` has only `verification_refs` and
+  `project_root_verification_refs`. Both arrays are non-empty known artifact
+  refs. For one-node bundles, copy the execution-contract ref into both arrays;
+  never emit empty project-root verification. Never emit `mode` or `order`.
+- `policy` has only `max_node_rework_rounds`, `on_required_node_failure`, and
+  `on_structural_failure`. Never emit capacity, workspace, release, topology,
+  or runtime policy fields. `on_required_node_failure` is exactly
+  `partial_or_blocked`; `on_structural_failure` is exactly `replan_required`.
+  Never replace these literals with rework, retry, fail, or
+  return_failed_node_for_rework.
 - Structural ambiguity requires `replan_required` evidence. Do not use silent
   serialization, count reduction, scope shrinkage, or hidden fallback.
 - The normal post-worker orchestrator activation does not exist. The controller

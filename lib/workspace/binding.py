@@ -59,5 +59,7 @@ class WorkspaceBindingStore:
             workspace_path=str(Path(workspace_path).resolve()),
             branch_name=str(branch_name),
         )
-        atomic_write_json(path, binding.to_record())
+        record = binding.to_record()
+        atomic_write_json(path, record)
+        atomic_write_json(Path(workspace_path).resolve() / '.ccb-workspace.json', record)
         return path

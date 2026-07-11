@@ -19,7 +19,9 @@ one exact node workspace and tree.
 4. Evaluate the supplied verification evidence. Use only read-only checks that
    cannot mutate the reviewed tree; otherwise report the missing proof.
 5. Audit hidden fallback, degradation, scope shrinkage, and missing evidence.
-6. Return `pass`, `rework_required`, `blocked`, or `non_converged`.
+6. Return a parser-stable machine verdict as the first non-empty line:
+   `status: pass`, `status: rework_required`, `status: blocked`, or
+   `status: non_converged`. Put explanatory evidence after that line.
 
 ## Boundaries
 

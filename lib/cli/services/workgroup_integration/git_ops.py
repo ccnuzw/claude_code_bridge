@@ -18,6 +18,15 @@ _CONTROLLER_ENV = {
     'GIT_COMMITTER_EMAIL': CONTROLLER_EMAIL,
 }
 _MAX_VERIFICATION_OUTPUT_BYTES = 65_536
+_CONTROLLER_STATE_PATH_PREFIXES = ('.ccb/', 'docs/plantree/')
+_CONTROLLER_STATE_PATHS = ('.ccb', 'docs/plantree', '.ccb-workspace.json')
+_GENERATED_PATH_PREFIXES = (
+    '.mypy_cache/',
+    '.pytest_cache/',
+    '.ruff_cache/',
+    '__pycache__/',
+)
+_GENERATED_PATHS = ('.mypy_cache', '.pytest_cache', '.ruff_cache', '__pycache__')
 
 
 @dataclass(frozen=True)
@@ -26,6 +35,42 @@ class GitCommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+def _is_controller_state_path(path: str) -> bool:
+    normalized = str(path).replace('\\', '/')
+    while normalized.startswith('./'):
+        normalized = normalized[2:]
+    return normalized in _CONTROLLER_STATE_PATHS or normalized.startswith(
+        _CONTROLLER_STATE_PATH_PREFIXES
+    )
+
+
+def _is_generated_runtime_path(path: str) -> bool:
+    normalized = str(path).replace('\\', '/')
+    while normalized.startswith('./'):
+        normalized = normalized[2:]
+    if normalized in _GENERATED_PATHS or normalized.startswith(_GENERATED_PATH_PREFIXES):
+        return True
+    if '/__pycache__/' in normalized:
+        return True
+    return normalized.endswith(('.pyc', '.pyo'))
+
+
+def _is_ignored_operational_path(path: str) -> bool:
+    return _is_controller_state_path(path) or _is_generated_runtime_path(path)
+
+
+def _status_line_is_controller_state(line: str) -> bool:
+    if len(line) < 4:
+        return False
+    path_part = line[3:].strip()
+    if not path_part:
+        return False
+    # Porcelain v1 reports renames as "old -> new"; ignore only if every
+    # involved path is controller-owned state.
+    paths = [part.strip().strip('"') for part in path_part.split(' -> ')]
+    return all(_is_ignored_operational_path(path) for path in paths)
 
 
 class GitOperations:
@@ -65,10 +110,19 @@ class GitOperations:
         env = {'GIT_INDEX_FILE': str(index_path)}
         try:
             self.run(cwd, ['read-tree', 'HEAD'], env=env)
-            self.run(cwd, ['add', '-u', '--', '.'], env=env)
+            if ignore_controller_state:
+                tracked = [
+                    path
+                    for path in self._nul_output(cwd, ['ls-files', '-m', '-d', '-z', '--'])
+                    if not _is_ignored_operational_path(path)
+                ]
+                if tracked:
+                    self.run(cwd, ['add', '-u', '--', *tracked], env=env)
+            else:
+                self.run(cwd, ['add', '-u', '--', '.'], env=env)
             untracked = list(self.untracked_paths(cwd))
             if ignore_controller_state:
-                untracked = [path for path in untracked if not path.startswith('.ccb/')]
+                untracked = [path for path in untracked if not _is_ignored_operational_path(path)]
             if untracked:
                 self.run(cwd, ['add', '--', *untracked], env=env)
             tree = self.output(cwd, ['write-tree'], env=env)
@@ -79,13 +133,28 @@ class GitOperations:
     def format_tree_digest(self, oid: str) -> str:
         return f'git-tree:{self.object_format}:{str(oid).strip()}'
 
-    def changed_paths(self, cwd: Path, base_commit: str) -> tuple[str, ...]:
+    def changed_paths(
+        self,
+        cwd: Path,
+        base_commit: str,
+        *,
+        ignore_controller_state: bool = False,
+    ) -> tuple[str, ...]:
         tracked = self._nul_output(cwd, ['diff', '--name-only', '-z', base_commit, '--'])
         untracked = self.untracked_paths(cwd)
-        return tuple(sorted(set((*tracked, *untracked))))
+        paths = tuple(sorted(set((*tracked, *untracked))))
+        if not ignore_controller_state:
+            return paths
+        return tuple(path for path in paths if not _is_ignored_operational_path(path))
 
-    def deleted_paths(self, cwd: Path, base_commit: str) -> tuple[str, ...]:
-        return tuple(
+    def deleted_paths(
+        self,
+        cwd: Path,
+        base_commit: str,
+        *,
+        ignore_controller_state: bool = False,
+    ) -> tuple[str, ...]:
+        paths = tuple(
             sorted(
                 self._nul_output(
                     cwd,
@@ -93,6 +162,9 @@ class GitOperations:
                 )
             )
         )
+        if not ignore_controller_state:
+            return paths
+        return tuple(path for path in paths if not _is_ignored_operational_path(path))
 
     def untracked_paths(self, cwd: Path) -> tuple[str, ...]:
         return tuple(
@@ -112,11 +184,7 @@ class GitOperations:
         lines = tuple(line for line in result.stdout.splitlines() if line)
         if not ignore_controller_state:
             return lines
-        return tuple(
-            line
-            for line in lines
-            if not (line.startswith('?? ') and line[3:].startswith('.ccb/'))
-        )
+        return tuple(line for line in lines if not _status_line_is_controller_state(line))
 
     def is_ancestor(self, cwd: Path, ancestor: str, descendant: str) -> bool:
         result = self.run(
@@ -164,8 +232,24 @@ class GitOperations:
             'committer_email': CONTROLLER_EMAIL,
         }
 
-    def commit_all(self, cwd: Path, message: str) -> str:
-        self.run(cwd, ['add', '-A', '--', '.'])
+    def commit_all(self, cwd: Path, message: str, *, ignore_controller_state: bool = False) -> str:
+        if ignore_controller_state:
+            tracked = [
+                path
+                for path in self._nul_output(cwd, ['ls-files', '-m', '-d', '-z', '--'])
+                if not _is_ignored_operational_path(path)
+            ]
+            untracked = [
+                path
+                for path in self.untracked_paths(cwd)
+                if not _is_ignored_operational_path(path)
+            ]
+            if tracked:
+                self.run(cwd, ['add', '-u', '--', *tracked])
+            if untracked:
+                self.run(cwd, ['add', '--', *untracked])
+        else:
+            self.run(cwd, ['add', '-A', '--', '.'])
         self.run(
             cwd,
             [
@@ -268,6 +352,18 @@ class GitOperations:
                 'stdout_truncated': stdout_truncated,
                 'stderr_truncated': stderr_truncated,
                 'timed_out': True,
+                'result': 'failed',
+            }
+        except OSError as exc:
+            stderr, stderr_truncated = _bounded_output(f'{type(exc).__name__}: {exc}')
+            return {
+                **command.to_record(),
+                'exit_code': None,
+                'stdout': '',
+                'stderr': stderr,
+                'stdout_truncated': False,
+                'stderr_truncated': stderr_truncated,
+                'timed_out': False,
                 'result': 'failed',
             }
 

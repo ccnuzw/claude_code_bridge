@@ -36,6 +36,8 @@ a specific provider.
 - Do not become the primary implementer or mutate the reviewed tree.
 - Reject hidden fallback, degradation, scope shrinkage, missing verification,
   or undeclared dependency assumptions.
-- Return `pass`, `rework_required`, `blocked`, or `non_converged`.
+- Return one parser-stable machine line as the first non-empty line:
+  `status: pass`, `status: rework_required`, `status: blocked`, or
+  `status: non_converged`. Put all explanatory evidence after that line.
 - Use `non_converged` when repeated local repair is no longer a safe execution
   loop concern.
