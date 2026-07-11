@@ -14,6 +14,7 @@ from cli.services.loop_effective_capacity import effective_capacity_digest
 from cli.services.loop_runner import _mount_activation_topology
 from cli.services.loop_topology import _mark_release_residue
 from cli.services.role_output_import import _parse_orchestrator_reply
+from project.ids import compute_project_id
 from provider_execution.fake import FakeProviderAdapter
 
 
@@ -46,9 +47,16 @@ def _load_script():
     return module
 
 
-def _job(*, agent_name: str, body: str, workspace: Path | None = None) -> JobRecord:
+def _job(
+    *,
+    agent_name: str,
+    body: str,
+    workspace: Path | None = None,
+    project_id: str = 'project-g5',
+    body_artifact: dict[str, object] | None = None,
+) -> JobRecord:
     request = MessageEnvelope(
-        project_id='project-g5',
+        project_id=project_id,
         to_agent=agent_name,
         from_actor='system',
         body=body,
@@ -56,6 +64,7 @@ def _job(*, agent_name: str, body: str, workspace: Path | None = None) -> JobRec
         reply_to=None,
         message_type='ask',
         delivery_scope=DeliveryScope.SINGLE,
+        body_artifact=body_artifact,
     )
     return JobRecord(
         job_id=f'job-{agent_name}',
@@ -255,6 +264,109 @@ def test_fake_orchestrator_requires_valid_explicit_smoke_contract(body: str) -> 
     )
 
     assert 'ccb.loop.orchestration_bundle_candidate.v1' not in submission.reply
+
+
+def test_g5_contract_skips_malformed_compact_before_valid_later_contract() -> None:
+    module = __import__('provider_execution.fake', fromlist=['_g5_smoke_contract'])
+    valid = 'g5_multi_workgroup_smoke: ' + json.dumps(
+        _scenario_contract(count=4, shape='parallel', scenario='all_workers_failed_blocked'),
+        sort_keys=True,
+    )
+    compact = {
+        'execution_contract': {'content': valid[:110]},
+        'task_packet': {'content': valid},
+    }
+
+    contract = module._g5_smoke_contract(f'Compact artifacts: {compact}\n')
+
+    assert contract is not None
+    assert contract['count'] == 4
+    assert contract['scenario'] == 'all_workers_failed_blocked'
+
+
+def test_g5_contract_rejects_conflicting_valid_compact_contracts() -> None:
+    module = __import__('provider_execution.fake', fromlist=['_g5_smoke_contract'])
+    first = 'g5_multi_workgroup_smoke: ' + json.dumps(
+        _scenario_contract(count=4, shape='parallel', scenario='all_workers_failed_blocked'),
+        sort_keys=True,
+    )
+    second = 'g5_multi_workgroup_smoke: ' + json.dumps(
+        _scenario_contract(count=4, shape='parallel', scenario='pass'),
+        sort_keys=True,
+    )
+    compact = {
+        'execution_contract': {'content': first},
+        'task_packet': {'content': second},
+    }
+
+    with pytest.raises(ValueError, match='conflicting G5 smoke contracts'):
+        module._g5_smoke_contract(f'Compact artifacts: {compact}\n')
+
+
+def test_fake_orchestrator_spilled_ask_uses_same_project_durable_contract(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / 'project'
+    artifact_dir = project / '.ccb/ccbd/artifacts/text/ask-request'
+    artifact_dir.mkdir(parents=True)
+    task_root = 'docs/plantree/plans/g5/tasks/g5-multi-workgroup-task'
+    valid = 'g5_multi_workgroup_smoke: ' + json.dumps(
+        _scenario_contract(count=4, shape='parallel', scenario='all_workers_failed_blocked'),
+        sort_keys=True,
+    )
+    compact = {
+        'execution_contract': {'content': valid[:110] + ('x' * 4300)},
+        'task_packet': {'content': valid},
+    }
+    full_body = (
+        'Role: ccb_orchestrator\n'
+        'Task: g5-multi-workgroup-task\n'
+        f"Artifact refs: {{'task_packet': '{task_root}/task_packet.md', "
+        f"'execution_contract': '{task_root}/execution_contract.md'}}\n"
+        f'Compact artifacts: {compact}\n'
+        'Expected bundle revision: 1\n'
+    )
+    artifact_path = artifact_dir / 'system-to-orchestrator-art_spill.txt'
+    artifact_path.write_text(full_body, encoding='utf-8')
+    data = full_body.encode('utf-8')
+    submission = FakeProviderAdapter(latency_seconds=0).start(
+        _job(
+            agent_name='orchestrator',
+            body='CCB ask request is larger than 4 KiB and was stored as an artifact.',
+            project_id=compute_project_id(project),
+            body_artifact={
+                'kind': 'ask-request',
+                'path': str(artifact_path),
+                'bytes': len(data),
+                'sha256': hashlib.sha256(data).hexdigest(),
+            },
+        ),
+        context=None,
+        now='2026-07-11T00:00:00Z',
+    )
+
+    assert len(data) > 4096
+    assert submission.reply.startswith('route: direct_execution')
+    parsed = _parse_orchestrator_reply(submission.reply)
+    assert parsed['status'] == 'ok'
+    assert parsed['route'] == 'direct_execution'
+    assert parsed['orchestration_bundle_candidate']['selection']['workgroup_count'] == 4
+    with pytest.raises(ValueError, match='outside the explicit project'):
+        FakeProviderAdapter(latency_seconds=0).start(
+            _job(
+                agent_name='orchestrator',
+                body='CCB ask request is larger than 4 KiB and was stored as an artifact.',
+                project_id='different-project',
+                body_artifact={
+                    'kind': 'ask-request',
+                    'path': str(artifact_path),
+                    'bytes': len(data),
+                    'sha256': hashlib.sha256(data).hexdigest(),
+                },
+            ),
+            context=None,
+            now='2026-07-11T00:00:00Z',
+        )
 
 
 def test_fake_scenario_contract_requires_exact_versioned_shape() -> None:
@@ -526,23 +638,24 @@ def test_real_cli_fake_multi_workgroup_full_flow(
 
 @pytest.mark.ccb_lifecycle_smoke
 @pytest.mark.parametrize(
-    ('scenario', 'count', 'expected_classification'),
+    ('scenario', 'count', 'shape', 'expected_classification'),
     (
-        ('reviewer_rework_pass', 1, 'pass'),
-        ('reviewer_rework_exhausted_blocked', 1, 'valid_non_success'),
-        ('worker_failure_partial', 2, 'valid_non_success'),
-        ('all_workers_failed_blocked', 1, 'valid_non_success'),
-        ('reviewer_provider_failure', 2, 'valid_non_success'),
-        ('round_reviewer_blocked', 1, 'valid_non_success'),
-        ('integration_verification_failure', 1, 'valid_non_success'),
-        ('root_verification_failure', 1, 'valid_non_success'),
-        ('restart_replay_pass', 1, 'pass'),
+        ('reviewer_rework_pass', 1, 'parallel', 'pass'),
+        ('reviewer_rework_exhausted_blocked', 1, 'parallel', 'valid_non_success'),
+        ('worker_failure_partial', 2, 'parallel', 'valid_non_success'),
+        ('all_workers_failed_blocked', 4, 'parallel', 'valid_non_success'),
+        ('reviewer_provider_failure', 2, 'parallel', 'valid_non_success'),
+        ('round_reviewer_blocked', 4, 'mixed_dag', 'valid_non_success'),
+        ('integration_verification_failure', 4, 'mixed_dag', 'valid_non_success'),
+        ('root_verification_failure', 4, 'mixed_dag', 'valid_non_success'),
+        ('restart_replay_pass', 2, 'parallel', 'pass'),
     ),
 )
 def test_real_cli_fake_runtime_scenarios(
     tmp_path: Path,
     scenario: str,
     count: int,
+    shape: str,
     expected_classification: str,
 ) -> None:
     module = _load_script()
@@ -551,7 +664,7 @@ def test_real_cli_fake_runtime_scenarios(
     report = module.run_smoke(
         project_root=project_root,
         count=count,
-        shape='parallel',
+        shape=shape,
         scenario=scenario,
         ccb_test=Path(__file__).resolve().parents[1] / 'ccb_test',
         command_timeout_s=240,

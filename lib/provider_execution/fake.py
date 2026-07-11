@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 import ast
+import hashlib
 import json
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from completion.models import (
     CompletionSourceKind,
     CompletionStatus,
 )
+from project.ids import compute_project_id
 
 from .base import ProviderPollResult, ProviderSubmission
 from .fake_runtime import (
@@ -199,6 +201,7 @@ def _reply_for_body(
         workflow_reply = _workflow_multi_workgroup_orchestrator_reply(
             agent_name=agent_name,
             body=effective_body,
+            g5_contract=g5_contract,
         )
     if workflow_reply is None:
         workflow_reply = _workflow_execution_reply(
@@ -598,10 +601,15 @@ def _scheduler_allowed_change_paths(body: str) -> list[Path]:
     return []
 
 
-def _workflow_multi_workgroup_orchestrator_reply(*, agent_name: str, body: str) -> str | None:
+def _workflow_multi_workgroup_orchestrator_reply(
+    *,
+    agent_name: str,
+    body: str,
+    g5_contract: dict[str, object] | None = None,
+) -> str | None:
     if agent_name != 'orchestrator' and 'Role: ccb_orchestrator' not in body:
         return None
-    contract = _g5_smoke_contract(body)
+    contract = g5_contract or _g5_smoke_contract(body)
     if contract is None:
         return None
     candidate = _g5_orchestration_candidate(body, contract=contract)
@@ -685,6 +693,7 @@ def _g5_smoke_contract(body: str) -> dict[str, object] | None:
         if isinstance(value, dict):
             texts.append(str(value.get('content') or ''))
     marker = 'g5_multi_workgroup_smoke:'
+    contracts: list[dict[str, object]] = []
     for text in texts:
         for raw_line in text.splitlines():
             line = raw_line.strip().lstrip('-*').strip()
@@ -693,71 +702,79 @@ def _g5_smoke_contract(body: str) -> dict[str, object] | None:
             try:
                 payload = json.loads(line[len(marker) :].strip())
             except json.JSONDecodeError:
-                return None
-            if not isinstance(payload, dict):
-                return None
-            required_keys = {
-                'schema',
-                'task_id',
-                'scenario',
-                'count',
-                'shape',
-                'selected_node',
-                'restart_latency_ms',
-            }
-            if set(payload) != required_keys:
-                return None
-            if payload.get('schema') != 'ccb.g5.source_fake_runtime_scenario.v1':
-                return None
-            if payload.get('task_id') != 'g5-multi-workgroup-task':
-                return None
-            scenario = str(payload.get('scenario') or '')
-            if scenario not in {
-                'pass',
-                'reviewer_rework_pass',
-                'reviewer_rework_exhausted_blocked',
-                'worker_failure_partial',
-                'all_workers_failed_blocked',
-                'reviewer_provider_failure',
-                'round_reviewer_blocked',
-                'integration_verification_failure',
-                'root_verification_failure',
-                'restart_replay_pass',
-            }:
-                return None
-            count = payload.get('count')
-            shape = str(payload.get('shape') or '')
-            selected_node = str(payload.get('selected_node') or '')
-            restart_latency_ms = payload.get('restart_latency_ms')
-            if isinstance(count, bool) or not isinstance(count, int) or count not in {1, 2, 3, 4}:
-                return None
-            if shape not in {'parallel', 'mixed_dag'}:
-                return None
-            if shape == 'mixed_dag' and count < 3:
-                return None
-            if selected_node not in {f'node-{index:03d}' for index in range(1, count + 1)}:
-                return None
-            if (
-                isinstance(restart_latency_ms, bool)
-                or not isinstance(restart_latency_ms, int)
-                or restart_latency_ms < 0
-                or (scenario == 'restart_replay_pass' and restart_latency_ms == 0)
-            ):
-                return None
-            return {
-                'count': count,
-                'shape': shape,
-                'schema': payload['schema'],
-                'task_id': payload['task_id'],
-                'scenario': scenario,
-                'selected_node': selected_node,
-                'allowed_paths': [
-                    f'g5_outputs/node-{index:03d}.txt'
-                    for index in range(1, count + 1)
-                ],
-                'restart_latency_ms': restart_latency_ms,
-            }
-    return None
+                continue
+            contract = _normalize_g5_smoke_contract(payload)
+            if contract is not None and contract not in contracts:
+                contracts.append(contract)
+    if len(contracts) > 1:
+        raise ValueError('conflicting G5 smoke contracts')
+    return contracts[0] if contracts else None
+
+
+def _normalize_g5_smoke_contract(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    required_keys = {
+        'schema',
+        'task_id',
+        'scenario',
+        'count',
+        'shape',
+        'selected_node',
+        'restart_latency_ms',
+    }
+    if set(payload) != required_keys:
+        return None
+    if payload.get('schema') != 'ccb.g5.source_fake_runtime_scenario.v1':
+        return None
+    if payload.get('task_id') != 'g5-multi-workgroup-task':
+        return None
+    scenario = str(payload.get('scenario') or '')
+    if scenario not in {
+        'pass',
+        'reviewer_rework_pass',
+        'reviewer_rework_exhausted_blocked',
+        'worker_failure_partial',
+        'all_workers_failed_blocked',
+        'reviewer_provider_failure',
+        'round_reviewer_blocked',
+        'integration_verification_failure',
+        'root_verification_failure',
+        'restart_replay_pass',
+    }:
+        return None
+    count = payload.get('count')
+    shape = str(payload.get('shape') or '')
+    selected_node = str(payload.get('selected_node') or '')
+    restart_latency_ms = payload.get('restart_latency_ms')
+    if isinstance(count, bool) or not isinstance(count, int) or count not in {1, 2, 3, 4}:
+        return None
+    if shape not in {'parallel', 'mixed_dag'}:
+        return None
+    if shape == 'mixed_dag' and count < 3:
+        return None
+    if selected_node not in {f'node-{index:03d}' for index in range(1, count + 1)}:
+        return None
+    if (
+        isinstance(restart_latency_ms, bool)
+        or not isinstance(restart_latency_ms, int)
+        or restart_latency_ms < 0
+        or (scenario == 'restart_replay_pass' and restart_latency_ms == 0)
+    ):
+        return None
+    return {
+        'count': count,
+        'shape': shape,
+        'schema': payload['schema'],
+        'task_id': payload['task_id'],
+        'scenario': scenario,
+        'selected_node': selected_node,
+        'allowed_paths': [
+            f'g5_outputs/node-{index:03d}.txt'
+            for index in range(1, count + 1)
+        ],
+        'restart_latency_ms': restart_latency_ms,
+    }
 
 
 def _g5_contract_for_job(
@@ -766,42 +783,84 @@ def _g5_contract_for_job(
     context,
     body: str,
 ) -> dict[str, object] | None:
+    contracts: list[dict[str, object]] = []
     contract = _g5_smoke_contract(body)
     if contract is not None:
-        return contract
+        contracts.append(contract)
     if (
-        job.request.task_id != 'g5-multi-workgroup-task'
+        not contracts
+        and job.request.task_id != 'g5-multi-workgroup-task'
         and _loop_activation_task_id(body) != 'g5-multi-workgroup-task'
     ):
         return None
-    candidates: list[Path] = []
-    roots = [
+    for root in _g5_explicit_project_roots(job, context=context):
+        for path in sorted(
+            root.glob('docs/plantree/plans/*/tasks/g5-multi-workgroup-task/task_packet.md')
+        ):
+            try:
+                recovered = _g5_smoke_contract(path.read_text(encoding='utf-8'))
+            except OSError:
+                continue
+            if recovered is not None and recovered not in contracts:
+                contracts.append(recovered)
+    if len(contracts) > 1:
+        raise ValueError('conflicting G5 smoke contracts')
+    return contracts[0] if contracts else None
+
+
+def _g5_explicit_project_roots(job: JobRecord, *, context) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    artifact = job.request.body_artifact if isinstance(job.request.body_artifact, dict) else {}
+    if artifact:
+        artifact_path = Path(str(artifact.get('path') or '')).expanduser()
+        try:
+            artifact_path = artifact_path.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError('G5 smoke request artifact is unavailable') from exc
+        project_root = _project_root_from_ccb_path(artifact_path)
+        expected_dir = (
+            project_root / '.ccb/ccbd/artifacts/text/ask-request'
+            if project_root is not None
+            else None
+        )
+        if (
+            project_root is None
+            or artifact.get('kind') != 'ask-request'
+            or artifact_path.parent != expected_dir
+            or compute_project_id(project_root) != job.request.project_id
+        ):
+            raise ValueError('G5 smoke request artifact is outside the explicit project')
+        data = artifact_path.read_bytes()
+        expected_size = artifact.get('bytes')
+        expected_digest = str(artifact.get('sha256') or '').strip()
+        if expected_size is not None and int(expected_size) != len(data):
+            raise ValueError('G5 smoke request artifact byte size mismatch')
+        if expected_digest and hashlib.sha256(data).hexdigest() != expected_digest:
+            raise ValueError('G5 smoke request artifact sha256 mismatch')
+        roots.append(project_root)
+    for raw_path in (
         str(getattr(context, 'workspace_path', '') or ''),
         str(job.workspace_path or ''),
-    ]
-    artifact = job.request.body_artifact if isinstance(job.request.body_artifact, dict) else {}
-    artifact_path = Path(str(artifact.get('path') or ''))
-    if artifact_path.is_absolute():
-        for parent in artifact_path.parents:
-            if parent.name == '.ccb':
-                roots.append(str(parent.parent))
-                break
-    for raw_root in roots:
-        if not raw_root:
+    ):
+        if not raw_path:
             continue
-        root = Path(raw_root)
-        candidates.extend(
-            root.glob(
-                'docs/plantree/plans/*/tasks/g5-multi-workgroup-task/task_packet.md'
-            )
-        )
-    for path in candidates:
-        try:
-            contract = _g5_smoke_contract(path.read_text(encoding='utf-8'))
-        except OSError:
-            continue
-        if contract is not None:
-            return contract
+        path = Path(raw_path).expanduser().resolve(strict=False)
+        project_root = _project_root_from_ccb_path(path)
+        if project_root is None and (path / '.ccb').is_dir():
+            project_root = path
+        if (
+            project_root is not None
+            and compute_project_id(project_root) == job.request.project_id
+            and project_root not in roots
+        ):
+            roots.append(project_root)
+    return tuple(roots)
+
+
+def _project_root_from_ccb_path(path: Path) -> Path | None:
+    for candidate in (path, *path.parents):
+        if candidate.name == '.ccb':
+            return candidate.parent
     return None
 
 

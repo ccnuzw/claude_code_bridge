@@ -34,7 +34,15 @@
     "expected": {"$ref": "#/$defs/outcome"},
     "observed": {"$ref": "#/$defs/outcome"},
     "config_version": {"const": 3},
-    "matrix": {"type": "object"},
+    "matrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_count", "requested_shape"],
+      "properties": {
+        "requested_count": {"type": "integer", "minimum": 1, "maximum": 4},
+        "requested_shape": {"enum": ["parallel", "mixed_dag"]}
+      }
+    },
     "task_id": {"const": "g5-multi-workgroup-task"},
     "loop_id": {"type": "string", "minLength": 1},
     "bundle": {"type": "object"},

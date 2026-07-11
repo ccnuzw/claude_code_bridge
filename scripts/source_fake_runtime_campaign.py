@@ -42,6 +42,18 @@ SCENARIO_OUTCOMES = {
     ),
     'restart_replay_pass': ('pass', 'done', 'pass', 'round_reviewer_reply'),
 }
+SCENARIO_MATRIX = {
+    'pass': (4, 'mixed_dag'),
+    'reviewer_rework_pass': (1, 'parallel'),
+    'reviewer_rework_exhausted_blocked': (1, 'parallel'),
+    'worker_failure_partial': (2, 'parallel'),
+    'all_workers_failed_blocked': (4, 'parallel'),
+    'reviewer_provider_failure': (2, 'parallel'),
+    'round_reviewer_blocked': (4, 'mixed_dag'),
+    'integration_verification_failure': (4, 'mixed_dag'),
+    'root_verification_failure': (4, 'mixed_dag'),
+    'restart_replay_pass': (2, 'parallel'),
+}
 REPORT_KEYS = {
     'schema', 'status', 'execution_mode', 'coverage', 'project_root', 'project_id',
     'role_store', 'provider', 'scenario', 'expected', 'observed', 'config_version',
@@ -138,6 +150,7 @@ def _validate_report(
         raise CampaignFailure(f'unknown scenario: {scenario!r}')
     expected = _mapping(payload.get('expected'))
     observed = _mapping(payload.get('observed'))
+    matrix = _mapping(payload.get('matrix'))
     _require_exact_keys(expected, OUTCOME_KEYS, subject='report.expected')
     _require_exact_keys(observed, OUTCOME_KEYS, subject='report.observed')
     expected_contract = dict(
@@ -148,6 +161,12 @@ def _validate_report(
     )
     if expected != expected_contract:
         raise CampaignFailure(f'{scenario} expected outcome contract mismatch')
+    expected_count, expected_shape = SCENARIO_MATRIX[scenario]
+    if matrix != {'requested_count': expected_count, 'requested_shape': expected_shape}:
+        raise CampaignFailure(f'{scenario} campaign matrix contract mismatch')
+    node_count = _mapping(payload.get('bundle')).get('node_count')
+    if node_count != expected_count:
+        raise CampaignFailure(f'{scenario} bundle node count does not match campaign matrix')
     for expected_key, observed_key in (
         ('classification', 'classification'),
         ('task_status', 'task_status'),
@@ -197,7 +216,8 @@ def _validate_report(
         'task_status': observed.get('task_status'),
         'round_result': observed.get('round_result'),
         'round_source': observed.get('round_source'),
-        'node_count': _mapping(payload.get('bundle')).get('node_count'),
+        'node_count': node_count,
+        'requested_shape': matrix.get('requested_shape'),
         'report_path': str(path),
         'report_sha256': report_sha256,
         'raw_evidence_sha256': raw_digests,

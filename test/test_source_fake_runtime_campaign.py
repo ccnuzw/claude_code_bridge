@@ -45,6 +45,7 @@ def _report(tmp_path: Path, *, scenario: str, module) -> Path:
             module.SCENARIO_OUTCOMES[scenario],
         )
     )
+    requested_count, requested_shape = module.SCENARIO_MATRIX[scenario]
     report = {
         'schema': 'ccb.g5.source_fake_runtime_report.v1',
         'status': 'pass',
@@ -63,10 +64,13 @@ def _report(tmp_path: Path, *, scenario: str, module) -> Path:
         'expected': outcome,
         'observed': dict(outcome),
         'config_version': 3,
-        'matrix': {'requested_count': 1, 'requested_shape': 'parallel'},
+        'matrix': {
+            'requested_count': requested_count,
+            'requested_shape': requested_shape,
+        },
         'task_id': 'g5-multi-workgroup-task',
         'loop_id': f'loop-{scenario}',
-        'bundle': {'node_count': 1},
+        'bundle': {'node_count': requested_count},
         'jobs': {},
         'integration': {},
         'task': {'status': outcome['task_status']},
@@ -154,6 +158,13 @@ def test_campaign_rejects_missing_duplicate_digest_and_key_drift(tmp_path: Path)
     reports[0].write_text(json.dumps(drifted), encoding='utf-8')
     with pytest.raises(module.CampaignFailure, match='report key mismatch'):
         module.aggregate_reports(report_paths=reports, output_dir=tmp_path / 'key-drift')
+
+    reports = _all_reports(tmp_path / 'matrix', module)
+    drifted = json.loads(reports[0].read_text(encoding='utf-8'))
+    drifted['matrix'] = {'requested_count': 1, 'requested_shape': 'parallel'}
+    reports[0].write_text(json.dumps(drifted), encoding='utf-8')
+    with pytest.raises(module.CampaignFailure, match='campaign matrix contract mismatch'):
+        module.aggregate_reports(report_paths=reports, output_dir=tmp_path / 'matrix-drift')
 
 
 def test_campaign_rejects_output_under_ccb_authority(tmp_path: Path) -> None:
