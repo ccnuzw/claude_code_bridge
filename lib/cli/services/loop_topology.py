@@ -342,12 +342,6 @@ def _reconcile_desired(context, loop_id: str, *, desired: Mapping[str, object]) 
             else:
                 pending_alignments.append((name, agent, record, target_state))
 
-        if pending_adds:
-            actions.extend(_add_agents(context, tuple(pending_adds)))
-            for agent, _target_state in pending_adds:
-                name = str(agent.get('id') or '')
-                dynamic_by_name[name] = _dynamic_record(context, name) or {}
-
         release_groups: dict[str, list[str]] = {}
         for name, record in sorted(dynamic_by_name.items()):
             if str(record.get('loop_id') or '') != loop_id:
@@ -365,6 +359,23 @@ def _reconcile_desired(context, loop_id: str, *, desired: Mapping[str, object]) 
             for action in batch_actions:
                 if str(action.get('status') or '') == 'retained_busy':
                     retained.append({'agent': action.get('agent'), 'reason': action.get('reason')})
+
+        if pending_adds and not retained:
+            actions.extend(_add_agents(context, tuple(pending_adds)))
+            for agent, _target_state in pending_adds:
+                name = str(agent.get('id') or '')
+                dynamic_by_name[name] = _dynamic_record(context, name) or {}
+        elif pending_adds:
+            for agent, target_state in pending_adds:
+                actions.append(
+                    {
+                        'action': 'add',
+                        'agent': str(agent.get('id') or ''),
+                        'status': 'deferred_retained_busy',
+                        'target_state': target_state,
+                        'apply_status': 'not_applied',
+                    }
+                )
 
         for _name, agent, record, target_state in pending_alignments:
             actions.extend(_align_agent(context, agent, record=record, target_state=target_state))

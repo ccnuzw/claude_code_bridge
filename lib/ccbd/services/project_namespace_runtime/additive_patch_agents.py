@@ -6,7 +6,7 @@ from agents.models import LayoutNode, parse_layout_spec
 from ccbd.reload_additive_agents import append_agent_plan_for_window, append_agent_windows, window_agent_names, window_map
 from terminal_runtime.tmux_identity import apply_ccb_pane_identity
 
-from .backend import split_pane
+from .backend import session_window_target, split_pane
 from .remove_patch_agents import reflow_window_after_agent_change
 
 
@@ -44,6 +44,7 @@ def append_agent_panes(
                 new_window=new_windows[window_name],
                 appended_agents=tuple(appended_agents or ()),
                 existing_agent_panes={**existing_agent_panes, **dict(getattr(result, 'moved_agents', {}) or {})},
+                current=current,
                 namespace_epoch=namespace_epoch,
                 created_panes=created_panes,
                 timeout_s=timeout_s,
@@ -71,6 +72,7 @@ def _append_window_agent_panes(
     new_window,
     appended_agents,
     existing_agent_panes: dict[str, str],
+    current,
     namespace_epoch: int,
     created_panes: list[str],
     timeout_s: float | None,
@@ -81,7 +83,8 @@ def _append_window_agent_panes(
     target = _anchor_pane(existing_agent_panes, old_agents[-1])
     style_index_by_agent = {agent: index for index, agent in enumerate(window_agent_names(new_window))}
     agent_panes: dict[str, str] = {}
-    for appended in appended_agents:
+    appended_sequence = tuple(appended_agents)
+    for index, appended in enumerate(appended_sequence):
         if appended.agent in excluded_agents:
             target = _anchor_pane(existing_agent_panes, appended.agent)
             continue
@@ -97,7 +100,35 @@ def _append_window_agent_panes(
             timeout_s=timeout_s,
         )
         agent_panes[appended.agent] = target
+        if any(item.agent not in excluded_agents for item in appended_sequence[index + 1 :]):
+            _prepare_window_for_next_append(
+                backend,
+                session_name=current.tmux_session_name,
+                window_name=window_name,
+                timeout_s=timeout_s,
+            )
     return agent_panes
+
+
+def _prepare_window_for_next_append(
+    backend,
+    *,
+    session_name: str,
+    window_name: str,
+    timeout_s: float | None,
+) -> None:
+    runner = getattr(backend, '_tmux_run', None)
+    if not callable(runner):
+        return
+    completed = runner(
+        ['select-layout', '-E', '-t', session_window_target(session_name, window_name)],
+        check=False,
+        capture=True,
+        timeout=timeout_s,
+    )
+    if int(getattr(completed, 'returncode', 1) or 0) != 0:
+        detail = str(getattr(completed, 'stderr', '') or getattr(completed, 'stdout', '') or '').strip()
+        raise RuntimeError(detail or f'failed to prepare window {window_name!r} for another appended pane')
 
 
 def _anchor_pane(existing_agent_panes: dict[str, str], anchor_agent: str) -> str:

@@ -504,6 +504,74 @@ def test_apply_append_add_agent_creates_only_new_agent_pane(tmp_path: Path, monk
     assert result.diagnostics['lease_or_lifecycle_written'] is False
 
 
+def test_apply_append_multiple_agents_reflows_between_splits_in_narrow_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current = _load_config(tmp_path / 'current-narrow-append', BASE_CONFIG)
+    new = _load_config(
+        tmp_path / 'new-narrow-append',
+        BASE_CONFIG.replace(
+            'agent1:codex, agent2:claude',
+            'agent1:codex, agent2:claude, agent3:codex, agent4:claude, agent5:codex, agent6:claude',
+        ),
+    )
+    layout = PathLayout(_project(tmp_path / 'repo-narrow-append', BASE_CONFIG))
+
+    class NarrowAppendBackend(_PatchFakeBackend):
+        splits_without_reflow = 0
+
+        def split_pane(self, parent_pane_id: str, direction: str, percent: int, cmd=None, cwd=None) -> str:
+            if self.splits_without_reflow >= 1:
+                raise RuntimeError('no space for new pane')
+            pane_id = super().split_pane(parent_pane_id, direction, percent, cmd=cmd, cwd=cwd)
+            self.splits_without_reflow += 1
+            return pane_id
+
+        def _tmux_run(self, args: list[str], *, check=False, capture=False, input_bytes=None, timeout=None):
+            completed = super()._tmux_run(
+                args,
+                check=check,
+                capture=capture,
+                input_bytes=input_bytes,
+                timeout=timeout,
+            )
+            if args[:2] == ['select-layout', '-E']:
+                self.splits_without_reflow = 0
+            return completed
+
+    backend = NarrowAppendBackend(socket_path=str(layout.ccbd_tmux_socket_path))
+    backend.add_window(layout.ccbd_tmux_session_name, 'main')
+    backend.sessions[layout.ccbd_tmux_session_name][0]['panes'].append('%2')
+    backend.pane_counter = 2
+    _seed_agent_pane(backend, '%1', project_id='proj-1', window='main', agent='agent1')
+    _seed_agent_pane(backend, '%2', project_id='proj-1', window='main', agent='agent2')
+    _store_namespace(layout, project_id='proj-1')
+    controller = ProjectNamespaceController(layout, 'proj-1', backend_factory=lambda socket_path=None: backend)
+    _forbid_recreate_paths(monkeypatch)
+    plan = build_reload_dry_run_plan(current, new, project_id='proj-1', current_namespace=controller.load())
+
+    result = controller.apply_additive_patch(
+        patch_plan=plan['namespace_patch_plan'],
+        old_topology=build_namespace_topology_plan(current),
+        new_topology=build_namespace_topology_plan(new),
+        timeout_s=0.0,
+    )
+
+    assert result.status == 'applied'
+    assert result.agent_panes == {
+        'agent3': '%3',
+        'agent4': '%4',
+        'agent5': '%5',
+        'agent6': '%6',
+    }
+    assert [call[0] for call in backend.split_calls] == ['%2', '%3', '%4', '%5']
+    assert {call[1] for call in backend.split_calls} <= {'right', 'bottom'}
+    assert [call[2] for call in backend.split_calls] == [50, 50, 50, 50]
+    interim_reflows = [call for call in backend.tmux_calls if call[:2] == ('select-layout', '-E')]
+    assert len(interim_reflows) >= 3
+
+
 def test_apply_remove_agent_kills_only_removed_agent_pane(tmp_path: Path, monkeypatch) -> None:
     current = _load_config(tmp_path / 'current-remove-agent', BASE_CONFIG)
     new = _load_config(

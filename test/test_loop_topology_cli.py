@@ -1646,6 +1646,149 @@ def test_loop_topology_release_batches_dynamic_agents(
     assert reconciled['agent_count'] == 0
 
 
+def test_loop_topology_releases_obsolete_wave_before_adding_replacement_wave(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    first_path = project_root / 'graph-first.json'
+    _write_json(first_path, _proposal())
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(first_path),
+            '--proposal-id',
+            'proposal-first',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, _committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'proposal-first', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+
+    replacement = json.loads(json.dumps(_proposal()))
+    replacement_agents = replacement['nodes'][0]['agents']
+    replacement_agents[0]['id'] = 'loop-round1-coder-2'
+    replacement_agents[1]['id'] = 'loop-round1-code_reviewer-2'
+    second_path = project_root / 'graph-second.json'
+    _write_json(second_path, replacement)
+
+    calls: list[str] = []
+    original_release_agents = loop_topology_module._release_agents
+    original_add_agents = loop_topology_module._add_agents
+
+    def recording_release(context, names, *, policy: str):
+        calls.append('release')
+        return original_release_agents(context, names, policy=policy)
+
+    def recording_add(context, agents):
+        calls.append('add')
+        return original_add_agents(context, agents)
+
+    monkeypatch.setattr(loop_topology_module, '_release_agents', recording_release)
+    monkeypatch.setattr(loop_topology_module, '_add_agents', recording_add)
+
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(second_path),
+            '--proposal-id',
+            'proposal-second',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'proposal-second', '--apply', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert calls == ['release', 'add']
+    action_kinds = [str(action.get('action')) for action in committed['reconcile']['actions']]
+    assert action_kinds[:2] == ['release', 'release']
+    assert action_kinds[2:] == ['add', 'add', 'reflow']
+    desired = json.loads(Path(str(committed['reconcile']['desired_path'])).read_text(encoding='utf-8'))
+    assert _topology_agent_ids(desired) == {
+        'loop-round1-coder-2',
+        'loop-round1-code_reviewer-2',
+    }
+
+    blocked_replacement = json.loads(json.dumps(_proposal()))
+    blocked_agents = blocked_replacement['nodes'][0]['agents']
+    blocked_agents[0]['id'] = 'loop-round1-coder-3'
+    blocked_agents[1]['id'] = 'loop-round1-code_reviewer-3'
+    blocked_path = project_root / 'graph-blocked.json'
+    _write_json(blocked_path, blocked_replacement)
+
+    def retain_busy(_context, names, *, policy: str):
+        return [
+            {
+                'action': 'release',
+                'agent': name,
+                'status': 'retained_busy',
+                'policy': policy,
+                'reason': 'runtime_state=busy',
+                'retain_reason': 'runtime_state=busy',
+                'apply_status': 'not_applied',
+            }
+            for name in names
+        ]
+
+    def forbid_add(_context, _agents):
+        raise AssertionError('replacement agents must not be added while obsolete agents are retained busy')
+
+    monkeypatch.setattr(loop_topology_module, '_release_agents', retain_busy)
+    monkeypatch.setattr(loop_topology_module, '_add_agents', forbid_add)
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(blocked_path),
+            '--proposal-id',
+            'proposal-blocked',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, blocked, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'proposal-blocked', '--apply', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert blocked['reconcile']['loop_topology_status'] == 'retained_busy'
+    deferred = [
+        action
+        for action in blocked['reconcile']['actions']
+        if action.get('status') == 'deferred_retained_busy'
+    ]
+    assert {action['agent'] for action in deferred} == {
+        'loop-round1-coder-3',
+        'loop-round1-code_reviewer-3',
+    }
+
+
 def test_loop_topology_commit_rejects_stale_base_revision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
