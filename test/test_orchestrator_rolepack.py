@@ -386,6 +386,9 @@ def test_planner_rolepack_is_closed_reply_only_planning_surface() -> None:
     assert 'Do not run shell commands' in combined
     assert 'file searches' in combined
     assert 'Allowed Change Paths' in combined
+    assert 'Use `task_set` only when the controller prompt explicitly says' in combined
+    assert 'orchestrator owns implementation-node' in combined
+    assert 'do not use it to pre-slice one' in combined
 
 
 def test_coder_rolepack_is_workspace_only_and_reply_only_for_workflow_authority() -> None:

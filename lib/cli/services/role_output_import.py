@@ -47,57 +47,6 @@ _TASK_SET_INTENT_MARKERS = (
     'route-mix validation',
     'task set validation',
 )
-_COMPLEX_TASK_SET_FEATURE_MARKERS = (
-    'alert',
-    'api',
-    'budget',
-    'csv',
-    'dashboard',
-    'database',
-    'doc',
-    'documentation',
-    'export',
-    'frontend',
-    'import',
-    'integration',
-    'json',
-    'module',
-    'modules',
-    'monthly',
-    'pipeline',
-    'readme',
-    'report',
-    'reports',
-    'test',
-    'tests',
-    'trend',
-    'ui',
-    'workflow',
-    '仪表盘',
-    '导入',
-    '导出',
-    '提醒',
-    '文档',
-    '月度',
-    '模块',
-    '测试',
-    '趋势',
-    '报告',
-    '流程',
-    '预算',
-)
-_COMPACT_SINGLE_TASK_HINTS = (
-    'compact',
-    'minimal',
-    'single',
-    'simple',
-    'small',
-    'tiny',
-    '单个',
-    '小型',
-    '简单',
-    '紧凑',
-)
 _GIT_SCOPE_CHECK_RE = re.compile(r'(?im)^\s*(?:[-*]\s*)?`?git`?\s+(?:diff|status)\b')
 _PHASE6B_L1_L4_EXPECTED_TASK_IDS = (
     'phase6b-l1-doc-direct-execution',
@@ -2608,44 +2557,7 @@ def _frontdesk_text_requests_task_set(text: str) -> bool:
     route_mentions = sum(1 for route in _VALID_ROUTES if route in lowered)
     if route_mentions >= 2 and ('task' in lowered or 'validation' in lowered):
         return True
-    return _frontdesk_text_has_multi_task_complexity(text)
-
-
-def _frontdesk_text_has_multi_task_complexity(text: str) -> bool:
-    lowered = str(text or '').lower()
-    feature_hits = sum(1 for marker in _COMPLEX_TASK_SET_FEATURE_MARKERS if marker in lowered)
-    required_bullets = _frontdesk_section_bullet_count(text, 'required behavior')
-    scope_bullets = _frontdesk_section_bullet_count(text, 'scope')
-    comma_like_separators = lowered.count(',') + lowered.count('，') + lowered.count(';') + lowered.count('；')
-    compact_hint = any(marker in lowered for marker in _COMPACT_SINGLE_TASK_HINTS)
-    if compact_hint and feature_hits < 6 and required_bullets < 4:
-        return False
-    if feature_hits >= 6:
-        return True
-    if required_bullets >= 4 and feature_hits >= 3:
-        return True
-    if scope_bullets >= 4 and required_bullets >= 3:
-        return True
-    return feature_hits >= 4 and comma_like_separators >= 4
-
-
-def _frontdesk_section_bullet_count(text: str, section_name: str) -> int:
-    in_section = False
-    count = 0
-    section = section_name.strip().lower().rstrip(':')
-    for line in str(text or '').splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        lower = stripped.lower()
-        if lower.startswith(f'{section}:'):
-            in_section = True
-            continue
-        if in_section and re.match(r'^[A-Za-z][A-Za-z _/-]{1,40}:$', stripped):
-            break
-        if in_section and re.match(r'^[-*]\s+\S+', stripped):
-            count += 1
-    return count
+    return False
 
 
 def _frontdesk_text_requests_phase6b_l1_l4_route_mix(text: str) -> bool:

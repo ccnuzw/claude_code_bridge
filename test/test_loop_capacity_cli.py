@@ -8838,7 +8838,7 @@ def test_frontdesk_forward_planner_submits_silent_planner_activation(
     assert not (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'index.json').exists()
 
 
-def test_frontdesk_forward_planner_uses_task_set_contract_for_complex_project_request(
+def test_frontdesk_forward_planner_keeps_complex_cohesive_project_request_as_one_task_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -8878,18 +8878,18 @@ def test_frontdesk_forward_planner_uses_task_set_contract_for_complex_project_re
     assert ask_command.target == 'planner'
     assert ask_command.sender == 'frontdesk'
     assert ask_command.silence is True
-    assert 'Planner contract: task_set' in ask_command.message
-    assert '**task-set.json**' in ask_command.message
-    assert '**task-packet.md**' not in ask_command.message
+    assert 'Planner contract: single_task' in ask_command.message
+    assert '**task-packet.md**' in ask_command.message
+    assert '**task-set.json**' not in ask_command.message
     assert 'phase6b-' not in ask_command.message
-    assert 'one task object for each bounded task requested by frontdesk' in ask_command.message
-    assert 'execution_contract must declare Allowed Change Paths matching allowed_paths' in ask_command.message
-    assert 'Do not collapse this into a controller-owned validation task' in ask_command.message
+    assert 'one task object for each bounded task requested by frontdesk' not in ask_command.message
+    assert 'execution_contract must declare Allowed Change Paths matching allowed_paths' not in ask_command.message
+    assert 'Do not collapse this into a controller-owned validation task' not in ask_command.message
     activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
-    assert activation['planner_contract'] == 'task_set'
+    assert activation['planner_contract'] == 'single_task'
     assert activation['expected_task_ids'] == []
-    assert activation['required_next_output'] == 'reply-only task-set.json with bounded planner tasks for supervisor-owned import'
-    assert any('Return exactly one fenced **task-set.json** section' in rule for rule in activation['script_write_rules'])
+    assert activation['required_next_output'] == 'reply-only task-packet.md plus readiness.json for supervisor-owned import'
+    assert any('Return explicit fenced **task-packet.md**' in rule for rule in activation['script_write_rules'])
     assert auto_runner_calls == [
         {'activation_id': 'act-frontdesk-req_frontdesk_financial_report', 'wait_job_id': 'job_planner_financial_report'}
     ]

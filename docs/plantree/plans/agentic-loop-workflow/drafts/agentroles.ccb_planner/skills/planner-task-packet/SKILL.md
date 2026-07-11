@@ -26,8 +26,8 @@ provided in the prompt.
 
 - `task-packet.md`
 - `readiness.json`
-- `task-set.json` when the controller prompt requests `Planner contract:
-  task_set` or the macro request clearly contains multiple bounded tasks
+- `task-set.json` only when the controller prompt requests `Planner contract:
+  task_set`
 - `candidate-questions.jsonl` when user input may be needed
 
 For single-slice work, use fenced blocks with these exact labels:
@@ -107,7 +107,10 @@ provider environments.
 - Do not start execution.
 - Do not call workers, checkers, or orchestrator.
 - Do not reduce acceptance criteria to make the task executable.
-- Do not collapse a multi-capability or multi-surface request into one oversized
-  direct_execution task when separate bounded tasks can be independently routed
-  and verified.
+- Keep one cohesive product deliverable in one task envelope even when it spans
+  multiple files or independently implementable surfaces. The orchestrator owns
+  execution-node slicing, dependencies, parallelism, and reviewer assignment.
+- Use `task_set` only for independent roadmap deliverables, distinct routes, or
+  explicitly requested multiple tasks; do not use it to pre-slice one
+  orchestrator workgraph.
 - Questions must be current-phase questions; defer later-phase questions.

@@ -43,13 +43,17 @@ hand-edit state files or retry by mutating authority yourself.
 - Plan from the controller-provided intake, compact artifacts, and prompt
   context only. Do not run shell commands, `pwd`, `ls`, `find`, `rg`, `grep`,
   `git`, tests, builds, or file reads/searches from the provider session.
-- When the controller prompt says `Planner contract: task_set`, or when the
-  frontdesk intake clearly spans multiple bounded capabilities, phases, files,
-  risk classes, or verification surfaces, return exactly one fenced
-  `**task-set.json**` section instead of collapsing the request into one large
-  task packet. The task set must contain one bounded task object per natural
-  slice, each with `task_id`, `title`, `route`, `readiness`, `task_packet`,
-  `execution_contract`, `allowed_paths`, `verification`, and `blockers`.
+- Use `task_set` only when the controller prompt explicitly says `Planner
+  contract: task_set`. A complex but cohesive product deliverable remains one
+  task envelope even when it spans several files, modules, or independently
+  implementable surfaces. The immaculate orchestrator owns implementation-node
+  slicing, dependencies, parallelism, and worker/reviewer assignment in one
+  orchestration bundle; do not duplicate that work in planner tasks.
+- For an explicit `task_set` contract, return exactly one fenced
+  `**task-set.json**` section. The task set contains one object per independent
+  roadmap deliverable, route, or user-requested task, each with `task_id`,
+  `title`, `route`, `readiness`, `task_packet`, `execution_contract`,
+  `allowed_paths`, `verification`, and `blockers`.
 - For `direct_execution` or `partial_completion`, `execution_contract` must
   include an `Allowed Change Paths` section matching `allowed_paths`. These
   paths are the script-owned authority boundary for promoting isolated worker
@@ -59,9 +63,10 @@ hand-edit state files or retry by mutating authority yourself.
   use `python -m unittest tests/test_example.py`; inherited provider
   environments may resolve `tests` to an installed package instead of the lab
   project's local tests directory.
-- Do not hide multi-step work inside a single direct_execution task just because
-  it might fit in one provider round. Prefer explicit task decomposition when
-  separate slices can be independently routed, reviewed, or verified.
+- Do not split one cohesive deliverable into planner tasks merely because its
+  implementation can be parallelized. Keep global acceptance and one product
+  outcome together; leave execution slicing and independent node review to the
+  orchestrator bundle.
 - When the correct route is `blocked`, keep the task importable as a valid
   non-success route: set `readiness` to `blocked`, set `route` to `blocked`,
   include concrete `blockers` and blocker `verification`, and leave
