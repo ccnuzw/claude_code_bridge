@@ -2026,6 +2026,37 @@ def test_loop_runner_task_filter_ignores_unrelated_pending_role_output_activatio
     assert seen['target'] == 'orchestrator'
 
 
+def test_loop_runner_explicit_task_resumes_scheduler_release_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        task_id='task-release-resume',
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    seen = []
+
+    def resume(_context, *, task_id, services):
+        seen.append((task_id, services))
+        return {
+            'loop_runner_status': 'pending',
+            'action': 'multi_workgroup_execution_pending',
+            'controller_status': 'release_blocked',
+            'task_id': task_id,
+            'pending_job_ids': [],
+        }
+
+    services = SimpleNamespace(resume_multi_workgroup_scheduler=resume)
+    payload = loop_runner_once(context, command, services=services)
+
+    assert payload['controller_status'] == 'release_blocked'
+    assert seen == [('task-release-resume', services)]
+
+
 def test_loop_runner_auto_waits_for_seed_and_activation_jobs_without_duplicate_activation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3143,6 +3174,66 @@ def test_ask_first_immaculate_clear_failure_blocks_before_intent_or_provider_sub
             timeout=None,
         )
 
+    assert submissions == []
+    assert not (loop_dir / 'ask_first_submission_intents.jsonl').exists()
+
+
+@pytest.mark.parametrize(
+    ('purpose', 'target', 'node_id'),
+    (
+        ('worker', 'loop-lp-fresh-worker', 'node-001'),
+        ('ccb_round_reviewer', 'loop-lp-fresh-round', 'round'),
+    ),
+)
+def test_public_submit_once_structures_immaculate_freshness_failure_without_ask(
+    tmp_path: Path,
+    purpose: str,
+    target: str,
+    node_id: str,
+) -> None:
+    loop_dir = tmp_path / 'runtime' / 'loops' / 'lp-freshness'
+    submissions = []
+
+    def failed_clear(_context, clear_command):
+        return {
+            'status': 'partial',
+            'results': [
+                {
+                    'agent': clear_command.agent_names[0],
+                    'status': 'failed',
+                    'reason': 'freshness unavailable',
+                }
+            ],
+        }
+
+    def forbidden_submit(_context, command):
+        submissions.append(command)
+        raise AssertionError('freshness failure must block before ask')
+
+    result = loop_ask_first_module.submit_or_recover_ask_once(
+        None,
+        loop_dir=loop_dir,
+        loop_id='lp-freshness',
+        target=target,
+        sender='system',
+        purpose=purpose,
+        bundle_revision=1,
+        node_id=node_id,
+        attempt=1,
+        task_id=f'lp-freshness-{purpose}',
+        message='bounded activation',
+        services=SimpleNamespace(
+            clear_agent_context=failed_clear,
+            submit_ask=forbidden_submit,
+        ),
+    )
+
+    assert result['terminal'] is True
+    assert result['status'] == 'failed'
+    assert result['failure_source'] == 'immaculate_activation_failed'
+    assert result['failure_stage'] == f'{purpose}_ask'
+    assert result['freshness']['status'] == 'failed'
+    assert result['job_id'] is None
     assert submissions == []
     assert not (loop_dir / 'ask_first_submission_intents.jsonl').exists()
     freshness_events = [

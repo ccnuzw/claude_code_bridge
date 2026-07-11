@@ -92,10 +92,25 @@ def loop_runner_auto(context, command, services=None) -> dict[str, object]:
                 role_job_id=wait_job,
                 consume_role_output=True,
             )
+        previous_scheduler_signature = None
         for index in range(max_steps):
             step_command = seed_command if index == 0 and seed_command is not None else once_command
             payload = loop_runner_once(context, step_command, deps.services)
             steps.append(_auto_step(payload))
+            if str(payload.get('action') or '') == 'multi_workgroup_execution_pending':
+                wait_job_ids = _payload_wait_job_ids(payload)
+                signature = (
+                    payload.get('scheduler_action'),
+                    payload.get('controller_status'),
+                    tuple(wait_job_ids),
+                    bool(payload.get('submission_unknown')),
+                )
+                if not wait_job_ids or signature == previous_scheduler_signature:
+                    break
+                previous_scheduler_signature = signature
+                for job_id in wait_job_ids:
+                    _wait_for_job_terminal(context, job_id, deps, command)
+                continue
             if _auto_should_stop(payload):
                 break
             job_id = _payload_wait_job_id(payload)
@@ -127,13 +142,13 @@ def loop_runner_once(context, command, services=None) -> dict[str, object]:
     if bool(getattr(command, 'consume_role_output', False)):
         payload = deps.consume_explicit_role_output(context, command, deps.services)
         return _release_consumed_activation_topology(context, deps, payload)
-    if requested_task_id is None:
-        resumed_scheduler = deps.resume_multi_workgroup_scheduler(
-            context,
-            services=deps.services,
-        )
-        if resumed_scheduler is not None:
-            return resumed_scheduler
+    resumed_scheduler = deps.resume_multi_workgroup_scheduler(
+        context,
+        task_id=requested_task_id,
+        services=deps.services,
+    )
+    if resumed_scheduler is not None:
+        return resumed_scheduler
     pending_role_output = None
     if requested_task_id is None:
         role_output = deps.consume_activation_role_output(context, command, deps.services)
@@ -1346,6 +1361,18 @@ def _payload_wait_job_id(payload: dict[str, object]) -> str | None:
     return None
 
 
+def _payload_wait_job_ids(payload: dict[str, object]) -> list[str]:
+    values = payload.get('pending_job_ids')
+    if not isinstance(values, list):
+        return []
+    result = []
+    for value in values:
+        job_id = str(value or '').strip()
+        if job_id and job_id not in result:
+            result.append(job_id)
+    return result
+
+
 def _auto_should_stop(payload: dict[str, object]) -> bool:
     action = str(payload.get('action') or '').strip()
     status = str(payload.get('loop_runner_status') or '').strip()
@@ -1356,7 +1383,7 @@ def _auto_should_stop(payload: dict[str, object]) -> bool:
         task_status = str(payload.get('task_status') or '').strip()
         return not (round_result == 'pass' and task_status == 'done')
     if action == 'multi_workgroup_execution_pending':
-        return True
+        return not _payload_wait_job_ids(payload)
     if action in {
         'imported_planner_task_authority',
         'imported_orchestration_notes',
@@ -1393,6 +1420,11 @@ def _auto_step(payload: dict[str, object]) -> dict[str, object]:
     if payload.get('round_result') is not None:
         step['round_result'] = payload.get('round_result')
         step['round_result_source'] = payload.get('round_result_source')
+    if payload.get('scheduler_action') is not None:
+        step['scheduler_action'] = payload.get('scheduler_action')
+    pending_job_ids = _payload_wait_job_ids(payload)
+    if pending_job_ids:
+        step['pending_job_ids'] = pending_job_ids
     if payload.get('release') is not None:
         release = payload.get('release') if isinstance(payload.get('release'), dict) else {}
         step['released_count'] = release.get('released_count')

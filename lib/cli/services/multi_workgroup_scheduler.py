@@ -9,6 +9,7 @@ import re
 import shlex
 from types import SimpleNamespace
 from typing import Callable, Iterable
+from uuid import uuid4
 
 from storage.atomic import atomic_write_json, atomic_write_text
 from storage.locks import file_lock
@@ -119,6 +120,7 @@ class MultiWorkgroupScheduler:
                 node = _node(state, node_id)
                 if node['status'] != 'created':
                     continue
+                previous = str(node['status'])
                 result = self._submit_node_job(state, node, purpose='worker')
                 node['worker'] = result
                 node['status'] = (
@@ -128,11 +130,14 @@ class MultiWorkgroupScheduler:
                 )
                 if node['status'] == 'worker_failed':
                     node['failure'] = {'source': 'worker_submission_failed', 'job': result}
-                self._transition(state, node_id, 'worker_intent', node['status'], result)
+                self._transition(state, node_id, previous, str(node['status']), result)
                 newly_submitted.append(node_id)
             self._save(state)
-        if newly_submitted:
-            state['ready_frontier'] = frontier
+        if newly_submitted and any(
+            _node(state, node_id)['status'] in PENDING_NODE_STATUSES
+            for node_id in newly_submitted
+        ):
+            state['ready_frontier'] = []
             self._save(state)
             return self._payload(state, action='submitted_ready_frontier')
 
@@ -187,6 +192,8 @@ class MultiWorkgroupScheduler:
                 'integration_order': node['integration_order'],
                 'status': 'created',
                 'attempt': 1,
+                'rework_count': 0,
+                'rework_history': [],
                 'worker_agent': None,
                 'reviewer_agent': None,
                 'workspace_group': None,
@@ -422,6 +429,7 @@ class MultiWorkgroupScheduler:
                 node['status'] = 'worker_complete'
             elif purpose == 'worker_rework':
                 node['status'] = 'worker_complete'
+                self._append_rework_evidence(node, kind='worker_terminal', evidence=result)
             else:
                 self._consume_reviewer_result(state, node, purpose, result, integration)
             self._transition(state, node_id, status, str(node['status']), result)
@@ -440,6 +448,12 @@ class MultiWorkgroupScheduler:
             purpose = 'reviewer_recheck' if node.get('worker_rework') else 'reviewer'
             result = self._submit_node_job(state, node, purpose=purpose)
             _set_job_result(node, purpose, result)
+            if purpose == 'reviewer_recheck':
+                self._append_rework_evidence(
+                    node,
+                    kind='reviewer_submission',
+                    evidence=result,
+                )
             if bool(result.get('terminal')) and str(result.get('status') or '') == 'completed':
                 self._consume_reviewer_result(state, node, purpose, result, integration)
             else:
@@ -463,6 +477,12 @@ class MultiWorkgroupScheduler:
     ) -> None:
         decision = _review_decision(str(result.get('reply') or ''))
         node_id = str(node['node_id'])
+        if purpose == 'reviewer_recheck':
+            self._append_rework_evidence(
+                node,
+                kind='reviewer_terminal',
+                evidence={**result, 'decision': decision},
+            )
         if decision == 'pass':
             review = _mapping(node['review_input'])
             integration.record_review(
@@ -478,9 +498,22 @@ class MultiWorkgroupScheduler:
             node['status'] = 'integration_ready'
             return
         maximum = int(self.bundle['policy']['max_node_rework_rounds'])
-        if decision == 'rework_required' and purpose == 'reviewer' and maximum >= 1:
+        rework_count = int(node.get('rework_count') or 0)
+        if decision == 'rework_required' and rework_count < maximum:
+            node['rework_count'] = rework_count + 1
+            self._append_rework_evidence(
+                node,
+                kind='rework_requested',
+                evidence={**result, 'decision': decision},
+            )
             result = self._submit_node_job(state, node, purpose='worker_rework')
             node['worker_rework'] = result
+            self._append_rework_evidence(
+                node,
+                kind='worker_submission',
+                evidence=result,
+            )
+            self._checkpoint('after_rework_submission_before_state_write', state)
             node['status'] = (
                 ('worker_complete' if str(result.get('status') or '') == 'completed' else 'worker_failed')
                 if bool(result.get('terminal'))
@@ -490,7 +523,44 @@ class MultiWorkgroupScheduler:
                 node['failure'] = {'source': 'worker_rework_submission_failed', 'job': result}
             return
         node['status'] = 'review_failed'
-        node['failure'] = {'source': 'reviewer_nonpass', 'decision': decision, 'job': result}
+        node['failure'] = {
+            'source': (
+                'node_rework_exhausted'
+                if decision == 'rework_required' and rework_count >= maximum
+                else 'reviewer_nonpass'
+            ),
+            'decision': decision,
+            'job': result,
+            'rework_count': rework_count,
+            'max_node_rework_rounds': maximum,
+        }
+
+    def _append_rework_evidence(
+        self,
+        node: dict[str, object],
+        *,
+        kind: str,
+        evidence: dict[str, object],
+    ) -> None:
+        record = {
+            'cycle': int(node.get('rework_count') or 0),
+            'kind': kind,
+            'purpose': evidence.get('purpose'),
+            'job_id': evidence.get('job_id'),
+            'status': evidence.get('status'),
+            'decision': evidence.get('decision'),
+            'submission_identity': deepcopy(evidence.get('submission_identity')),
+        }
+        record['evidence_digest'] = _digest(record)
+        history = node.setdefault('rework_history', [])
+        if not isinstance(history, list):
+            raise ValueError(f'node {node["node_id"]} rework history is invalid')
+        if any(
+            isinstance(item, dict) and item.get('evidence_digest') == record['evidence_digest']
+            for item in history
+        ):
+            return
+        history.append(record)
 
     def _sync_integration(self, state: dict[str, object], integration) -> tuple[str, ...]:
         ready = [
@@ -557,6 +627,8 @@ class MultiWorkgroupScheduler:
                 kind='round_reviewer_submitted',
                 payload={'job_id': result.get('job_id'), 'target': target},
             )
+            if bool(result.get('terminal')):
+                self._consume_round_reviewer_result(state, result, integration)
             return
         result = self.deps.submit_once(
             self.context,
@@ -576,6 +648,14 @@ class MultiWorkgroupScheduler:
         if not bool(result.get('terminal')):
             self._save(state)
             return
+        self._consume_round_reviewer_result(state, result, integration)
+
+    def _consume_round_reviewer_result(
+        self,
+        state: dict[str, object],
+        result: dict[str, object],
+        integration,
+    ) -> None:
         round_result, source = _round_decision(str(result.get('reply') or ''))
         if str(result.get('status') or '') != 'completed' or round_result is None:
             round_result, source = 'replan_required', 'malformed_round_review'
@@ -617,13 +697,13 @@ class MultiWorkgroupScheduler:
 
     def _import_result(self, state: dict[str, object], *, result: str, source: str) -> None:
         summary_path = self.loop_dir / 'round_summary.md'
-        round_path = self.loop_dir / 'round.json'
         atomic_write_text(summary_path, _round_summary(state, result=result, source=source))
         state['round_result'] = result
         state['round_result_source'] = source
         state['controller_status'] = result
+        state['ready_frontier'] = []
         self._save(state)
-        atomic_write_json(round_path, state)
+        self._write_round_record(state)
         imported = self.deps.plan_task(
             self.context,
             SimpleNamespace(
@@ -641,6 +721,7 @@ class MultiWorkgroupScheduler:
         state['result_import'] = imported
         state['status'] = 'result_imported'
         self._save(state)
+        self._write_round_record(state)
         self._event(
             state,
             kind='round_result_imported',
@@ -653,14 +734,32 @@ class MultiWorkgroupScheduler:
         release = self.deps.release_topology(self.context, self.loop_id)
         _mapping(state['topology'])['release'] = release
         observed = self.deps.topology_status(self.context, self.loop_id)
+        _mapping(state['topology'])['observed_after_release'] = observed
         active_workspaces = _active_workspaces(state, observed)
-        retained = int(release.get('retained_count') or 0)
+        release_gate = _release_gate(release, observed)
         integration = self._integration()
         integration_materialized = (
             self.deps.integration_factory is not None
             or (self.loop_dir / 'git-transaction.json').is_file()
         )
-        if not integration_materialized:
+        if not release_gate['clean']:
+            r2_readiness = None
+            if integration_materialized:
+                try:
+                    r2_readiness = integration.cleanup_readiness(
+                        evidence_captured=True,
+                        active_workspaces=active_workspaces,
+                    )
+                except GitIntegrationError as exc:
+                    r2_readiness = {'eligible': False, 'reason': exc.code, 'failure': exc.to_record()}
+            readiness = {
+                'eligible': False,
+                'reason': 'topology_release_incomplete',
+                'release_gate': release_gate,
+                'r2_readiness': r2_readiness,
+            }
+            cleanup = {'readiness': readiness}
+        elif not integration_materialized:
             readiness = {'eligible': True, 'reason': 'integration_not_materialized'}
             cleanup = {
                 'readiness': readiness,
@@ -672,7 +771,7 @@ class MultiWorkgroupScheduler:
                 existing_cleanup.get('schema') == 'ccb.loop.workgroup_cleanup_intent.v1'
                 and existing_cleanup.get('status') in {'executing', 'blocked'}
             )
-            if resumable_cleanup and retained == 0 and not active_workspaces:
+            if resumable_cleanup and not active_workspaces:
                 cleanup_result = integration.cleanup(active_workspaces=active_workspaces)
                 readiness = existing_cleanup
                 cleanup = {'readiness': readiness, 'result': cleanup_result}
@@ -689,7 +788,7 @@ class MultiWorkgroupScheduler:
         if (
             integration_materialized
             and 'result' not in cleanup
-            and retained == 0
+            and bool(release_gate['clean'])
             and not active_workspaces
             and bool(readiness.get('eligible'))
         ):
@@ -707,23 +806,95 @@ class MultiWorkgroupScheduler:
                 binding_path.unlink(missing_ok=True)
                 removed_bindings.append(str(binding_path))
             cleanup['removed_workspace_bindings'] = removed_bindings
-        if retained or active_workspaces or not cleanup_complete:
+        if not release_gate['clean'] or active_workspaces or not cleanup_complete:
             state['status'] = 'release_blocked'
             state['controller_status'] = 'release_blocked'
         else:
             state['status'] = str(state['round_result'])
             state['controller_status'] = str(state['round_result'])
         self._save(state)
-        atomic_write_json(self.loop_dir / 'round.json', state)
+        self._write_round_record(state)
         self._event(
             state,
             kind='topology_released',
             payload={
                 'released_count': release.get('released_count'),
                 'retained_count': release.get('retained_count'),
+                'release_incomplete_count': release.get('release_incomplete_count'),
+                'release_gate': release_gate,
                 'active_workspaces': [str(path) for path in active_workspaces],
             },
         )
+        self._write_round_record(state)
+
+    def _write_round_record(self, state: dict[str, object]) -> None:
+        integration_path = self.loop_dir / 'git-transaction.json'
+        integration_state = _load_json_object(integration_path)
+        paths = {
+            'scheduler_state': str(self.state_path),
+            'events': str(self.events_path),
+            'round_summary': str(self.loop_dir / 'round_summary.md'),
+            'round_json': str(self.loop_dir / 'round.json'),
+            'integration_state': str(integration_path),
+        }
+        workgroups = {
+            node_id: {
+                'node_id': node_id,
+                'workgroup_id': _node(state, node_id).get('workgroup_id'),
+                'status': _node(state, node_id).get('status'),
+                'worker_agent': _node(state, node_id).get('worker_agent'),
+                'reviewer_agent': _node(state, node_id).get('reviewer_agent'),
+                'workspace_group': _node(state, node_id).get('workspace_group'),
+                'worktree_path': _node(state, node_id).get('worktree_path'),
+                'reviewed_commit': _node(state, node_id).get('reviewed_commit'),
+                'rework_count': _node(state, node_id).get('rework_count'),
+            }
+            for node_id in state['nodes']
+        }
+        record = {
+            'schema': ROUND_STATE_SCHEMA,
+            'schema_version': 1,
+            'record_type': 'ccb_loop_workgroup_round',
+            'workgroup_state_schema': ROUND_STATE_SCHEMA,
+            'project_id': self.context.project.project_id,
+            'project_root': str(self.project_root),
+            'loop_run_status': (
+                'pending' if state['status'] in {'result_imported', 'release_blocked'} else 'ok'
+            ),
+            'dispatch_source': 'multi_workgroup_scheduler',
+            'loop_id': self.loop_id,
+            'task_id': self.task_id,
+            'task_revision': state['task_revision'],
+            'task_digest': state['task_digest'],
+            'bundle_revision': state['bundle_revision'],
+            'bundle_digest': state['bundle_digest'],
+            'capacity_digest': state['capacity_digest'],
+            'controller_status': state['controller_status'],
+            'scheduler_status': state['status'],
+            'nodes': deepcopy(state['nodes']),
+            'workgroups': workgroups,
+            'integration': {
+                'path': str(integration_path),
+                'state': integration_state,
+            },
+            'round_reviewer': deepcopy(state.get('round_reviewer')),
+            'round_result': state.get('round_result'),
+            'round_result_source': state.get('round_result_source'),
+            'result': {
+                'value': state.get('round_result'),
+                'source': state.get('round_result_source'),
+            },
+            'result_import': deepcopy(state.get('result_import')),
+            'import': deepcopy(state.get('result_import')),
+            'topology': deepcopy(state.get('topology')),
+            'release': deepcopy(_mapping(state.get('topology')).get('release')),
+            'cleanup': deepcopy(state.get('cleanup')),
+            'failure': deepcopy(state.get('failure')),
+            'paths': paths,
+            'recorded_at': _now(),
+        }
+        record['evidence_digest'] = _digest(record)
+        atomic_write_json(self.loop_dir / 'round.json', record)
 
     def _submit_node_job(
         self,
@@ -733,7 +904,11 @@ class MultiWorkgroupScheduler:
         purpose: str,
     ) -> dict[str, object]:
         target = str(node['reviewer_agent'] if purpose in {'reviewer', 'reviewer_recheck'} else node['worker_agent'])
-        attempt = 1
+        attempt = (
+            int(node.get('rework_count') or 0)
+            if purpose in {'worker_rework', 'reviewer_recheck'}
+            else 1
+        )
         return self.deps.submit_once(
             self.context,
             loop_dir=self.loop_dir,
@@ -761,7 +936,8 @@ class MultiWorkgroupScheduler:
                 f'\nWorker job: {_latest_worker(node).get("job_id")}'
             )
         elif purpose == 'worker_rework':
-            evidence = f'\nReviewer evidence: {json.dumps(node.get("reviewer"), sort_keys=True)}'
+            reviewer_evidence = node.get('reviewer_recheck') or node.get('reviewer')
+            evidence = f'\nReviewer evidence: {json.dumps(reviewer_evidence, sort_keys=True)}'
         return (
             f'Loop: {self.loop_id}\nTask: {self.task_id}\nNode: {node["node_id"]}\n'
             f'Purpose: {purpose}\nWorktree: {node["worktree_path"]}\nBranch: {node["branch"]}\n'
@@ -802,6 +978,18 @@ class MultiWorkgroupScheduler:
         current: str,
         evidence: dict[str, object],
     ) -> None:
+        if previous == current:
+            return
+        semantic_digest = _digest(
+            {
+                'kind': 'node_transition',
+                'node_id': node_id,
+                'previous': previous,
+                'current': current,
+                'job_id': evidence.get('job_id'),
+                'purpose': evidence.get('purpose'),
+            }
+        )
         self._event(
             state,
             kind='node_transition',
@@ -812,6 +1000,7 @@ class MultiWorkgroupScheduler:
                 'job_id': evidence.get('job_id'),
                 'purpose': evidence.get('purpose'),
             },
+            semantic_digest=semantic_digest,
         )
 
     def _save(self, state: dict[str, object]) -> None:
@@ -819,14 +1008,35 @@ class MultiWorkgroupScheduler:
         state['updated_at'] = _now()
         atomic_write_json(self.state_path, state)
 
-    def _event(self, state: dict[str, object], *, kind: str, payload: dict[str, object]) -> None:
+    def _event(
+        self,
+        state: dict[str, object],
+        *,
+        kind: str,
+        payload: dict[str, object],
+        semantic_digest: str | None = None,
+    ) -> None:
+        if semantic_digest is not None and _event_digest_exists(self.events_path, semantic_digest):
+            return
+        state_revision = int(state.get('state_revision') or 0)
+        evidence_digest = _digest(
+            {
+                'kind': kind,
+                'state_revision': state_revision,
+                'bundle_revision': state['bundle_revision'],
+                'payload': payload,
+            }
+        )
         event = {
             'schema': 'ccb.loop.multi_workgroup_transition.v1',
-            'event_id': f'evt-{int(state.get("state_revision") or 0) + 1}-{kind}',
+            'event_id': f'evt-{uuid4().hex}',
             'ts': _now(),
             'loop_id': self.loop_id,
             'task_id': self.task_id,
             'bundle_revision': state['bundle_revision'],
+            'state_revision': state_revision,
+            'evidence_digest': evidence_digest,
+            'semantic_digest': semantic_digest or evidence_digest,
             'kind': kind,
             **payload,
         }
@@ -841,6 +1051,7 @@ class MultiWorkgroupScheduler:
     def _payload(self, state: dict[str, object], *, action: str | None = None) -> dict[str, object]:
         status = str(state['status'])
         pending = status not in TERMINAL_STATUSES
+        pending_job_ids = _pending_job_ids(state)
         return {
             'schema': ROUND_STATE_SCHEMA,
             'schema_version': 1,
@@ -852,6 +1063,11 @@ class MultiWorkgroupScheduler:
             'loop_id': self.loop_id,
             'task_id': self.task_id,
             'controller_status': state['controller_status'],
+            'pending_job_ids': pending_job_ids,
+            'submission_unknown': any(
+                str(_node(state, node_id).get('status') or '').endswith('_submission_unknown')
+                for node_id in state['nodes']
+            ),
             'round_result': state.get('round_result') or 'pending',
             'round_result_source': state.get('round_result_source') or 'scheduler_pending',
             'nodes': deepcopy(state['nodes']),
@@ -891,7 +1107,12 @@ def run_multi_workgroup_scheduler(
     ).run_once()
 
 
-def resume_pending_multi_workgroup_scheduler(context, *, services=None) -> dict[str, object] | None:
+def resume_pending_multi_workgroup_scheduler(
+    context,
+    *,
+    task_id: str | None = None,
+    services=None,
+) -> dict[str, object] | None:
     loops_root = Path(context.project.project_root) / '.ccb' / 'runtime' / 'loops'
     for state_path in sorted(loops_root.glob('*/workgroup_scheduler_state.json')):
         payload = json.loads(state_path.read_text(encoding='utf-8'))
@@ -899,14 +1120,16 @@ def resume_pending_multi_workgroup_scheduler(context, *, services=None) -> dict[
             continue
         if str(payload.get('status') or '') not in {'result_imported', 'release_blocked'}:
             continue
-        task_id = str(payload.get('task_id') or '')
+        pending_task_id = str(payload.get('task_id') or '')
+        if task_id is not None and pending_task_id != task_id:
+            continue
         shown = _deps(services).plan_task(
             context,
-            SimpleNamespace(action='task-show', task_id=task_id),
+            SimpleNamespace(action='task-show', task_id=pending_task_id),
         )
         record = shown.get('task') if isinstance(shown.get('task'), dict) else None
         if record is None:
-            raise ValueError(f'pending scheduler task is missing: {task_id}')
+            raise ValueError(f'pending scheduler task is missing: {pending_task_id}')
         bundle = payload.get('bundle')
         artifact = payload.get('bundle_artifact')
         if not isinstance(bundle, dict) or not isinstance(artifact, dict):
@@ -1098,6 +1321,45 @@ def _active_workspaces(state: dict[str, object], status: dict[str, object]) -> t
     return tuple(sorted(set(paths)))
 
 
+def _release_gate(
+    release: dict[str, object],
+    status: dict[str, object],
+) -> dict[str, object]:
+    observed = status.get('observed') if isinstance(status.get('observed'), dict) else None
+    agents = observed.get('agents') if isinstance(observed, dict) and isinstance(observed.get('agents'), list) else None
+    live_agents = [
+        deepcopy(agent)
+        for agent in (agents or [])
+        if isinstance(agent, dict)
+        and str(agent.get('observed_state') or '') not in {'released', 'missing', 'removed', 'unloaded'}
+    ]
+    reasons = []
+    release_status = str(release.get('loop_topology_status') or '')
+    if release_status != 'released':
+        reasons.append(f'release_status:{release_status or "missing"}')
+    for field in ('retained_count', 'release_incomplete_count'):
+        if field not in release:
+            reasons.append(f'{field}:missing')
+        elif int(release.get(field) or 0) != 0:
+            reasons.append(f'{field}:{int(release.get(field) or 0)}')
+    if observed is None or agents is None:
+        reasons.append('observed_agents:missing')
+    elif live_agents:
+        reasons.append(f'observed_dynamic_residue:{len(live_agents)}')
+    if isinstance(observed, dict):
+        for field in ('retained_count', 'release_incomplete_count'):
+            if int(observed.get(field) or 0) != 0:
+                reasons.append(f'observed_{field}:{int(observed.get(field) or 0)}')
+    return {
+        'clean': not reasons,
+        'release_status': release_status or None,
+        'retained_count': release.get('retained_count'),
+        'release_incomplete_count': release.get('release_incomplete_count'),
+        'live_agents': live_agents,
+        'reasons': reasons,
+    }
+
+
 def _pending_purpose(node: dict[str, object]) -> str:
     for purpose, field in (
         ('reviewer_recheck', 'reviewer_recheck'),
@@ -1109,6 +1371,27 @@ def _pending_purpose(node: dict[str, object]) -> str:
         if isinstance(result, dict) and not bool(result.get('terminal')):
             return purpose
     raise ValueError(f'node {node["node_id"]} pending status has no pending job')
+
+
+def _pending_job_ids(state: dict[str, object]) -> list[str]:
+    job_ids: list[str] = []
+    for node_id in state['nodes']:
+        node = _node(state, node_id)
+        if str(node.get('status') or '').endswith('_submission_unknown'):
+            continue
+        for field in ('worker', 'worker_rework', 'reviewer', 'reviewer_recheck'):
+            job = node.get(field)
+            if not isinstance(job, dict) or bool(job.get('terminal')):
+                continue
+            job_id = str(job.get('job_id') or '').strip()
+            if job_id and job_id not in job_ids:
+                job_ids.append(job_id)
+    reviewer = state.get('round_reviewer')
+    if isinstance(reviewer, dict) and not bool(reviewer.get('terminal')):
+        job_id = str(reviewer.get('job_id') or '').strip()
+        if job_id and job_id not in job_ids:
+            job_ids.append(job_id)
+    return job_ids
 
 
 def _set_job_result(node: dict[str, object], purpose: str, result: dict[str, object]) -> None:
@@ -1142,6 +1425,26 @@ def _mapping(value: object) -> dict[str, object]:
 def _digest(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(',', ':')).encode('utf-8')
     return f'sha256:{hashlib.sha256(encoded).hexdigest()}'
+
+
+def _event_digest_exists(path: Path, semantic_digest: str) -> bool:
+    if not path.is_file():
+        return False
+    for raw_line in path.read_text(encoding='utf-8').splitlines():
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get('semantic_digest') == semantic_digest:
+            return True
+    return False
+
+
+def _load_json_object(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    return payload if isinstance(payload, dict) else None
 
 
 def _now() -> str:

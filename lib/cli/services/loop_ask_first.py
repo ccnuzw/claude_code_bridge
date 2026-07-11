@@ -722,7 +722,8 @@ def submit_or_recover_ask_once(
             timeout=None,
             defer_observation=True,
         )
-    except _AskSubmissionError as exc:
+    except (_AskSubmissionError, _ImmaculateActivationError) as exc:
+        freshness = getattr(exc, 'freshness', None)
         return {
             'target': target,
             'sender': RUNNER_ASK_SENDER,
@@ -734,6 +735,13 @@ def submit_or_recover_ask_once(
             'terminal': True,
             'watch_source': 'submission_failure',
             'observation_error': str(exc),
+            'failure_source': (
+                'immaculate_activation_failed'
+                if isinstance(exc, _ImmaculateActivationError)
+                else 'ask_submission_failed'
+            ),
+            'failure_stage': exc.stage,
+            'freshness': dict(freshness) if isinstance(freshness, dict) else None,
             'submission_identity': _submission_identity(
                 bundle_revision=bundle_revision,
                 node_id=node_id,
@@ -2815,7 +2823,7 @@ def _round_summary_text(
         f"- desired: {commit.get('desired_path')}",
         f"- observed: {reconcile.get('observed_path') or topology_status.get('observed_path')}",
         f"- status: {topology_status.get('loop_topology_status')}",
-        f"- release policy: auto after round_summary import",
+        "- release policy: auto after round_summary import",
         '',
         ]
     if rework:
