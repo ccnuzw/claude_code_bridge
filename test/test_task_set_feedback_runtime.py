@@ -161,6 +161,14 @@ def test_pending_planner_then_frontdesk_then_exact_once_close(tmp_path: Path) ->
     assert planner_pending['pending_job_ids'] == ['job_1']
     assert harness.submissions[0].target == 'planner'
     assert harness.submissions[0].silence is True
+    planner_envelope = json.loads(
+        harness.submissions[0].message.split('```json\n', 1)[1].rsplit('\n```', 1)[0]
+    )
+    assert planner_envelope['closure_ref'] == {
+        'path': 'docs/plantree/plans/demo/task-sets/set-a/closure.json',
+        'closure_digest': 'sha256:' + 'b' * 64,
+        'ordered_terminal_evidence_digest': _EVIDENCE_DIGEST,
+    }
 
     harness.terminals['job_1'] = {'status': 'completed', 'reply': _planner_reply()}
     frontdesk_pending = advance_task_set_feedback_runtime(context, harness.services())
@@ -177,6 +185,24 @@ def test_pending_planner_then_frontdesk_then_exact_once_close(tmp_path: Path) ->
     assert len(harness.submissions) == 2
     assert len(harness.imports) == 1
     assert len(harness.settlements) == 2
+
+
+def test_planner_proposal_must_echo_exact_transport_closure_ref(tmp_path: Path) -> None:
+    intent, _ = _authority(tmp_path)
+    harness = Harness(intent)
+    context = _context(tmp_path)
+    advance_task_set_feedback_runtime(context, harness.services())
+    reply = _planner_reply()
+    payload = json.loads(reply.split('```json\n', 1)[1].rsplit('\n```', 1)[0])
+    payload['evidence_refs'] = ['tasks/child-a/round_summary.md']
+    payload['frontdesk_status']['evidence_refs'] = payload['evidence_refs']
+    harness.terminals['job_1'] = {
+        'status': 'completed',
+        'reply': '**planner-backfill.json**\n```json\n' + json.dumps(payload) + '\n```\n',
+    }
+
+    with pytest.raises(ValueError, match='omits required evidence refs'):
+        advance_task_set_feedback_runtime(context, harness.services())
 
 
 @pytest.mark.parametrize('accepted_before_raise', [False, True])

@@ -13,8 +13,9 @@ from storage.locks import file_lock
 from storage.paths import PathLayout
 from storage.text_artifacts import read_text_artifact
 from jobs.store import JobStore
+from completion.snapshot_store import CompletionSnapshotStore
 
-from .planner_feedback_apply import validate_planner_backfill_record
+from .planner_feedback_apply import plan_revision_authority, validate_planner_backfill_record
 from .planner_feedback import parse_planner_feedback_reply, planner_feedback_digest
 
 
@@ -477,32 +478,45 @@ def settle_task_set_closure_feedback(
     }
     settlement['settlement_digest'] = _digest(settlement)
     with file_lock(task_set_path.parent / f'closure-settlement-r{task_set_revision}.lock'):
-        existing_settlement = _read_json(settlement_path)
-        if existing_settlement and existing_settlement != settlement:
-            raise ValueError('task-set closure settlement transaction conflict')
-        if not existing_settlement:
-            atomic_write_json(settlement_path, settlement)
-        from .plan_tasks import settle_task_set_parent
-        settle_task_set_parent(
-            context,
-            task_id=str(task_set['source_task_id']),
-            task_set_id=task_set_id,
-            task_set_revision=task_set_revision,
-            aggregate_result=str(closure['aggregate_result']),
-            closure_digest=str(closure['closure_digest']),
-            planner_feedback_digest=str(normalized_ref['planner_feedback_digest']),
-        )
-        target_state = {
-            'pass': 'closed', 'partial': 'partial',
-            'replan_required': 'replan_required', 'blocked': 'blocked',
-        }[str(closure['aggregate_result'])]
-        if task_set.get('state') == 'closure_pending':
-            task_set['state'] = target_state
-            task_set['aggregate_result'] = closure['aggregate_result']
-            task_set['updated_at'] = _now()
-            atomic_write_json(task_set_path, task_set)
-        elif task_set.get('state') != target_state:
-            raise ValueError('task-set closure settlement state conflict')
+        with file_lock(task_set_path.parent / 'task-set.lock'):
+            locked_task_set = _read_json(task_set_path)
+            _validate_task_set(locked_task_set)
+            locked_closure = _read_json(closure_path)
+            _validate_closure(locked_closure)
+            with file_lock(path.with_suffix('.lock')):
+                locked_intents = _read_json(path)
+            if (
+                locked_task_set != task_set
+                or locked_closure != closure
+                or locked_intents != intent_store
+            ):
+                raise ValueError('task-set closure settlement authority changed during validation')
+            existing_settlement = _read_json(settlement_path)
+            if existing_settlement and existing_settlement != settlement:
+                raise ValueError('task-set closure settlement transaction conflict')
+            if not existing_settlement:
+                atomic_write_json(settlement_path, settlement)
+            from .plan_tasks import settle_task_set_parent
+            settle_task_set_parent(
+                context,
+                task_id=str(locked_task_set['source_task_id']),
+                task_set_id=task_set_id,
+                task_set_revision=task_set_revision,
+                aggregate_result=str(locked_closure['aggregate_result']),
+                closure_digest=str(locked_closure['closure_digest']),
+                planner_feedback_digest=str(normalized_ref['planner_feedback_digest']),
+            )
+            target_state = {
+                'pass': 'closed', 'partial': 'partial',
+                'replan_required': 'replan_required', 'blocked': 'blocked',
+            }[str(locked_closure['aggregate_result'])]
+            if locked_task_set.get('state') == 'closure_pending':
+                locked_task_set['state'] = target_state
+                locked_task_set['aggregate_result'] = locked_closure['aggregate_result']
+                locked_task_set['updated_at'] = _now()
+                atomic_write_json(task_set_path, locked_task_set)
+            elif locked_task_set.get('state') != target_state:
+                raise ValueError('task-set closure settlement state conflict')
 
     with file_lock(path.with_suffix('.lock')):
         store = _read_json(path)
@@ -578,7 +592,7 @@ def _validate_feedback_transport(context, value, *, task_set, closure, intent) -
     ):
         raise ValueError('task-set closure imported backfill authority mismatch')
     planner = runtime['planner']
-    if planner['message'] != _expected_planner_message(closure, intent):
+    if planner['message'] != _expected_planner_message(closure, intent, task_set):
         raise ValueError('task-set closure Planner message authority mismatch')
     _validate_completed_job(context, planner, expected_target='planner')
     try:
@@ -706,6 +720,31 @@ def _validate_completed_job(context, transport, *, expected_target) -> None:
         body = read_text_artifact(layout, job.request.body_artifact)
     if body != transport['message'] or hashlib.sha256(body.encode('utf-8')).hexdigest() != transport['message_sha256']:
         raise ValueError('task-set closure persisted job message mismatch')
+    persisted_reply = _persisted_terminal_reply(layout, job)
+    if persisted_reply != str(transport.get('reply') or ''):
+        raise ValueError('task-set closure persisted job reply mismatch')
+
+
+def _persisted_terminal_reply(layout: PathLayout, job) -> str:
+    snapshot = CompletionSnapshotStore(layout).load(job.job_id)
+    if snapshot is not None:
+        decision = snapshot.latest_decision
+        if (
+            snapshot.agent_name != job.agent_name
+            or decision.terminal is not True
+            or decision.status.value != 'completed'
+        ):
+            raise ValueError('task-set closure persisted completion snapshot mismatch')
+        reply = str(decision.reply or '')
+        diagnostics = decision.diagnostics
+    else:
+        decision = job.terminal_decision
+        reply = str(decision.get('reply') or '')
+        diagnostics = decision.get('diagnostics') if isinstance(decision.get('diagnostics'), dict) else {}
+    artifact = diagnostics.get('reply_artifact') if isinstance(diagnostics, dict) else None
+    if isinstance(artifact, dict):
+        reply = read_text_artifact(layout, artifact)
+    return reply
 
 
 def _exact_authority_path(root: Path, value, expected: Path, *, label: str) -> Path:
@@ -716,10 +755,19 @@ def _exact_authority_path(root: Path, value, expected: Path, *, label: str) -> P
     return candidate
 
 
-def _expected_planner_message(closure, intent) -> str:
+def _expected_planner_message(closure, intent, task_set) -> str:
+    closure_ref = {
+        'path': (
+            f'docs/plantree/plans/{task_set["plan_slug"]}/task-sets/'
+            f'{intent["task_set_id"]}/closure.json'
+        ),
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+    }
     envelope = {
         'schema': 'ccb.plan.task_set_closure_transport.v1',
         'closure': closure,
+        'closure_ref': closure_ref,
         'closure_intent': {
             key: intent[key]
             for key in (
@@ -1053,15 +1101,8 @@ def _planner_job(value: dict[str, object]) -> dict[str, object]:
 
 
 def _plan_revision(project_root: Path, plan_slug: str) -> dict[str, object]:
-    plan_root = project_root / 'docs' / 'plantree' / 'plans' / plan_slug
-    files = []
-    for name in ('README.md', 'brief.md', 'Roadmap.md', 'roadmap.md', 'TODO.md', 'todo.md'):
-        path = plan_root / name
-        if path.is_file():
-            files.append({'path': str(path.relative_to(project_root)), 'sha256': _file_digest(path)})
-    payload = {'schema': 'ccb.plan.revision.v1', 'files': files}
-    payload['digest'] = _digest(payload)
-    return payload
+    context = SimpleNamespace(project=SimpleNamespace(project_root=project_root))
+    return plan_revision_authority(context, plan_slug)
 
 
 def _verified_artifact_digest(context, artifact: dict[str, object]) -> str:

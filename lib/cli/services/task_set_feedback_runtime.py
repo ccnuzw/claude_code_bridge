@@ -56,7 +56,11 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
     if task_set.get('state') != 'closure_pending':
         raise RuntimeError('task_set_feedback_authority_not_closure_pending')
     closure_ref = task_set.get('closure') if isinstance(task_set.get('closure'), dict) else {}
-    closure_path = Path(context.project.project_root) / _text(closure_ref.get('path'), 'closure.path')
+    closure_path = _canonical_closure_path(
+        context,
+        task_set_path,
+        _text(closure_ref.get('path'), 'closure.path'),
+    )
     closure = _read_json(closure_path)
     if (
         closure.get('task_set_id') != task_set_id
@@ -75,7 +79,11 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
         if state:
             _validate_state(state, intent=intent)
         else:
-            planner_message = _planner_message(closure, intent)
+            planner_message = _planner_message(
+                closure,
+                intent,
+                _closure_reference(context, closure_path, closure),
+            )
             state = {
                 'schema': RUNTIME_SCHEMA,
                 'schema_version': 1,
@@ -304,10 +312,15 @@ def _prepared_transport(*, target: str, purpose: str, task_id: str, message: str
     }
 
 
-def _planner_message(closure: dict[str, object], intent: dict[str, object]) -> str:
+def _planner_message(
+    closure: dict[str, object],
+    intent: dict[str, object],
+    closure_ref: dict[str, object],
+) -> str:
     envelope = {
         'schema': TRANSPORT_SCHEMA,
         'closure': closure,
+        'closure_ref': closure_ref,
         'closure_intent': {
             key: intent[key]
             for key in (
@@ -317,6 +330,38 @@ def _planner_message(closure: dict[str, object], intent: dict[str, object]) -> s
         },
     }
     return '**task-set-closure.json**\n```json\n' + _canonical_json(envelope) + '\n```'
+
+
+def _closure_reference(context, closure_path: Path, closure: dict[str, object]) -> dict[str, object]:
+    root = Path(context.project.project_root).resolve()
+    resolved = closure_path.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise RuntimeError('task_set_feedback_closure_ref_outside_project')
+    return {
+        'path': str(resolved.relative_to(root)),
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+    }
+
+
+def _canonical_closure_path(context, task_set_path: Path, value: str) -> Path:
+    root = Path(context.project.project_root).resolve()
+    expected = task_set_path.parent / 'closure.json'
+    raw = Path(value)
+    if raw.is_absolute() or raw.as_posix() != value:
+        raise RuntimeError('task_set_feedback_closure_ref_path_invalid')
+    candidate = Path(context.project.project_root) / raw
+    if candidate != expected:
+        raise RuntimeError('task_set_feedback_closure_ref_path_mismatch')
+    current = Path(context.project.project_root)
+    for part in raw.parts:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError('task_set_feedback_closure_ref_symlink_forbidden')
+    resolved = candidate.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise RuntimeError('task_set_feedback_closure_ref_outside_project')
+    return candidate
 
 
 def _frontdesk_message(envelope: dict[str, object]) -> str:

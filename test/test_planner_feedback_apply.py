@@ -49,16 +49,31 @@ def _authority_files(context, authority: dict[str, object]) -> None:
     root = Path(context.project.project_root) / 'docs/plantree/plans/demo/task-sets/set-a'
     root.mkdir(parents=True)
     (root / 'task-set.json').write_text(json.dumps({
-        'task_set_id': 'set-a', 'task_set_revision': 1, 'state': 'closure_pending',
+        'task_set_id': 'set-a', 'task_set_revision': authority['task_set_revision'], 'state': 'closure_pending',
         'plan_slug': 'demo',
         'plan_revision': {'digest': authority['expected_plan_revision']},
     }), encoding='utf-8')
     (root / 'closure.json').write_text(json.dumps({
-        'task_set_id': 'set-a', 'task_set_revision': 1,
+        'task_set_id': 'set-a', 'task_set_revision': authority['task_set_revision'],
         'closure_digest': authority['closure_digest'],
         'ordered_terminal_evidence_digest': authority['ordered_terminal_evidence_digest'],
         'aggregate_result': 'pass',
     }), encoding='utf-8')
+
+
+def _run_apply(context, *, task_set_revision: int = 1):
+    from cli.services import planner_feedback_apply as service
+    revision = service.current_plan_revision(context, 'demo')
+    proposal = _proposal(revision, identity_revision=task_set_revision)
+    authority = {
+        'task_set_id': 'set-a', 'task_set_revision': task_set_revision,
+        'closure_intent_id': f'tsi-a{task_set_revision}',
+        'closure_digest': _digest('c'), 'ordered_terminal_evidence_digest': _digest('a'),
+        'expected_plan_revision': revision, 'planner_job_id': f'job-planner-{task_set_revision}',
+        'planner_feedback_digest': planner_feedback_digest(proposal), 'plan_slug': 'demo',
+    }
+    _authority_files(context, authority)
+    return service.apply_planner_feedback(context, proposal, authority)
 
 
 def test_apply_is_revision_fenced_persisted_and_idempotent(tmp_path: Path) -> None:
@@ -83,7 +98,7 @@ def test_apply_is_revision_fenced_persisted_and_idempotent(tmp_path: Path) -> No
     assert backfill.is_file()
     assert json.loads(backfill.read_text())['authority']['planner_job_id'] == 'job-planner'
     assert '<!-- ccb-planner-backfill:set-a:r1:brief:start -->' in (
-        Path(context.project.project_root) / 'docs/plantree/plans/demo/README.md'
+        Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md'
     ).read_text()
 
 
@@ -201,7 +216,7 @@ def test_persisted_transaction_rejects_semantic_tampering(
 def test_user_marker_collision_is_not_replaced(tmp_path: Path) -> None:
     context = _context(tmp_path)
     from cli.services import planner_feedback_apply as service
-    readme = Path(context.project.project_root) / 'docs/plantree/plans/demo/README.md'
+    readme = Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md'
     user_text = '# Demo\n\n<!-- ccb-planner-backfill:set-a:r1:brief:start -->\nUSER OWNED\n<!-- ccb-planner-backfill:set-a:r1:brief:end -->\n'
     readme.write_text(user_text, encoding='utf-8')
     revision = service.current_plan_revision(context, 'demo')
@@ -213,7 +228,7 @@ def test_user_marker_collision_is_not_replaced(tmp_path: Path) -> None:
         'planner_feedback_digest': planner_feedback_digest(proposal), 'plan_slug': 'demo',
     }
     _authority_files(context, authority)
-    with pytest.raises(ValueError, match='marker collision'):
+    with pytest.raises(ValueError, match='marker|transaction authority'):
         service.apply_planner_feedback(context, proposal, authority)
     assert readme.read_text(encoding='utf-8') == user_text
 
@@ -231,7 +246,7 @@ def test_replay_rejects_projected_file_drift(tmp_path: Path) -> None:
     }
     _authority_files(context, authority)
     service.apply_planner_feedback(context, proposal, authority)
-    roadmap = Path(context.project.project_root) / 'docs/plantree/plans/demo/Roadmap.md'
+    roadmap = Path(context.project.project_root) / 'docs/plantree/plans/demo/roadmap.md'
     roadmap.write_text(roadmap.read_text() + 'drift\n', encoding='utf-8')
     with pytest.raises(ValueError, match='revision conflict|projected target drift'):
         service.apply_planner_feedback(context, proposal, authority)
@@ -272,6 +287,9 @@ def test_later_task_set_revision_uses_distinct_transaction_and_backfill(tmp_path
     assert second['planner_backfill_path'].endswith('planner-backfill-r2.json')
     assert Path(first['planner_backfill_path']).is_file()
     assert Path(second['planner_backfill_path']).is_file()
+    brief = (Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md').read_text()
+    assert '<!-- ccb-planner-backfill:set-a:r1:brief:start -->' in brief
+    assert '<!-- ccb-planner-backfill:set-a:r2:brief:start -->' in brief
 
 
 @pytest.mark.parametrize('tamper', ('extra_field', 'backfill_digest'))
@@ -300,3 +318,152 @@ def test_replay_rejects_backfill_schema_or_digest_tampering(
 
     with pytest.raises(ValueError, match='persisted authority'):
         service.apply_planner_feedback(context, proposal, authority)
+
+
+@pytest.mark.parametrize(
+    ('files', 'expected_targets', 'absent'),
+    (
+        ({'brief.md': 'brief\n', 'roadmap.md': 'roadmap\n', 'TODO.md': 'todo\n'},
+         ('brief.md', 'roadmap.md', 'TODO.md'), ('Roadmap.md', 'todo.md')),
+        ({'README.md': 'readme\n', 'roadmap.md': 'roadmap\n', 'todo.md': 'todo\n'},
+         ('brief.md', 'roadmap.md', 'todo.md'), ('Roadmap.md', 'TODO.md')),
+        ({'brief.md': 'brief\n'},
+         ('brief.md', 'roadmap.md', 'TODO.md'), ('Roadmap.md', 'todo.md')),
+        ({'brief.md': 'brief\n', 'Roadmap.md': 'roadmap\n', 'TODO.md': 'todo\n'},
+         ('brief.md', 'Roadmap.md', 'TODO.md'), ('roadmap.md', 'todo.md')),
+    ),
+)
+def test_real_plan_layout_selects_one_frozen_surface_per_semantic(
+    tmp_path: Path,
+    files: dict[str, str],
+    expected_targets: tuple[str, ...],
+    absent: tuple[str, ...],
+) -> None:
+    context = _context(tmp_path)
+    plan_root = Path(context.project.project_root) / 'docs/plantree/plans/demo'
+    for name in ('README.md', 'brief.md', 'roadmap.md', 'Roadmap.md', 'TODO.md', 'todo.md'):
+        path = plan_root / name
+        if path.exists():
+            path.unlink()
+    for name, body in files.items():
+        (plan_root / name).write_text(body, encoding='utf-8')
+
+    imported = _run_apply(context)
+    transaction = json.loads(Path(imported['transaction_path']).read_text())
+
+    assert tuple(Path(item['path']).name for item in transaction['targets']) == expected_targets
+    assert all((plan_root / name).is_file() for name in expected_targets)
+    assert all(not (plan_root / name).exists() for name in absent)
+
+
+@pytest.mark.parametrize(
+    'files',
+    (
+        ('roadmap.md', 'Roadmap.md'),
+        ('TODO.md', 'todo.md'),
+    ),
+)
+def test_case_duplicate_semantic_files_are_rejected(
+    tmp_path: Path, files: tuple[str, str]
+) -> None:
+    context = _context(tmp_path)
+    plan_root = Path(context.project.project_root) / 'docs/plantree/plans/demo'
+    (plan_root / 'brief.md').write_text('brief\n', encoding='utf-8')
+    for name in files:
+        (plan_root / name).write_text(name + '\n', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='ambiguous semantic files'):
+        _run_apply(context)
+
+
+@pytest.mark.parametrize('name', ('README.md', 'brief.md', 'roadmap.md', 'TODO.md'))
+@pytest.mark.parametrize('outside', (False, True))
+def test_plan_surface_symlinks_never_modify_link_targets(
+    tmp_path: Path, name: str, outside: bool
+) -> None:
+    context = _context(tmp_path)
+    root = Path(context.project.project_root)
+    plan_root = root / 'docs/plantree/plans/demo'
+    link = plan_root / name
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    target = (tmp_path / 'outside.txt') if outside else (root / 'unrelated.txt')
+    target.write_text('USER CONTENT\n', encoding='utf-8')
+    link.symlink_to(target)
+
+    with pytest.raises(ValueError, match='symlink path is forbidden'):
+        _run_apply(context)
+
+    assert target.read_text(encoding='utf-8') == 'USER CONTENT\n'
+    assert not list(plan_root.glob('task-sets/set-a/planner-backfill-r1.transaction.json'))
+
+
+def test_plan_root_symlink_is_rejected_before_authority_write(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    root = Path(context.project.project_root)
+    plan_root = root / 'docs/plantree/plans/demo'
+    target = root / 'unrelated-plan'
+    plan_root.rename(target)
+    plan_root.symlink_to(target, target_is_directory=True)
+    before = (target / 'README.md').read_text(encoding='utf-8')
+
+    with pytest.raises(ValueError, match='symlink path is forbidden'):
+        _run_apply(context)
+
+    assert (target / 'README.md').read_text(encoding='utf-8') == before
+
+
+@pytest.mark.parametrize(
+    ('marker_text', 'reason'),
+    (
+        ('<!-- ccb-planner-backfill:foreign:r1:brief:start -->\nx\n'
+         '<!-- ccb-planner-backfill:foreign:r1:brief:end -->\n', 'foreign or future'),
+        ('<!-- ccb-planner-backfill:set-a:r2:brief:start -->\nx\n'
+         '<!-- ccb-planner-backfill:set-a:r2:brief:end -->\n', 'foreign or future'),
+        ('<!-- ccb-planner-backfill:set-a:r1:brief:start -->\nx\n', 'unmatched'),
+        ('<!-- ccb-planner-backfill:set-a:r1:brief:bogus -->\n', 'malformed'),
+        ('<!-- ccb-planner-backfill:set-a:r1:brief:start -->\n'
+         '<!-- ccb-planner-backfill:set-a:r1:brief:start -->\n'
+         '<!-- ccb-planner-backfill:set-a:r1:brief:end -->\n'
+         '<!-- ccb-planner-backfill:set-a:r1:brief:end -->\n', 'nested'),
+    ),
+)
+def test_foreign_future_malformed_and_nested_markers_are_rejected(
+    tmp_path: Path, marker_text: str, reason: str
+) -> None:
+    context = _context(tmp_path)
+    brief = Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md'
+    original = 'USER PREFIX\n' + marker_text + 'USER SUFFIX\n'
+    brief.write_text(original, encoding='utf-8')
+
+    with pytest.raises(ValueError, match=reason):
+        _run_apply(context)
+
+    assert brief.read_text(encoding='utf-8') == original
+
+
+def test_all_target_preimages_are_validated_before_first_write(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    from cli.services import planner_feedback_apply as service
+    revision = service.current_plan_revision(context, 'demo')
+    proposal = _proposal(revision)
+    authority = {
+        'task_set_id': 'set-a', 'task_set_revision': 1, 'closure_intent_id': 'tsi-a',
+        'closure_digest': _digest('c'), 'ordered_terminal_evidence_digest': _digest('a'),
+        'expected_plan_revision': revision, 'planner_job_id': 'job-planner',
+        'planner_feedback_digest': planner_feedback_digest(proposal), 'plan_slug': 'demo',
+    }
+    _authority_files(context, authority)
+    plan_root = Path(context.project.project_root) / 'docs/plantree/plans/demo'
+    transaction = service._derive_transaction(
+        context, plan_root, proposal, authority, persisted=None
+    )
+    tx_path = plan_root / 'task-sets/set-a/planner-backfill-r1.transaction.json'
+    tx_path.write_text(json.dumps(transaction), encoding='utf-8')
+    (plan_root / 'TODO.md').write_text('concurrent user file\n', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='file revision conflict'):
+        service.apply_planner_feedback(context, proposal, authority)
+
+    assert not (plan_root / 'brief.md').exists()
+    assert not (plan_root / 'roadmap.md').exists()

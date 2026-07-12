@@ -216,7 +216,9 @@ def _planner_proposal(
     return parse_planner_feedback_reply(reply)
 
 
-def _completed_job(context, *, target: str, job_id: str, task_id: str, message: str) -> None:
+def _completed_job(
+    context, *, target: str, job_id: str, task_id: str, message: str, reply: str
+) -> None:
     request = MessageEnvelope(
         project_id=context.project.project_id,
         to_agent=target,
@@ -235,11 +237,19 @@ def _completed_job(context, *, target: str, job_id: str, task_id: str, message: 
         provider='codex',
         request=request,
         status=JobStatus.COMPLETED,
-        terminal_decision={'terminal': True, 'status': 'completed'},
+        terminal_decision={'terminal': True, 'status': 'completed', 'reply': reply},
         cancel_requested_at=None,
         created_at='2026-07-12T00:00:00Z',
         updated_at='2026-07-12T00:00:01Z',
     ))
+
+
+def _closure_ref(task_set_id: str, closure: dict[str, object]) -> dict[str, object]:
+    return {
+        'path': f'docs/plantree/plans/demo/task-sets/{task_set_id}/closure.json',
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+    }
 
 
 def _settlement_fixture(context, *, notification_required: bool = False):
@@ -270,7 +280,9 @@ def _settlement_fixture(context, *, notification_required: bool = False):
         'planner_feedback_digest': feedback_digest,
         'plan_slug': 'demo',
     })
-    planner_message = _planner_message(closed['closure'], intent)
+    planner_message = _planner_message(
+        closed['closure'], intent, _closure_ref(task_set_id, closed['closure'])
+    )
     planner = _prepared_transport(
         target='planner', purpose='planner_backfill',
         task_id=f'task-set-feedback-{intent["intent_id"]}',
@@ -280,7 +292,7 @@ def _settlement_fixture(context, *, notification_required: bool = False):
     planner.update({'job_id': planner_job_id, 'status': 'completed', 'reply': proposal_reply})
     _completed_job(
         context, target='planner', job_id=planner_job_id,
-        task_id=str(planner['task_id']), message=planner_message,
+        task_id=str(planner['task_id']), message=planner_message, reply=proposal_reply,
     )
     frontdesk = None
     notification = {'status': 'notification_not_required'}
@@ -296,7 +308,7 @@ def _settlement_fixture(context, *, notification_required: bool = False):
         frontdesk.update({'job_id': frontdesk_job_id, 'status': 'completed', 'reply': 'delivered'})
         _completed_job(
             context, target='frontdesk', job_id=frontdesk_job_id,
-            task_id=str(frontdesk['task_id']), message=frontdesk_message,
+            task_id=str(frontdesk['task_id']), message=frontdesk_message, reply='delivered',
         )
         notification = {'status': 'delivered', 'job_id': frontdesk_job_id}
     runtime_path = root / '.ccb/runtime/task-sets' / task_set_id / 'feedback-r1.json'
@@ -541,7 +553,9 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
         'plan_slug': 'demo',
     })
     backfill_path = Path(imported['planner_backfill_path'])
-    planner_message = _planner_message(closed['closure'], intent)
+    planner_message = _planner_message(
+        closed['closure'], intent, _closure_ref(task_set_id, closed['closure'])
+    )
     planner = _prepared_transport(
         target='planner',
         purpose='planner_backfill',
@@ -557,6 +571,7 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
         job_id=planner_job_id,
         task_id=str(planner['task_id']),
         message=planner_message,
+        reply=proposal_reply,
     )
     runtime_path = root / '.ccb/runtime/task-sets' / task_set_id / 'feedback-r1.json'
     runtime_path.parent.mkdir(parents=True, exist_ok=True)
@@ -730,6 +745,66 @@ def test_settlement_rejects_nonterminal_planner_job(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match='persisted job is not terminal completed'):
         settle_task_set_closure_feedback(context, **authority)
+
+
+@pytest.mark.parametrize('target', ('planner', 'frontdesk'))
+def test_settlement_rejects_persisted_reply_mismatch(
+    tmp_path: Path, target: str
+) -> None:
+    context = _context(tmp_path)
+    authority, runtime_path, _backfill_path = _settlement_fixture(
+        context, notification_required=target == 'frontdesk'
+    )
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    transport = runtime[target]
+    request = MessageEnvelope(
+        project_id=context.project.project_id, to_agent=target, from_actor='system',
+        body=transport['message'], task_id=transport['task_id'], reply_to=None,
+        message_type='task', delivery_scope=DeliveryScope.SINGLE,
+        silence_on_success=target == 'planner',
+    )
+    JobStore(PathLayout(context.project.project_root)).append(JobRecord(
+        job_id=transport['job_id'], submission_id=None, agent_name=target,
+        provider='codex', request=request, status=JobStatus.COMPLETED,
+        terminal_decision={
+            'terminal': True, 'status': 'completed', 'reply': 'forged persisted reply',
+        },
+        cancel_requested_at=None, created_at='2026-07-12T00:00:00Z',
+        updated_at='2026-07-12T00:00:03Z',
+    ))
+
+    with pytest.raises(ValueError, match='persisted job reply mismatch'):
+        settle_task_set_closure_feedback(context, **authority)
+
+
+def test_settlement_rejects_task_set_revision_race_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = _context(tmp_path)
+    authority, _runtime_path, backfill_path = _settlement_fixture(context)
+    task_set_path = backfill_path.parent / 'task-set.json'
+    from cli.services import task_set_closure as service
+    original = service._validate_feedback_transport
+
+    def validate_then_race(*args, **kwargs):
+        result = original(*args, **kwargs)
+        record = json.loads(task_set_path.read_text(encoding='utf-8'))
+        record['task_set_revision'] = 2
+        record['state'] = 'running'
+        record['updated_at'] = '2026-07-12T00:00:02Z'
+        task_set_path.write_text(json.dumps(record), encoding='utf-8')
+        return result
+
+    monkeypatch.setattr(service, '_validate_feedback_transport', validate_then_race)
+
+    with pytest.raises(ValueError, match='authority changed during validation'):
+        settle_task_set_closure_feedback(context, **authority)
+    persisted = json.loads(task_set_path.read_text(encoding='utf-8'))
+    assert persisted['task_set_revision'] == 2
+    assert persisted['state'] == 'running'
+    assert plan_task(
+        context, SimpleNamespace(action='task-show', task_id='source-intake')
+    )['task']['status'] == 'decomposed'
 
 
 def test_same_revision_conflicting_terminal_digest_fails_closed(tmp_path: Path) -> None:
