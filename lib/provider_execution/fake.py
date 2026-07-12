@@ -197,7 +197,11 @@ def _reply_for_body(
     body = job.request.body
     marker = body.strip()
     effective_body = _effective_request_body(job)
-    workflow_reply = _decision029_reply(agent_name=agent_name, body=effective_body)
+    workflow_reply = _decision029_reply(
+        agent_name=agent_name,
+        body=effective_body,
+        notification_required=job.request.task_id != 'decision029-closure-no-notify',
+    )
     if workflow_reply is None:
         workflow_reply = _workflow_role_bundle_reply(agent_name=agent_name, body=effective_body)
     if workflow_reply is None:
@@ -343,6 +347,7 @@ def _effective_request_body(job: JobRecord) -> str:
 
 
 _DECISION029_DIGEST_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
+_DECISION029_SEGMENT_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$')
 _DECISION029_RESULT_BY_AGGREGATE = {
     'pass': 'closure_complete',
     'partial': 'closure_partial',
@@ -378,18 +383,19 @@ _DECISION029_FRONTDESK_FIELDS = {
 }
 
 
-def _decision029_reply(*, agent_name: str, body: str) -> str | None:
+def _decision029_reply(
+    *, agent_name: str, body: str, notification_required: bool = True,
+) -> str | None:
     if agent_name == 'planner' and '**task-set-closure.json**' in body:
-        return _decision029_planner_reply(body)
+        return _decision029_planner_reply(body, notification_required=notification_required)
     if agent_name == 'frontdesk' and '**frontdesk-status.json**' in body:
         return _decision029_frontdesk_reply(body)
     return None
 
 
-def _decision029_planner_reply(body: str) -> str:
+def _decision029_planner_reply(body: str, *, notification_required: bool = True) -> str:
     transport = _decision029_json_section(body, 'task-set-closure.json')
-    allowed_transport = {'schema', 'closure', 'closure_intent'}
-    if set(transport) not in {frozenset(allowed_transport), frozenset(allowed_transport | {'fake_provider_semantics'})}:
+    if set(transport) != {'schema', 'closure', 'closure_intent', 'closure_ref'}:
         raise ValueError('Decision 029 closure transport fields are invalid')
     if transport.get('schema') != 'ccb.plan.task_set_closure_transport.v1':
         raise ValueError('Decision 029 closure transport schema is invalid')
@@ -397,12 +403,12 @@ def _decision029_planner_reply(body: str) -> str:
     intent = transport.get('closure_intent')
     if not isinstance(closure, dict) or not isinstance(intent, dict):
         raise ValueError('Decision 029 closure transport authority is invalid')
-    notification_required = _decision029_fake_semantics(transport.get('fake_provider_semantics'))
     _decision029_validate_closure_intent(intent, closure)
     normalized = _decision029_closure(closure)
+    closure_path = _decision029_closure_ref(transport.get('closure_ref'), closure, intent)
     aggregate_result = str(normalized['aggregate_result'])
     result = _DECISION029_RESULT_BY_AGGREGATE[aggregate_result]
-    evidence_refs = normalized['evidence_refs']
+    evidence_refs = tuple(dict.fromkeys((*normalized['evidence_refs'], closure_path)))
     accepted_scope = normalized['accepted_scope']
     unresolved_scope = normalized['unresolved_scope']
     blockers = normalized['blockers']
@@ -588,16 +594,38 @@ def _decision029_closure(value: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _decision029_fake_semantics(value: object) -> bool:
-    if value is None:
-        return True
-    expected = {
-        'schema': 'ccb.fake.decision029_planner_semantics.v1',
-        'frontdesk_notification_required': False,
-    }
-    if value != expected:
-        raise ValueError('Decision 029 fake provider semantics are invalid')
-    return False
+def _decision029_closure_ref(
+    value: object,
+    closure: dict[str, object],
+    intent: dict[str, object],
+) -> str:
+    required = {'path', 'closure_digest', 'ordered_terminal_evidence_digest'}
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError('Decision 029 closure_ref fields are invalid')
+    path = str(value.get('path') or '')
+    match = re.fullmatch(
+        r'docs/plantree/plans/([^/]+)/task-sets/([^/]+)/closure\.json', path,
+    )
+    if not match:
+        raise ValueError('Decision 029 closure_ref.path is invalid')
+    plan_slug, task_set_id = match.groups()
+    if not _DECISION029_SEGMENT_RE.fullmatch(plan_slug) or not _DECISION029_SEGMENT_RE.fullmatch(task_set_id):
+        raise ValueError('Decision 029 closure_ref.path segments are invalid')
+    if task_set_id != closure.get('task_set_id') or task_set_id != intent.get('task_set_id'):
+        raise ValueError('Decision 029 closure_ref task_set_id mismatch')
+    closure_digest = _decision029_digest(value.get('closure_digest'), 'closure_ref.closure_digest')
+    evidence_digest = _decision029_digest(
+        value.get('ordered_terminal_evidence_digest'),
+        'closure_ref.ordered_terminal_evidence_digest',
+    )
+    if closure_digest != closure.get('closure_digest') or closure_digest != intent.get('closure_digest'):
+        raise ValueError('Decision 029 closure_ref closure_digest mismatch')
+    if (
+        evidence_digest != closure.get('ordered_terminal_evidence_digest')
+        or evidence_digest != intent.get('ordered_terminal_evidence_digest')
+    ):
+        raise ValueError('Decision 029 closure_ref ordered_terminal_evidence_digest mismatch')
+    return path
 
 
 def _decision029_source_request(value: object) -> None:

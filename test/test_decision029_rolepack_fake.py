@@ -34,13 +34,13 @@ def _corpus() -> dict[str, object]:
     return json.loads(CORPUS_PATH.read_text(encoding='utf-8'))
 
 
-def _job(*, agent_name: str, body: str) -> JobRecord:
+def _job(*, agent_name: str, body: str, task_id: str = 'decision029-closure') -> JobRecord:
     return JobRecord(
         job_id=f'job-{agent_name}', submission_id=None, agent_name=agent_name,
         provider='fake',
         request=MessageEnvelope(
             project_id='project-decision029', to_agent=agent_name,
-            from_actor='system', body=body, task_id='decision029-closure',
+            from_actor='system', body=body, task_id=task_id,
             reply_to=None, message_type='ask', delivery_scope=DeliveryScope.SINGLE,
         ),
         status=JobStatus.QUEUED, terminal_decision=None, cancel_requested_at=None,
@@ -48,12 +48,11 @@ def _job(*, agent_name: str, body: str) -> JobRecord:
     )
 
 
-def _planner_body(
-    closure: dict[str, object], *, notification_required: bool = True,
-) -> str:
+def _planner_body(closure: dict[str, object]) -> str:
     envelope = {
         'schema': 'ccb.plan.task_set_closure_transport.v1',
         'closure': closure,
+        'closure_ref': _closure_ref(closure),
         'closure_intent': {
             'intent_id': 'intent-decision029',
             'task_set_id': closure['task_set_id'],
@@ -62,12 +61,18 @@ def _planner_body(
             'closure_digest': closure['closure_digest'],
         },
     }
-    if not notification_required:
-        envelope['fake_provider_semantics'] = {
-            'schema': 'ccb.fake.decision029_planner_semantics.v1',
-            'frontdesk_notification_required': False,
-        }
     return '**task-set-closure.json**\n```json\n' + json.dumps(envelope, sort_keys=True) + '\n```'
+
+
+def _closure_ref(closure: dict[str, object]) -> dict[str, object]:
+    return {
+        'path': (
+            'docs/plantree/plans/agentic-loop-workflow/task-sets/'
+            f"{closure['task_set_id']}/closure.json"
+        ),
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+    }
 
 
 def _payload(reply: str, label: str) -> dict[str, object]:
@@ -133,13 +138,26 @@ def _planner_reply(
     closure: dict[str, object], *, notification_required: bool = True,
 ) -> dict[str, object]:
     reply = FakeProviderAdapter(latency_seconds=0).start(
-        _job(agent_name='planner', body=_planner_body(
-            closure, notification_required=notification_required,
-        )),
+        _job(
+            agent_name='planner', body=_planner_body(closure),
+            task_id=(
+                'decision029-closure' if notification_required
+                else 'decision029-closure-no-notify'
+            ),
+        ),
         context=None,
         now='2026-07-12T00:00:00Z',
     ).reply
     return _payload(reply, 'planner-backfill.json')
+
+
+def _assert_exact_closure_echo(proposal: dict[str, object], path: str) -> None:
+    refs = proposal.get('evidence_refs')
+    status = proposal.get('frontdesk_status')
+    if not isinstance(refs, list) or path not in refs:
+        raise ValueError('proposal omits closure_ref.path')
+    if not isinstance(status, dict) or status.get('evidence_refs') != refs:
+        raise ValueError('embedded Frontdesk status omits exact evidence refs')
 
 
 def test_corpus_is_generator_backed_and_non_acceptance() -> None:
@@ -148,6 +166,14 @@ def test_corpus_is_generator_backed_and_non_acceptance() -> None:
     assert corpus['generator'].endswith('evaluate_task_set_closure')
     assert corpus['closure_representation'] == 'worker2-frozen-digest-string'
     assert corpus['evidence_scope'] == 'source_fake_protocol_only_not_acceptance'
+    assert corpus['transport_contract'] == 'exact-production-envelope-with-script-owned-closure_ref'
+    retry = corpus['retry_authority_contract']
+    assert retry['transport_fields'] == ['source_job_id', 'effective_job_id', 'retry_lineage']
+    assert retry['retry_edge_fields'] == [
+        'message_id', 'source_attempt_id', 'successor_attempt_id',
+        'retry_source_job_id', 'retry_successor_job_id', 'retry_index',
+    ]
+    assert retry['authority'] == 'message-store-and-attempt-store-only-not-provider-options'
 
 
 @pytest.mark.parametrize('scenario', _corpus()['scenarios'], ids=lambda case: case['case_id'])
@@ -165,6 +191,14 @@ def test_fake_planner_accepts_exact_production_closure(tmp_path: Path, scenario:
     assert proposal['aggregate_result'] == scenario['aggregate_result']
     assert proposal['result'] == RESULT_BY_AGGREGATE[scenario['aggregate_result']]
     assert proposal['closure_evidence_digest'] == closure['ordered_terminal_evidence_digest']
+    expected_refs = [
+        *(f"task:{child['task_id']}@{child['task_revision']}#{child['evidence_digest']}"
+          for child in closure['ordered_children']),
+        _closure_ref(closure)['path'],
+    ]
+    assert proposal['evidence_refs'] == expected_refs
+    assert proposal['frontdesk_status']['evidence_refs'] == expected_refs
+    _assert_exact_closure_echo(proposal, str(_closure_ref(closure)['path']))
     assert proposal['frontdesk_status']['aggregate_result'] == scenario['aggregate_result']
     assert proposal['frontdesk_notification_required'] is notification_required
     assert 'accepted_scope' not in closure
@@ -196,18 +230,52 @@ def test_notification_not_required_does_not_launder_non_success(tmp_path: Path) 
     assert proposal['unresolved_scope']
 
 
-def test_fake_notification_semantics_rejects_authority_fields(tmp_path: Path) -> None:
+def test_fake_planner_rejects_unknown_transport_fields(tmp_path: Path) -> None:
     closure = _generated_closure(tmp_path, ['pass'])
-    envelope = json.loads(_planner_body(
-        closure, notification_required=False,
-    ).split('```json\n', 1)[1].rsplit('\n```', 1)[0])
-    envelope['fake_provider_semantics']['aggregate_result'] = 'pass'
+    envelope = json.loads(_planner_body(closure).split('```json\n', 1)[1].rsplit('\n```', 1)[0])
+    envelope['fake_provider_semantics'] = {'frontdesk_notification_required': False}
     body = '**task-set-closure.json**\n```json\n' + json.dumps(envelope) + '\n```'
-    with pytest.raises(ValueError, match='fake provider semantics'):
+    with pytest.raises(ValueError, match='transport fields'):
         FakeProviderAdapter(latency_seconds=0).start(
             _job(agent_name='planner', body=body), context=None,
             now='2026-07-12T00:00:00Z',
         )
+
+
+@pytest.mark.parametrize(
+    ('mutation', 'error'),
+    (
+        (lambda envelope: envelope.pop('closure_ref'), 'transport fields'),
+        (lambda envelope: envelope['closure_ref'].update(extra=True), 'closure_ref fields'),
+        (lambda envelope: envelope['closure_ref'].update(closure_digest='sha256:' + '0' * 64), 'closure_digest mismatch'),
+        (lambda envelope: envelope['closure_ref'].update(ordered_terminal_evidence_digest='sha256:' + '0' * 64), 'ordered_terminal_evidence_digest mismatch'),
+        (lambda envelope: envelope['closure_ref'].update(path='/docs/plantree/plans/demo/task-sets/set-a/closure.json'), 'closure_ref.path'),
+        (lambda envelope: envelope['closure_ref'].update(path=''), 'closure_ref.path'),
+        (lambda envelope: envelope['closure_ref'].update(path='../docs/plantree/plans/demo/task-sets/set-a/closure.json'), 'closure_ref.path'),
+        (lambda envelope: envelope['closure_ref'].update(path='docs/plantree/plans/./task-sets/set-a/closure.json'), 'closure_ref.path'),
+        (lambda envelope: envelope['closure_ref'].update(path=r'docs\plantree\plans\demo\task-sets\set-a\closure.json'), 'closure_ref.path'),
+        (lambda envelope: envelope['closure_ref'].update(path='docs/plantree/plans/demo/task-sets/other/closure.json'), 'task_set_id mismatch'),
+        (lambda envelope: envelope['closure_ref'].update(path='docs/plantree/plans/demo/alternate/set-a/closure.json'), 'closure_ref.path'),
+    ),
+)
+def test_fake_planner_rejects_invalid_closure_ref(tmp_path: Path, mutation, error: str) -> None:
+    closure = _generated_closure(tmp_path, ['pass'])
+    envelope = json.loads(_planner_body(closure).split('```json\n', 1)[1].rsplit('\n```', 1)[0])
+    mutation(envelope)
+    body = '**task-set-closure.json**\n```json\n' + json.dumps(envelope) + '\n```'
+    with pytest.raises(ValueError, match=error):
+        FakeProviderAdapter(latency_seconds=0).start(
+            _job(agent_name='planner', body=body), context=None,
+            now='2026-07-12T00:00:00Z',
+        )
+
+
+def test_fake_protocol_contract_rejects_missing_closure_ref_echo(tmp_path: Path) -> None:
+    closure = _generated_closure(tmp_path, ['pass'])
+    proposal = _planner_reply(closure)
+    proposal['evidence_refs'].remove(_closure_ref(closure)['path'])
+    with pytest.raises(ValueError, match='omits closure_ref.path'):
+        _assert_exact_closure_echo(proposal, str(_closure_ref(closure)['path']))
 
 
 @pytest.mark.parametrize(
@@ -398,7 +466,12 @@ def test_closure_rolepack_templates_use_digest_revision_and_exact_mode() -> None
     assert backfill['mode'] == 'task_set_closure'
     assert backfill['expected_plan_revision'] == 'sha256:<64 lowercase hex>'
     assert list(backfill).count('frontdesk_status') == 1
+    expected_path = 'docs/plantree/plans/<plan_slug>/task-sets/<task_set_id>/closure.json'
+    assert backfill['evidence_refs'] == [expected_path]
+    assert backfill['frontdesk_status']['evidence_refs'] == [expected_path]
     assert 'expected_plan_revision is a digest' in skill
+    assert 'Treat `closure_ref` as script-owned input' in skill
+    assert 'Never rewrite, normalize, infer, or reconstruct that path' in skill
     for mapping in ('pass -> closure_complete', 'partial -> closure_partial', 'replan_required -> task_set_replanned', 'blocked -> closure_blocked'):
         assert mapping in skill
     assert 'No PlanTree write' in skill

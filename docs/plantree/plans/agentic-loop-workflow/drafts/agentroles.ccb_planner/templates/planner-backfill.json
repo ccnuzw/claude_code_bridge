@@ -12,7 +12,7 @@
   "todo_transitions": [],
   "decision_refs": [],
   "open_question_refs": [],
-  "evidence_refs": [],
+  "evidence_refs": ["docs/plantree/plans/<plan_slug>/task-sets/<task_set_id>/closure.json"],
   "accepted_scope": [],
   "unresolved_scope": [],
   "blockers": [],
@@ -35,7 +35,7 @@
       "ref": "stable-milestone-ref",
       "rationale": "semantic reason"
     },
-    "evidence_refs": [],
+    "evidence_refs": ["docs/plantree/plans/<plan_slug>/task-sets/<task_set_id>/closure.json"],
     "user_report_body": "factual user-facing report"
   }
 }

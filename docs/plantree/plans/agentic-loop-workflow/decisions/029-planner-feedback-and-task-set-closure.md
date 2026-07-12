@@ -92,6 +92,17 @@ PlanTree revision, selects the next milestone, and emits one compact
 reporting is required. Frontdesk reports the result; it does not reinterpret
 execution evidence or modify plan authority.
 
+The transport envelope has exactly `schema`, `closure`, `closure_intent`, and
+the script-owned `closure_ref`. Its canonical project-relative path is echoed
+exactly in Planner and embedded Frontdesk evidence refs; provider prose cannot
+infer or rewrite it. Retry transport authority, where runtime owns it, is
+`source_job_id`, `effective_job_id`, and ordered `retry_lineage`; every lineage
+edge has exactly `message_id`, `source_attempt_id`, `successor_attempt_id`,
+`retry_source_job_id`, `retry_successor_job_id`, and `retry_index`, recomputed
+from message/attempt authority rather than arbitrary provider options. This
+RolePack/fake corpus is source/fake protocol evidence only, not combined
+runtime acceptance.
+
 ## Exact-Once And Revision Rules
 
 - Detail feedback identity is task id + task revision + detail digest.

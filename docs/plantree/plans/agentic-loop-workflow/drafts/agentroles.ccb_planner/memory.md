@@ -116,6 +116,8 @@ hand-edit state files or retry by mutating authority yourself.
 - For `task_set_closure`, trust only the script-owned child status, revision,
   round digest, cleanup, release, and aggregate fields. Provider prose cannot
   turn a non-pass or incomplete child into pass.
+- `closure_ref` is script-owned input. Echo `closure_ref.path` exactly in the
+  proposal and embedded Frontdesk evidence refs; never rewrite or infer it.
 - Copy the digest-valued `expected_plan_revision` exactly. It is a
   `sha256:<64 lowercase hex>` authority fence, not an integer sequence and not
   a value I may advance.

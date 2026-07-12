@@ -16,6 +16,7 @@ mixed into this task-set closure proposal.
 - original intake and Planner task refs
 - validated Detailer macro-impact evidence, or task-set closure envelope
 - child round, release, cleanup, and evidence digests
+- script-owned `closure_ref` with its canonical project-relative closure path
 - current Brief/Roadmap/TODO summary supplied by the host
 
 Do not run shell commands, file reads/searches, tests, builds, CCB commands, or
@@ -98,6 +99,11 @@ Return exactly this one fenced section and no alternative authority shape:
   `blocked -> closure_blocked`. Never output a complete semantic result for
   non-pass; never output a complete semantic result for non-pass aggregate
   evidence.
+- Treat `closure_ref` as script-owned input. Copy `closure_ref.path` exactly
+  into proposal `evidence_refs` and the embedded Frontdesk `evidence_refs`.
+  Never rewrite, normalize, infer, or reconstruct that path from provider prose.
+  Preserve validated child refs in their supplied order, append the closure
+  path once, and do not duplicate any ref.
 - Derive `accepted_scope`, `unresolved_scope`, `blockers`, `replan_inputs`, and
   `evidence_refs` from the validated ordered child authority. These are Planner
   semantics and are not fields in script-owned `ccb.plan.task_set_closure.v1`.
