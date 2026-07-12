@@ -24,14 +24,14 @@
     <filter id="softShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000000" flood-opacity="0.24"/>
     </filter>
-    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-      <path d="M0,0 L12,6 L0,12 Z" fill="#79ACFF"/>
+    <marker id="arrowBlue" markerWidth="14" markerHeight="10" refX="12" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L14,5 L0,10 Z" fill="#79ACFF"/>
     </marker>
-    <marker id="arrowMint" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-      <path d="M0,0 L12,6 L0,12 Z" fill="#79D7BF"/>
+    <marker id="arrowMint" markerWidth="14" markerHeight="10" refX="12" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L14,5 L0,10 Z" fill="#79D7BF"/>
     </marker>
-    <marker id="arrowAmber" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
-      <path d="M0,0 L12,6 L0,12 Z" fill="#D7A64C"/>
+    <marker id="arrowAmber" markerWidth="14" markerHeight="10" refX="12" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L14,5 L0,10 Z" fill="#D7A64C"/>
     </marker>
     <style>
       text { font-family: "Noto Sans CJK SC", "Microsoft YaHei", "WenQuanYi Zen Hei", sans-serif; }
@@ -112,17 +112,17 @@
   <text x="835" y="876" class="layer-title">PARALLEL WORK</text>
 
   <!-- Mainline and conditional triage loops: Frontdesk -> Planner -> Orchestrator -->
-  <path d="M1170 544 C1170 578 1180 606 1180 634" fill="none" stroke="#79ACFF" stroke-width="4" marker-end="url(#arrowBlue)"/>
-  <path d="M1310 690 H1340" stroke="#79ACFF" stroke-width="4" marker-end="url(#arrowBlue)"/>
-  <path d="M1500 746 C1450 788 1342 832 1246 882" fill="none" stroke="#79ACFF" stroke-width="4" marker-end="url(#arrowBlue)"/>
+  <path d="M1170 544 C1170 578 1180 606 1180 634" fill="none" stroke="#79ACFF" stroke-width="3" marker-end="url(#arrowBlue)"/>
+  <path d="M1310 690 H1340" stroke="#79ACFF" stroke-width="3" marker-end="url(#arrowBlue)"/>
+  <path d="M1500 746 C1450 788 1342 832 1246 882" fill="none" stroke="#79ACFF" stroke-width="3" marker-end="url(#arrowBlue)"/>
   <text x="1370" y="810" class="flow-label">direct_execution</text>
   <!-- Conditional Detailer loop: needs_detail to Detailer, then local ready to Orchestrator -->
-  <path d="M1700 648 C1785 615 1782 550 1720 506" fill="none" stroke="#79ACFF" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrowBlue)"/>
+  <path d="M1700 648 C1785 615 1782 550 1720 506" fill="none" stroke="#79ACFF" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrowBlue)"/>
   <text x="1762" y="586" class="flow-label">needs_detail</text>
-  <path d="M1400 544 C1350 580 1352 617 1420 648" fill="none" stroke="#79D7BF" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrowMint)"/>
+  <path d="M1400 544 C1350 580 1352 617 1420 648" fill="none" stroke="#79D7BF" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrowMint)"/>
   <text x="1320" y="590" class="flow-label">local ready</text>
   <!-- Conditional Detailer macro return to Planner -->
-  <path d="M1320 510 C1280 545 1260 600 1290 664" fill="none" stroke="#D7A64C" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrowAmber)"/>
+  <path d="M1320 510 C1280 545 1260 600 1290 664" fill="none" stroke="#D7A64C" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrowAmber)"/>
   <text x="1320" y="564" class="flow-label" fill="#F1C36B">macro</text>
 
   <!-- Role cards row 1 -->
@@ -172,8 +172,8 @@
   <text x="1752" y="958" class="card-title">轮次 gate</text>
   <text x="1752" y="990" class="card-body">独立 round gate</text>
 
-  <path d="M1440 954 H1470" stroke="#79D7BF" stroke-width="4" marker-end="url(#arrowMint)"/>
-  <path d="M1700 954 H1730" stroke="#79D7BF" stroke-width="4" marker-end="url(#arrowMint)"/>
+  <path d="M1440 954 H1470" stroke="#79D7BF" stroke-width="3" marker-end="url(#arrowMint)"/>
+  <path d="M1700 954 H1730" stroke="#79D7BF" stroke-width="3" marker-end="url(#arrowMint)"/>
 
   <!-- Control spine -->
   <g filter="url(#glow)">
@@ -197,13 +197,13 @@
   <!-- Closure loop -->
   <g transform="translate(790 1116)">
     <rect width="1490" height="90" rx="20" fill="#0E2227" stroke="#326461" stroke-width="2"/>
-    <path d="M44 45 H115" stroke="url(#line)" stroke-width="5" marker-end="url(#arrowMint)"/>
+    <path d="M44 45 H115" stroke="url(#line)" stroke-width="3" marker-end="url(#arrowMint)"/>
     <text x="145" y="36" class="foot-strong">child outcome aggregate</text>
     <text x="145" y="65" class="foot">程序聚合稳定 child outcome</text>
-    <path d="M570 45 H642" stroke="url(#line)" stroke-width="5" marker-end="url(#arrowMint)"/>
+    <path d="M570 45 H642" stroke="url(#line)" stroke-width="3" marker-end="url(#arrowMint)"/>
     <text x="674" y="36" class="foot-strong">Planner backfill</text>
     <text x="674" y="65" class="foot">revision-fenced Brief / Roadmap / TODO</text>
-    <path d="M1110 45 H1182" stroke="url(#line)" stroke-width="5" marker-end="url(#arrowMint)"/>
+    <path d="M1110 45 H1182" stroke="url(#line)" stroke-width="3" marker-end="url(#arrowMint)"/>
     <text x="1210" y="36" class="foot-strong">Frontdesk status</text>
     <text x="1210" y="65" class="foot">向用户报告已导入的权威结果</text>
   </g>
