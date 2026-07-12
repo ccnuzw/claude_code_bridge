@@ -9,12 +9,13 @@ typedef AgentChatAgentIsActive = bool Function(String agentName);
 
 const initialTimelineScrollOffset = 1000000000.0;
 const agentChatFollowLatestScrollDuration = Duration(milliseconds: 180);
+const double agentChatLayoutCorrectionTolerance = 0.5;
 
 class AgentChatUiControllerStore {
   final Map<String, TextEditingController> _draftControllers = {};
   final Map<String, FocusNode> _draftFocusNodes = {};
   final Map<String, List<CcbMessageAttachment>> _draftAttachments = {};
-  final Map<String, ScrollController> _scrollControllers = {};
+  final Map<String, _AgentChatTimelineScrollController> _scrollControllers = {};
   final Map<String, int> _timelineAutoFollowGenerations = {};
 
   TextEditingController draftController(String agentName) {
@@ -53,8 +54,20 @@ class AgentChatUiControllerStore {
   ScrollController timelineScrollController(String agentName) {
     return _scrollControllers.putIfAbsent(
       agentName,
-      () => ScrollController(initialScrollOffset: initialTimelineScrollOffset),
+      () => _AgentChatTimelineScrollController(
+        initialScrollOffset: initialTimelineScrollOffset,
+      ),
     );
+  }
+
+  void anchorTimelineToEndForNextLayout(String agentName) {
+    final controller = _scrollControllers[agentName];
+    if (controller == null ||
+        !controller.hasClients ||
+        controller.position.isScrollingNotifier.value) {
+      return;
+    }
+    controller.anchorToEndForNextLayout();
   }
 
   bool isTimelineNearEnd(String agentName) {
@@ -129,5 +142,80 @@ class AgentChatUiControllerStore {
     for (final controller in _scrollControllers.values) {
       controller.dispose();
     }
+  }
+}
+
+class _AgentChatTimelineScrollController extends ScrollController {
+  _AgentChatTimelineScrollController({required super.initialScrollOffset});
+
+  bool _anchorToEndForNextLayout = false;
+  int _anchorGeneration = 0;
+
+  void anchorToEndForNextLayout() {
+    _anchorToEndForNextLayout = true;
+    final generation = ++_anchorGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_anchorGeneration == generation) {
+        _anchorToEndForNextLayout = false;
+      }
+    });
+  }
+
+  bool get shouldAnchorToEndForNextLayout => _anchorToEndForNextLayout;
+
+  void consumeEndAnchor() {
+    _anchorToEndForNextLayout = false;
+  }
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) {
+    return _AgentChatTimelineScrollPosition(
+      physics: physics,
+      context: context,
+      initialPixels: initialScrollOffset,
+      keepScrollOffset: keepScrollOffset,
+      oldPosition: oldPosition,
+      debugLabel: debugLabel,
+      shouldAnchorToEnd: () => shouldAnchorToEndForNextLayout,
+      consumeEndAnchor: consumeEndAnchor,
+    );
+  }
+}
+
+class _AgentChatTimelineScrollPosition extends ScrollPositionWithSingleContext {
+  _AgentChatTimelineScrollPosition({
+    required super.physics,
+    required super.context,
+    required super.initialPixels,
+    required super.keepScrollOffset,
+    required super.oldPosition,
+    required super.debugLabel,
+    required bool Function() shouldAnchorToEnd,
+    required VoidCallback consumeEndAnchor,
+  }) : _shouldAnchorToEnd = shouldAnchorToEnd,
+       _consumeEndAnchor = consumeEndAnchor;
+
+  final bool Function() _shouldAnchorToEnd;
+  final VoidCallback _consumeEndAnchor;
+
+  @override
+  bool correctForNewDimensions(
+    ScrollMetrics oldPosition,
+    ScrollMetrics newPosition,
+  ) {
+    if (!_shouldAnchorToEnd()) {
+      return super.correctForNewDimensions(oldPosition, newPosition);
+    }
+    final target = newPosition.maxScrollExtent;
+    if ((target - pixels).abs() > agentChatLayoutCorrectionTolerance) {
+      correctPixels(target);
+      return false;
+    }
+    _consumeEndAnchor();
+    return true;
   }
 }

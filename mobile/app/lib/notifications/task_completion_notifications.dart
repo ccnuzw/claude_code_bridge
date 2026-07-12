@@ -494,6 +494,7 @@ abstract interface class GatewayTaskCompletionNotificationStreamClient {
     GatewayPairedHost host, [
     String? lastEventId,
     GatewayInvalidationWatch? watch,
+    void Function()? onConnected,
   ]);
 }
 
@@ -514,6 +515,7 @@ class HttpGatewayTaskCompletionNotificationStreamClient
     GatewayPairedHost host, [
     String? lastEventId,
     GatewayInvalidationWatch? watch,
+    void Function()? onConnected,
   ]) async* {
     final base = host.profile.routeProvider.gatewayUrl.resolve(streamPath);
     final uri = base.replace(
@@ -543,6 +545,7 @@ class HttpGatewayTaskCompletionNotificationStreamClient
         body,
       );
     }
+    onConnected?.call();
     yield* _eventsFromSseLines(
       response.transform(utf8.decoder).transform(const LineSplitter()),
     );
@@ -710,7 +713,17 @@ class TaskCompletionNotificationController {
     try {
       _terminalStreamError = false;
       _eventSubscription = _streamClient
-          .subscribe(host, _lastConfirmedEventId, _watch)
+          .subscribe(host, _lastConfirmedEventId, _watch, () {
+            if (!_isCurrentHost(host)) {
+              return;
+            }
+            _nextReconnectDelay = _initialReconnectDelay;
+            _reconnectAttempt = 0;
+            _emitConnectionState(
+              GatewayInvalidationConnectionState.connected,
+              null,
+            );
+          })
           .listen(
             _enqueueEvent,
             onError: (Object error, StackTrace _) {
@@ -729,7 +742,6 @@ class TaskCompletionNotificationController {
               }
             },
           );
-      _emitConnectionState(GatewayInvalidationConnectionState.connected, null);
     } catch (_) {
       _scheduleReconnect();
     }
@@ -795,8 +807,7 @@ class TaskCompletionNotificationController {
     _nextReconnectDelay = _initialReconnectDelay;
     _reconnectAttempt = 0;
     _emitConnectionState(GatewayInvalidationConnectionState.connected, null);
-    final retainedBaseline =
-        _isBaselineEvent(event) && !event.isResyncRequired;
+    final retainedBaseline = _isBaselineEvent(event) && !event.isResyncRequired;
     if (!retainedBaseline) {
       await _onInvalidationEvent?.call(event);
     }

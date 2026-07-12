@@ -253,8 +253,11 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     if (!mounted) {
       return;
     }
-    setState(update);
     final agentName = widget.agent?.name;
+    if (agentName != null && _isTimelineNearEnd(agentName)) {
+      _uiControllers.anchorTimelineToEndForNextLayout(agentName);
+    }
+    setState(update);
     if (agentName != null) {
       unawaited(_persistLocalMessages(agentName));
     }

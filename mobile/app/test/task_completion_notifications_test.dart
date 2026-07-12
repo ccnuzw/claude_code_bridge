@@ -317,6 +317,42 @@ void main() {
     );
 
     test(
+      'connection state waits for the notification HTTP handshake',
+      () async {
+        final streamClient = _DelayedConnectionTaskCompletionStreamClient();
+        final states = <GatewayInvalidationConnectionState>[];
+        final controller = TaskCompletionNotificationController(
+          streamClient: streamClient,
+          localNotifications: _FakeTaskCompletionLocalNotifications(),
+          seenStore: TaskCompletionSeenDedupeStore(
+            secureStore: MemorySecureStore(),
+          ),
+          onTap: (_) {},
+          onConnectionStateChanged: (state, _) => states.add(state),
+          initialReconnectDelay: const Duration(hours: 1),
+        );
+
+        await controller.start(_host(scopes: const {'notify'}));
+        expect(
+          states.where(
+            (state) => state == GatewayInvalidationConnectionState.connected,
+          ),
+          isEmpty,
+        );
+
+        streamClient.markConnected();
+        await _drain();
+        expect(states.last, GatewayInvalidationConnectionState.connected);
+
+        streamClient.addError(StateError('connection lost'));
+        await _drain();
+        expect(states.last, GatewayInvalidationConnectionState.reconnecting);
+
+        await controller.dispose();
+      },
+    );
+
+    test(
       'persists SSE id and resumes it after a normal controller restart',
       () async {
         final secureStore = MemorySecureStore();
@@ -767,6 +803,7 @@ class _FakeTaskCompletionStreamClient
     GatewayPairedHost host, [
     String? lastEventId,
     GatewayInvalidationWatch? watch,
+    void Function()? onConnected,
   ]) {
     subscribeCalls += 1;
     lastEventIds.add(lastEventId);
@@ -792,11 +829,37 @@ class _ReconnectTaskCompletionStreamClient
     GatewayPairedHost host, [
     String? lastEventId,
     GatewayInvalidationWatch? watch,
+    void Function()? onConnected,
   ]) {
     subscribeCalls += 1;
     final controller = StreamController<TaskCompletionNotificationEvent>();
     _controllers.add(controller);
     return controller.stream;
+  }
+}
+
+class _DelayedConnectionTaskCompletionStreamClient
+    implements GatewayTaskCompletionNotificationStreamClient {
+  final _controller = StreamController<TaskCompletionNotificationEvent>();
+  void Function()? _onConnected;
+
+  void markConnected() {
+    _onConnected?.call();
+  }
+
+  void addError(Object error) {
+    _controller.addError(error);
+  }
+
+  @override
+  Stream<TaskCompletionNotificationEvent> subscribe(
+    GatewayPairedHost host, [
+    String? lastEventId,
+    GatewayInvalidationWatch? watch,
+    void Function()? onConnected,
+  ]) {
+    _onConnected = onConnected;
+    return _controller.stream;
   }
 }
 

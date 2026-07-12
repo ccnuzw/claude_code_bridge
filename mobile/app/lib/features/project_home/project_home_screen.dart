@@ -188,6 +188,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   Duration? _gatewayReconnectRetryIn;
   bool _invalidationRefreshInFlight = false;
   bool _invalidationRefreshQueued = false;
+  bool _gatewayRecoveryInFlight = false;
   int _conversationInvalidationRevision = 0;
   AppLifecycleState _appLifecycleState =
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
@@ -360,7 +361,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           onRetryConnection:
               _gatewayConnectionState ==
                       GatewayInvalidationConnectionState.reconnecting
-                  ? _taskNotifications.retryNow
+                  ? _retryGatewayConnection
                   : null,
         );
       },
@@ -415,6 +416,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         final view = await _activeRepository
             .getProjectView(_activeProjectId)
             .timeout(projectHomeRuntimeViewLoadTimeout);
+        _markGatewayRequestSucceeded();
         _rememberProjectActivity(view);
         _persistProjectViewSnapshot(view);
         _updateNotificationWatch(view);
@@ -426,20 +428,23 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }
 
   Future<List<CcbProject>> _loadServerProjects() {
+    return _deferredBuilderFuture(_fetchServerProjects);
+  }
+
+  Future<List<CcbProject>> _fetchServerProjects() async {
     final profile = _selectedProfile;
-    return _deferredBuilderFuture(() async {
-      try {
-        final projects = _sortProjectsWithLocalActivity(
-          await _activeRepository.listProjects().timeout(
-            projectHomeRuntimeViewLoadTimeout,
-          ),
-        );
-        _persistProjectsSnapshot(projects);
-        return projects;
-      } catch (error) {
-        throw await _gatewayRequestFailure(profile, error);
-      }
-    });
+    try {
+      final projects = _sortProjectsWithLocalActivity(
+        await _activeRepository.listProjects().timeout(
+          projectHomeRuntimeViewLoadTimeout,
+        ),
+      );
+      _markGatewayRequestSucceeded();
+      _persistProjectsSnapshot(projects);
+      return projects;
+    } catch (error) {
+      throw await _gatewayRequestFailure(profile, error);
+    }
   }
 
   Future<Object> _gatewayRequestFailure(
@@ -811,7 +816,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       onRetryConnection:
           _gatewayConnectionState ==
                   GatewayInvalidationConnectionState.reconnecting
-              ? _taskNotifications.retryNow
+              ? _retryGatewayConnection
               : null,
     );
   }
@@ -1463,6 +1468,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         return null;
       }
       final refreshed = outcome.refreshedView!;
+      _markGatewayRequestSucceeded();
       _persistProjectViewSnapshot(refreshed);
       _updateNotificationWatch(refreshed);
       setState(() {
@@ -1505,22 +1511,55 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   void _handleGatewayConnectionStateChanged(
     GatewayInvalidationConnectionState state,
-    Duration? retryIn,
+    Duration? _,
   ) {
     if (!mounted || _mode != AppRuntimeMode.pairedGateway) {
       return;
     }
-    final wasReconnecting =
-        _gatewayConnectionState ==
-        GatewayInvalidationConnectionState.reconnecting;
-    setState(() {
-      _gatewayConnectionState = state;
-      _gatewayReconnectRetryIn = retryIn;
-    });
+    // The notification SSE is an optional live-update channel. Its transport
+    // can reconnect independently while ordinary gateway HTTP requests remain
+    // healthy, so it must not disable chat or insert/remove gateway UI.
     if (state == GatewayInvalidationConnectionState.connected &&
-        wasReconnecting) {
-      unawaited(_refreshAfterGatewayReconnect());
+        _gatewayConnectionState ==
+            GatewayInvalidationConnectionState.reconnecting) {
+      _verifyGatewayRecovery();
     }
+  }
+
+  void _markGatewayRequestSucceeded() {
+    if (!mounted ||
+        _mode != AppRuntimeMode.pairedGateway ||
+        (_gatewayConnectionState ==
+                GatewayInvalidationConnectionState.connected &&
+            _gatewayReconnectRetryIn == null)) {
+      return;
+    }
+    setState(() {
+      _gatewayConnectionState = GatewayInvalidationConnectionState.connected;
+      _gatewayReconnectRetryIn = null;
+    });
+  }
+
+  void _retryGatewayConnection() {
+    _taskNotifications.retryNow();
+    _verifyGatewayRecovery();
+  }
+
+  void _verifyGatewayRecovery() {
+    if (_gatewayRecoveryInFlight) {
+      return;
+    }
+    _gatewayRecoveryInFlight = true;
+    unawaited(() async {
+      try {
+        await _refreshAfterGatewayReconnect(requireSuccess: true);
+      } catch (_) {
+        // The existing reconnect banner remains until a core gateway request
+        // succeeds; the next stream recovery or manual Retry probes again.
+      } finally {
+        _gatewayRecoveryInFlight = false;
+      }
+    }());
   }
 
   void _handleGatewayStreamError(Object error) {
@@ -1545,7 +1584,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }) async {
     if (_activeProjectId.isEmpty) {
       try {
-        final projects = await _loadServerProjects();
+        final projects = await _fetchServerProjects();
         if (mounted && _activeProjectId.isEmpty) {
           setState(() {
             _serverProjectsFuture = SynchronousFuture(projects);
@@ -1587,7 +1626,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
             TaskCompletionNotificationEvent.projectSummaryChangedKind &&
         _activeProjectId.isEmpty) {
       try {
-        final projects = await _loadServerProjects();
+        final projects = await _fetchServerProjects();
         if (mounted && _activeProjectId.isEmpty) {
           setState(() {
             _serverProjectsFuture = SynchronousFuture(projects);

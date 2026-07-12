@@ -96,6 +96,59 @@ void main() {
   });
 
   testWidgets(
+    'notification stream retry does not reflow or disable the active chat',
+    (tester) async {
+      final streamClient = _FakeTaskCompletionStreamClient();
+      final profileStore = await _profileStoreWith([
+        _pairedHost(scopes: const {'view', 'focus', 'notify'}),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProjectHomeScreen(
+            repository: FakeMobileCcbRepository.demo(),
+            profileStore: profileStore,
+            autoActivateStoredProfile: true,
+            gatewayRepositoryFactory: (_) => RecordingGatewayRepository(),
+            gatewayTerminalTransportFactory:
+                (_) => RecordingTerminalTransport(),
+            taskNotificationStreamClient: streamClient,
+            taskCompletionLocalNotifications:
+                _FakeTaskCompletionLocalNotifications(),
+            taskCompletionSeenStore: TaskCompletionSeenDedupeStore(
+              secureStore: MemorySecureStore(),
+            ),
+            taskCompletionUnreadStore: TaskCompletionUnreadStore(
+              secureStore: MemorySecureStore(),
+            ),
+            invalidationCursorStore: _cursorStore(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _pumpUntilSubscribed(tester, streamClient);
+      await tester.tap(find.byKey(const ValueKey('project-open-proj-demo')));
+      await tester.pumpAndSettle();
+
+      final workspace = find.byKey(const ValueKey('selected-agent-workspace'));
+      final topBefore = tester.getTopLeft(workspace).dy;
+      streamClient.addError(StateError('temporary notification disconnect'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('gateway-reconnecting-banner')),
+        findsNothing,
+      );
+      expect(tester.getTopLeft(workspace).dy, topBefore);
+      final sendButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('agent-message-send-button')),
+      );
+      expect(sendButton.onPressed, isNotNull);
+    },
+  );
+
+  testWidgets(
     'retained old completion does not notify or mark project unread',
     (tester) async {
       final streamClient = _FakeTaskCompletionStreamClient();
@@ -232,6 +285,10 @@ void main() {
       ),
     );
     await _pumpNotificationEvent(tester);
+    await tester.idle();
+    await tester.pump();
+    await tester.idle();
+    await tester.pump();
 
     expect(repository.listProjectsCalls, greaterThan(callsBefore));
     expect(localNotifications.shown, isEmpty);
@@ -504,11 +561,16 @@ class _FakeTaskCompletionStreamClient
     _controller.add(event);
   }
 
+  void addError(Object error) {
+    _controller.addError(error);
+  }
+
   @override
   Stream<TaskCompletionNotificationEvent> subscribe(
     GatewayPairedHost host, [
     String? lastEventId,
     GatewayInvalidationWatch? watch,
+    void Function()? onConnected,
   ]) {
     subscribeCalls += 1;
     return _controller.stream.map((event) {

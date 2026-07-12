@@ -324,6 +324,41 @@ void main() {
     expect(_composerGap(tester), lessThanOrEqualTo(8));
   });
 
+  testWidgets(
+    'remote latest bubble stays visible on its first replacement frame',
+    (tester) async {
+      await setTestSurfaceSize(tester, const Size(390, 844));
+      final repository = _MutableLongConversationRepository(messageCount: 120);
+      await tester.pumpWidget(
+        MaterialApp(home: ProjectHomeScreen(repository: repository)),
+      );
+      await tester.pumpAndSettle();
+      await openCurrentProject(tester);
+
+      repository.appendReply(
+        'remote-first-frame',
+        'Remote reply must not flash below the viewport before auto-follow.',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('agent-conversation-refresh-action')),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final latest = find.byKey(
+        conversationTimelineItemKey('remote-first-frame'),
+      );
+      expect(latest, findsOneWidget);
+      final itemBottom = tester.getBottomRight(latest).dy;
+      final timelineBottom =
+          tester
+              .getBottomRight(find.byKey(const ValueKey('agent-chat-timeline')))
+              .dy;
+      expect(itemBottom, lessThanOrEqualTo(timelineBottom));
+      expect(timelineBottom - itemBottom, lessThan(140));
+    },
+  );
+
   testWidgets('collapsed composer keeps latest bubble tight to composer', (
     tester,
   ) async {
