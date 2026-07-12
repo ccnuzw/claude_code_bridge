@@ -56,7 +56,6 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
   final executionStatus = agentExecutionStatus(
     agent: agent,
     isAwaitingAgentResponse: isAwaitingAgentResponse,
-    isLoadingConversation: isLoadingConversation,
     hasLocalExecutionException: hasLocalExecutionException,
   );
   final timelineItems = [

@@ -63,7 +63,6 @@ void main() {
                 executionStatus: agentExecutionStatus(
                   agent: _agent(),
                   isAwaitingAgentResponse: true,
-                  isLoadingConversation: false,
                 ),
                 workingReplyItemId: workingPlaceholder.id,
               ),

@@ -970,7 +970,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     final status = agentExecutionStatus(
       agent: refreshedAgent,
       isAwaitingAgentResponse: false,
-      isLoadingConversation: false,
     );
     if (status.state == 'working') {
       _sourceWorkingAgentNames.add(agentName);

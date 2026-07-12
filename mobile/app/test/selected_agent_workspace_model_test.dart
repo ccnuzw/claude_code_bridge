@@ -295,6 +295,34 @@ void main() {
     expect(model.executionStatus?.isRefreshing, isFalse);
   });
 
+  test('loading idle agent history does not create a working bubble', () {
+    final chatController = AgentChatController();
+    final agent = _agent(
+      activityState: 'idle',
+      activitySource: 'provider_pane',
+      activityReason: 'provider_prompt_idle',
+    );
+    chatController.beginLoadingConversation(agent.name);
+
+    final model = selectedAgentWorkspaceModel(
+      view: _view(agent: agent),
+      agent: agent,
+      chatController: chatController,
+      isAwaitingAgentResponse: false,
+    );
+
+    expect(model.isLoadingConversation, isTrue);
+    expect(model.executionStatus?.state, 'idle');
+    expect(model.workingReplyItemId, isNull);
+    expect(
+      model.timelineItems.where(
+        (item) =>
+            item.id == syntheticAgentWorkingConversationItemId(agent.name),
+      ),
+      isEmpty,
+    );
+  });
+
   test(
     'reports idle when provider prompt idle reason accompanies idle state',
     () {

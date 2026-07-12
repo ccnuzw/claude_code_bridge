@@ -138,7 +138,6 @@ void main() {
               executionStatus: agentExecutionStatus(
                 agent: agent,
                 isAwaitingAgentResponse: true,
-                isLoadingConversation: true,
               ),
               workingReplyItemId: workingPlaceholder.id,
             ),

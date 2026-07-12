@@ -15,7 +15,6 @@ class AgentExecutionStatus {
 AgentExecutionStatus agentExecutionStatus({
   required CcbAgent agent,
   required bool isAwaitingAgentResponse,
-  required bool isLoadingConversation,
   bool hasLocalExecutionException = false,
 }) {
   final state = _normalized(agent.activityState);
@@ -49,13 +48,6 @@ AgentExecutionStatus agentExecutionStatus({
       isRefreshing: false,
     );
   }
-  if (isLoadingConversation) {
-    return const AgentExecutionStatus(
-      label: 'Working',
-      state: 'working',
-      isRefreshing: true,
-    );
-  }
   if (_isIdleActivity(state)) {
     return const AgentExecutionStatus(
       label: 'Idle',
@@ -74,7 +66,6 @@ bool agentHasSourceWorkingActivity(CcbAgent agent) {
   final status = agentExecutionStatus(
     agent: agent,
     isAwaitingAgentResponse: false,
-    isLoadingConversation: false,
   );
   return status.state == 'working';
 }
