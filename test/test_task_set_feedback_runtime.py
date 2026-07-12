@@ -10,9 +10,14 @@ from cli.services.ask_runtime import AskSummary
 from cli.models_start import ParsedLoopRunnerCommand
 from cli.services.loop_runner import loop_runner_auto, loop_runner_once
 from cli.services.task_set_feedback_runtime import advance_task_set_feedback_runtime
+from cli.services.task_set_feedback_runtime import _deps
 
 
 _EVIDENCE_DIGEST = 'sha256:' + 'a' * 64
+
+
+def test_runtime_wires_default_transactional_planner_apply() -> None:
+    assert _deps(None).apply_planner_feedback.__module__ == 'cli.services.planner_feedback_apply'
 
 
 def _context(tmp_path: Path):
@@ -37,6 +42,7 @@ def _authority(tmp_path: Path, *, revision: int = 1) -> tuple[dict[str, object],
     task_set = {
         'task_set_id': 'set-a',
         'task_set_revision': revision,
+        'plan_slug': 'demo',
         'state': 'closure_pending',
         'plan_revision': {'revision': 7, 'digest': 'sha256:' + 'c' * 64},
         'closure': {
@@ -77,7 +83,7 @@ def _planner_reply(*, notify: bool = True) -> str:
     proposal = {
         'schema': 'ccb.planner.backfill_proposal.v1',
         'mode': 'task_set_closure',
-        'expected_plan_revision': 7,
+        'expected_plan_revision': 'sha256:' + 'c' * 64,
         'task_or_task_set_id': 'set-a',
         'task_or_task_set_revision': 1,
         'closure_evidence_digest': _EVIDENCE_DIGEST,
@@ -120,7 +126,7 @@ class Harness:
             find_task_set_transport_job=self.find,
             apply_planner_feedback=self.apply,
             settle_task_set_feedback=self.settle,
-            resolve_plan_revision=lambda *_args, **_kwargs: 7,
+            resolve_plan_revision=lambda *_args, **_kwargs: 'sha256:' + 'c' * 64,
         )
 
     def discover(self, _context, **_kwargs):

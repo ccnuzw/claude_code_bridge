@@ -50,7 +50,7 @@ class PlannerFeedbackError(ValueError):
 class PlannerBackfillProposal:
     schema: str
     mode: str
-    expected_plan_revision: int
+    expected_plan_revision: str
     task_or_task_set_id: str
     task_or_task_set_revision: int
     closure_evidence_digest: str
@@ -109,7 +109,7 @@ def parse_planner_feedback_reply(reply: str) -> PlannerBackfillProposal:
     if schema != _BACKFILL_SCHEMA:
         raise PlannerFeedbackError('planner_backfill_schema_invalid', f'expected schema {_BACKFILL_SCHEMA}')
     mode = _enum(payload['mode'], _MODES, label='mode')
-    expected_plan_revision = _positive_int(payload['expected_plan_revision'], label='expected_plan_revision')
+    expected_plan_revision = _digest(payload['expected_plan_revision'], label='expected_plan_revision')
     identity = _identifier(payload['task_or_task_set_id'], label='task_or_task_set_id')
     identity_revision = _positive_int(payload['task_or_task_set_revision'], label='task_or_task_set_revision')
     closure_digest = _digest(payload['closure_evidence_digest'], label='closure_evidence_digest')
@@ -183,7 +183,7 @@ def validate_planner_feedback_authority(
     proposal: PlannerBackfillProposal,
     *,
     mode: str,
-    expected_plan_revision: int,
+    expected_plan_revision: str,
     task_or_task_set_id: str,
     task_or_task_set_revision: int,
     closure_evidence_digest: str,

@@ -164,6 +164,59 @@ def plan_task(context, command) -> dict[str, object]:
     raise ValueError(f'unsupported plan task action: {action}')
 
 
+def settle_task_set_parent(
+    context,
+    *,
+    task_id: str,
+    task_set_id: str,
+    task_set_revision: int,
+    aggregate_result: str,
+    closure_digest: str,
+    planner_feedback_digest: str,
+) -> dict[str, object]:
+    """Settle a decomposed source task exactly once from imported closure authority."""
+    status_by_result = {
+        'pass': 'done',
+        'partial': 'partial',
+        'replan_required': 'replan_required',
+        'blocked': 'blocked',
+    }
+    if aggregate_result not in status_by_result:
+        raise ValueError('task-set parent aggregate result invalid')
+    task = _require_task(context, task_id)
+    with file_lock(_task_lock_path(context, task['record'])):
+        task = _require_task(context, task_id)
+        record = _materialize_task_revision(task['record'])
+        binding = record.get('task_set_parent') if isinstance(record.get('task_set_parent'), dict) else {}
+        if binding.get('task_set_id') != task_set_id or binding.get('task_set_revision') != task_set_revision:
+            raise ValueError('task-set parent binding authority mismatch')
+        settlement = {
+            'schema': 'ccb.plan.task_set_parent_settlement.v1',
+            'task_set_id': task_set_id,
+            'task_set_revision': task_set_revision,
+            'aggregate_result': aggregate_result,
+            'closure_digest': closure_digest,
+            'planner_feedback_digest': planner_feedback_digest,
+        }
+        existing = record.get('task_set_closure')
+        if existing is not None:
+            if existing != settlement:
+                raise ValueError('task-set parent settlement authority conflict')
+            return {'status': 'settled', 'task': record, 'idempotent': True}
+        if record.get('status') != 'decomposed':
+            raise ValueError('task-set parent is not decomposed')
+        status = status_by_result[aggregate_result]
+        record['task_set_closure'] = settlement
+        record['status'] = status
+        record['owner'] = _owner_for_status(status)
+        record['next_owner'] = _default_next_owner_for_status(status)
+        record['activation_reason'] = f'task_set_closed:{task_set_id}:r{task_set_revision}'
+        record['updated_at'] = _utc_now()
+        _replace_record(task['tasks_root'], task['index'], record)
+        _write_task_readme(context, record)
+        return {'status': 'settled', 'task': record, 'idempotent': False}
+
+
 def _task_create(context, command) -> dict[str, object]:
     plan_slug = _normalize_segment(command.plan_slug, label='plan')
     title = str(command.title or '').strip()

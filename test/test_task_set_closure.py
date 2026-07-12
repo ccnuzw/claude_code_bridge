@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli.services.plan_tasks import find_first_actionable_task, plan_task
+from cli.services.plan_tasks import find_first_actionable_task, plan_task, settle_task_set_parent
 from cli.services.task_set_closure import (
     create_task_set_authority,
     evaluate_task_set_closure,
@@ -182,6 +182,42 @@ def test_task_set_parent_is_decomposed_and_children_are_revision_bound(tmp_path:
 
 
 @pytest.mark.parametrize(
+    ('aggregate_result', 'expected_status', 'expected_owner'),
+    (
+        ('pass', 'done', 'frontdesk'),
+        ('partial', 'partial', 'planner'),
+        ('replan_required', 'replan_required', 'planner'),
+        ('blocked', 'blocked', 'frontdesk'),
+    ),
+)
+def test_task_set_parent_settlement_maps_each_aggregate_exactly_once(
+    tmp_path: Path,
+    aggregate_result: str,
+    expected_status: str,
+    expected_owner: str,
+) -> None:
+    context = _context(tmp_path)
+    created = _create_set(context, [('child-a', True)])
+    task_set_id = created['task_set']['task_set_id']
+    authority = dict(
+        task_id='source-intake',
+        task_set_id=task_set_id,
+        task_set_revision=1,
+        aggregate_result=aggregate_result,
+        closure_digest='sha256:' + 'c' * 64,
+        planner_feedback_digest='sha256:' + 'f' * 64,
+    )
+
+    first = settle_task_set_parent(context, **authority)
+    replay = settle_task_set_parent(context, **authority)
+
+    assert first['idempotent'] is False
+    assert replay['idempotent'] is True
+    assert replay['task']['status'] == expected_status
+    assert replay['task']['owner'] == expected_owner
+
+
+@pytest.mark.parametrize(
     ('results', 'expected', 'reason'),
     (
         (('pass', 'pass'), 'pass', 'all_required_children_passed'),
@@ -209,6 +245,7 @@ def test_task_set_aggregate_precedence_rows(
     )
 
     assert closed['status'] == 'closure_pending'
+    assert closed['closure']['expected_plan_revision'].startswith('sha256:')
     assert closed['closure']['aggregate_result'] == expected
     assert closed['closure']['reason'] == reason
     assert closed['closure_intent']['status'] == 'pending_planner_backfill'
@@ -293,16 +330,47 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
     _complete(context, 'child-a', 'pass')
     closed = evaluate_task_set_closure(context, task_set_id=task_set_id, plan_task_fn=plan_task)
     intent = closed['closure_intent']
+    root = Path(context.project.project_root)
+    task_set_root = root / 'docs/plantree/plans/demo/task-sets' / task_set_id
+    feedback_digest = 'sha256:' + 'f' * 64
+    planner_job_id = 'job_planner'
+    backfill_path = task_set_root / 'planner-backfill.json'
+    backfill_path.write_text(json.dumps({
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'closure_digest': closed['closure']['closure_digest'],
+        'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+        'planner_job_id': planner_job_id,
+        'planner_feedback_digest': feedback_digest,
+        'aggregate_result': 'pass',
+    }), encoding='utf-8')
+    runtime_path = root / '.ccb/runtime/task-sets' / task_set_id / 'feedback-r1.json'
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_path.write_text(json.dumps({
+        'stage': 'closed',
+        'planner': {'job_id': planner_job_id},
+        'frontdesk': None,
+        'notification': {'status': 'notification_not_required'},
+    }), encoding='utf-8')
     authority = dict(
         task_set_id=task_set_id,
         task_set_revision=1,
         intent_id=intent['intent_id'],
         ordered_terminal_evidence_digest=intent['ordered_terminal_evidence_digest'],
         transport_ref={
-            'runtime_state_path': '.ccb/runtime/task-sets/state.json',
-            'planner_job_id': 'job_planner',
+            'runtime_state_path': str(runtime_path),
+            'planner_job_id': planner_job_id,
+            'planner_backfill_path': str(backfill_path),
+            'planner_feedback_digest': feedback_digest,
+            'notification_status': 'notification_not_required',
         },
     )
+
+    with pytest.raises(ValueError, match='intent not found'):
+        settle_task_set_closure_feedback(context, **{**authority, 'intent_id': 'tsi-wrong'})
+    assert plan_task(
+        context, SimpleNamespace(action='task-show', task_id='source-intake')
+    )['task']['status'] == 'decomposed'
 
     first = settle_task_set_closure_feedback(context, **authority)
     replay = settle_task_set_closure_feedback(context, **authority)
@@ -311,6 +379,8 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
     assert first['idempotent'] is False
     assert replay['idempotent'] is True
     assert discovered['pending_count'] == 0
+    assert first['intent']['status'] == 'feedback_closed'
+    assert plan_task(context, SimpleNamespace(action='task-show', task_id='source-intake'))['task']['status'] == 'done'
 
 
 def test_same_revision_conflicting_terminal_digest_fails_closed(tmp_path: Path) -> None:

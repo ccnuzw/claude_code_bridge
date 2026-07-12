@@ -19,6 +19,7 @@ from .planner_feedback import (
     planner_feedback_digest,
     validate_planner_feedback_authority,
 )
+from .planner_feedback_apply import apply_planner_feedback
 from .task_set_closure import (
     evaluate_current_task_set_closures,
     settle_task_set_closure_feedback,
@@ -131,6 +132,7 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
                 'expected_plan_revision': expected_plan_revision,
                 'planner_job_id': state['planner']['job_id'],
                 'planner_feedback_digest': deps.planner_feedback_digest(proposal),
+                'plan_slug': task_set['plan_slug'],
             }
             imported = deps.apply_planner_feedback(context, proposal, authority)
             if not isinstance(imported, dict) or imported.get('status') != 'imported':
@@ -186,6 +188,9 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
                 'runtime_state_path': str(state_path),
                 'planner_job_id': state['planner'].get('job_id'),
                 'frontdesk_job_id': (state.get('frontdesk') or {}).get('job_id'),
+                'planner_backfill_path': (state.get('backfill_import') or {}).get('planner_backfill_path'),
+                'planner_feedback_digest': (state.get('backfill_import') or {}).get('planner_feedback_digest'),
+                'notification_status': (state.get('notification') or {}).get('status'),
             },
         )
         return _payload(
@@ -323,10 +328,6 @@ def _resolve_plan_revision(_context, task_set: dict[str, object], _closure: dict
     return digest
 
 
-def _apply_unavailable(_context, _proposal, _authority) -> dict[str, object]:
-    raise RuntimeError('planner_feedback_apply_unavailable')
-
-
 def _validate_state(state: dict[str, object], *, intent: dict[str, object]) -> None:
     if state.get('schema') != RUNTIME_SCHEMA:
         raise RuntimeError('task_set_feedback_runtime_schema_mismatch')
@@ -403,7 +404,7 @@ def _deps(services):
         planner_feedback_digest=getattr(services, 'planner_feedback_digest', planner_feedback_digest),
         frontdesk_status_envelope=getattr(services, 'frontdesk_status_envelope', frontdesk_status_envelope),
         resolve_plan_revision=getattr(services, 'resolve_plan_revision', _resolve_plan_revision),
-        apply_planner_feedback=getattr(services, 'apply_planner_feedback', _apply_unavailable),
+        apply_planner_feedback=getattr(services, 'apply_planner_feedback', apply_planner_feedback),
         settle_feedback=getattr(
             services,
             'settle_task_set_feedback',

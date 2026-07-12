@@ -419,11 +419,79 @@ def settle_task_set_closure_feedback(
     intent_id: str,
     ordered_terminal_evidence_digest: str,
     transport_ref: dict[str, object],
+    plan_task_fn: Callable = None,
 ) -> dict[str, object]:
     task_set_id = _segment(task_set_id, field='task_set_id')
     task_set_revision = _positive_int(task_set_revision, field='task_set_revision')
     intent_id = _segment(intent_id, field='intent_id')
+    plan_task_fn = _plan_task_fn(plan_task_fn)
+    task_set, task_set_path = _find_task_set(context, task_set_id)
+    if task_set.get('task_set_revision') != task_set_revision or task_set.get('state') not in {'closure_pending', 'closed', 'partial', 'replan_required', 'blocked'}:
+        raise ValueError('task-set closure settlement task-set authority mismatch')
+    closure_path = task_set_path.parent / 'closure.json'
+    closure = _read_json(closure_path)
+    if closure.get('ordered_terminal_evidence_digest') != ordered_terminal_evidence_digest:
+        raise ValueError('task-set closure settlement evidence mismatch')
     path = _runtime_task_set_root(context, task_set_id) / 'closure-intents.json'
+    intent_store = _read_json(path)
+    intent_matches = [
+        item for item in intent_store.get('intents') or ()
+        if isinstance(item, dict) and item.get('intent_id') == intent_id
+    ]
+    if len(intent_matches) != 1:
+        raise ValueError('task-set closure intent not found or ambiguous')
+    _validate_intent(intent_matches[0])
+    if any(
+        intent_matches[0].get(key) != expected
+        for key, expected in {
+            'task_set_revision': task_set_revision,
+            'ordered_terminal_evidence_digest': ordered_terminal_evidence_digest,
+            'closure_digest': closure.get('closure_digest'),
+        }.items()
+    ):
+        raise ValueError('task-set closure feedback settlement authority mismatch')
+    normalized_ref = _validate_feedback_transport(
+        context, transport_ref, task_set=task_set, closure=closure
+    )
+    settlement_path = task_set_path.parent / 'closure-settlement.json'
+    settlement = {
+        'schema': 'ccb.plan.task_set_closure_settlement.v1',
+        'task_set_id': task_set_id,
+        'task_set_revision': task_set_revision,
+        'intent_id': intent_id,
+        'aggregate_result': closure['aggregate_result'],
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': ordered_terminal_evidence_digest,
+        'transport_ref': normalized_ref,
+    }
+    with file_lock(task_set_path.parent / 'closure-settlement.lock'):
+        existing_settlement = _read_json(settlement_path)
+        if existing_settlement and existing_settlement != settlement:
+            raise ValueError('task-set closure settlement transaction conflict')
+        if not existing_settlement:
+            atomic_write_json(settlement_path, settlement)
+        from .plan_tasks import settle_task_set_parent
+        settle_task_set_parent(
+            context,
+            task_id=str(task_set['source_task_id']),
+            task_set_id=task_set_id,
+            task_set_revision=task_set_revision,
+            aggregate_result=str(closure['aggregate_result']),
+            closure_digest=str(closure['closure_digest']),
+            planner_feedback_digest=str(normalized_ref['planner_feedback_digest']),
+        )
+        target_state = {
+            'pass': 'closed', 'partial': 'partial',
+            'replan_required': 'replan_required', 'blocked': 'blocked',
+        }[str(closure['aggregate_result'])]
+        if task_set.get('state') == 'closure_pending':
+            task_set['state'] = target_state
+            task_set['aggregate_result'] = closure['aggregate_result']
+            task_set['updated_at'] = _now()
+            atomic_write_json(task_set_path, task_set)
+        elif task_set.get('state') != target_state:
+            raise ValueError('task-set closure settlement state conflict')
+
     with file_lock(path.with_suffix('.lock')):
         store = _read_json(path)
         if store.get('schema') != INTENT_STORE_SCHEMA or store.get('task_set_id') != task_set_id:
@@ -442,11 +510,6 @@ def settle_task_set_closure_feedback(
         }
         if any(intent.get(key) != value for key, value in expected.items()):
             raise ValueError('task-set closure feedback settlement authority mismatch')
-        normalized_ref = {
-            key: transport_ref.get(key)
-            for key in ('runtime_state_path', 'planner_job_id', 'frontdesk_job_id')
-            if transport_ref.get(key) is not None
-        }
         if intent.get('status') == 'feedback_closed':
             if intent.get('transport_ref') != normalized_ref:
                 raise ValueError('task-set closure feedback settlement conflicts with persisted transport')
@@ -458,6 +521,48 @@ def settle_task_set_closure_feedback(
         intent['feedback_closed_at'] = _now()
         atomic_write_json(path, store)
         return {'status': 'feedback_closed', 'intent': intent, 'idempotent': False}
+
+
+def _validate_feedback_transport(context, value, *, task_set, closure) -> dict[str, object]:
+    allowed = {
+        'runtime_state_path', 'planner_job_id', 'frontdesk_job_id',
+        'planner_backfill_path', 'planner_feedback_digest', 'notification_status',
+    }
+    if not isinstance(value, dict) or set(value) - allowed:
+        raise ValueError('task-set closure transport fields invalid')
+    required = {'runtime_state_path', 'planner_job_id', 'planner_backfill_path', 'planner_feedback_digest', 'notification_status'}
+    if any(not value.get(key) for key in required):
+        raise ValueError('task-set closure transport authority incomplete')
+    root = Path(context.project.project_root)
+    runtime_path = Path(str(value['runtime_state_path']))
+    if not runtime_path.is_absolute():
+        runtime_path = root / runtime_path
+    runtime = _read_json(runtime_path)
+    if runtime.get('stage') != 'closed' or (runtime.get('planner') or {}).get('job_id') != value['planner_job_id']:
+        raise ValueError('task-set closure runtime transport is not completed')
+    backfill_path = Path(str(value['planner_backfill_path']))
+    if not backfill_path.is_absolute():
+        backfill_path = root / backfill_path
+    backfill = _read_json(backfill_path)
+    expected = {
+        'task_set_id': task_set['task_set_id'],
+        'task_set_revision': task_set['task_set_revision'],
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+        'planner_job_id': value['planner_job_id'],
+        'planner_feedback_digest': value['planner_feedback_digest'],
+        'aggregate_result': closure['aggregate_result'],
+    }
+    if any(backfill.get(key) != expected_value for key, expected_value in expected.items()):
+        raise ValueError('task-set closure imported backfill authority mismatch')
+    notification = str(value['notification_status'])
+    if notification == 'delivered':
+        job_id = str(value.get('frontdesk_job_id') or '')
+        if not job_id or (runtime.get('frontdesk') or {}).get('job_id') != job_id or (runtime.get('frontdesk') or {}).get('status') != 'completed':
+            raise ValueError('task-set closure Frontdesk delivery is incomplete')
+    elif notification != 'notification_not_required' or value.get('frontdesk_job_id'):
+        raise ValueError('task-set closure notification authority invalid')
+    return {key: value.get(key) for key in sorted(allowed) if value.get(key) is not None}
 
 
 def _resolve_children(
@@ -659,7 +764,7 @@ def _closure_record(
         'task_set_revision': record['task_set_revision'],
         'source_request': record['source_request'],
         'planner_job': record['planner_job'],
-        'expected_plan_revision': record['plan_revision'],
+        'expected_plan_revision': record['plan_revision']['digest'],
         'ordered_children': evidence,
         'ordered_terminal_evidence_digest': evidence_digest,
         'status': status,
@@ -821,7 +926,10 @@ def _validate_task_set(record: dict[str, object]) -> None:
     if missing or extra:
         raise ValueError(f'invalid task-set fields: missing={missing}, extra={extra}')
     state = str(record.get('state') or '')
-    if state not in {'binding', 'running', 'revising', 'closure_pending', 'system_failure'}:
+    if state not in {
+        'binding', 'running', 'revising', 'closure_pending', 'system_failure',
+        'closed', 'partial', 'replan_required', 'blocked',
+    }:
         raise ValueError('invalid task-set state')
     if state == 'revising' and not {'pending_revision', 'pending_children'} <= set(record):
         raise ValueError('revising task set is missing pending revision authority')
@@ -850,6 +958,8 @@ def _validate_closure(record: dict[str, object]) -> None:
     if record.get('schema') != CLOSURE_SCHEMA or set(record) != _CLOSURE_KEYS:
         raise ValueError('invalid task-set closure schema or fields')
     _positive_int(record.get('task_set_revision'), field='task_set_revision')
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', str(record.get('expected_plan_revision') or '')):
+        raise ValueError('invalid task-set closure expected plan revision digest')
     if record.get('status') not in {'closure_pending', 'system_failure'}:
         raise ValueError('invalid task-set closure status')
     expected = dict(record)

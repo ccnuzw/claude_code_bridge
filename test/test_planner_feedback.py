@@ -14,6 +14,7 @@ from cli.services.planner_feedback import (
 
 
 _DIGEST = 'sha256:' + ('a' * 64)
+_PLAN_DIGEST = 'sha256:' + ('b' * 64)
 _SEMANTIC = {
     'pass': 'closure_complete',
     'partial': 'closure_partial',
@@ -27,7 +28,7 @@ def _reply(
     aggregate_result: str = 'pass',
     result: str | None = None,
     mode: str = 'task_set_closure',
-    plan_revision: int = 4,
+    plan_revision: str = _PLAN_DIGEST,
     identity_revision: int = 2,
     unresolved: list[str] | None = None,
     blockers: list[str] | None = None,
@@ -110,7 +111,7 @@ def test_validate_planner_feedback_requires_exact_authority_digest_and_evidence(
     validate_planner_feedback_authority(
         proposal,
         mode='task_set_closure',
-        expected_plan_revision=4,
+        expected_plan_revision=_PLAN_DIGEST,
         task_or_task_set_id='set-a',
         task_or_task_set_revision=2,
         closure_evidence_digest=_DIGEST,
@@ -122,7 +123,7 @@ def test_validate_planner_feedback_requires_exact_authority_digest_and_evidence(
         validate_planner_feedback_authority(
             proposal,
             mode='task_set_closure',
-            expected_plan_revision=5,
+            expected_plan_revision='sha256:' + ('c' * 64),
             task_or_task_set_id='set-a',
             task_or_task_set_revision=2,
             closure_evidence_digest=_DIGEST,
@@ -139,7 +140,7 @@ def test_validate_planner_feedback_rejects_omitted_required_evidence() -> None:
         validate_planner_feedback_authority(
             proposal,
             mode='task_set_closure',
-            expected_plan_revision=4,
+            expected_plan_revision=_PLAN_DIGEST,
             task_or_task_set_id='set-a',
             task_or_task_set_revision=2,
             closure_evidence_digest=_DIGEST,
@@ -227,7 +228,7 @@ def test_detailer_replan_uses_task_identity_and_exact_mode_name() -> None:
     validate_planner_feedback_authority(
         proposal,
         mode='detailer_replan',
-        expected_plan_revision=4,
+        expected_plan_revision=_PLAN_DIGEST,
         task_or_task_set_id='task-a',
         task_or_task_set_revision=7,
         closure_evidence_digest=_DIGEST,
@@ -251,3 +252,9 @@ def test_next_milestone_is_structured_and_cannot_be_prompt_overridden() -> None:
             '**planner-backfill.json**\n```json\n' + json.dumps(payload) + '\n```\n'
         )
     assert invalid.value.code == 'planner_backfill_next_milestone_invalid'
+
+
+def test_parser_rejects_integer_plan_revision() -> None:
+    with pytest.raises(PlannerFeedbackError) as invalid:
+        parse_planner_feedback_reply(_reply(plan_revision=4))  # type: ignore[arg-type]
+    assert invalid.value.code in {'planner_backfill_text_invalid', 'planner_backfill_digest_invalid'}
