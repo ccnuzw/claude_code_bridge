@@ -940,6 +940,8 @@ _STATUS_STOP_PATTERNS = {
         r'\bstop(?:s|ped|ping)?\s+(?:at|as|on)\s+`?detail_ready`?\b',
         r'\bcontroller-visible\s+task\s+outcome\s+remains\s+`?detail_ready`?\b',
         r'\bexpected\s+controller-visible\s+(?:task\s+)?(?:outcome|status|stop)\s+is\s+`?detail_ready`?\b',
+        r'\bpreserve\s+terminal\s+expectation\s+`?detail_ready`?\b',
+        r'\bwith\s+terminal\s+status\s+`?detail_ready`?\b',
     ),
     'replan_required': (
         r'\bstop(?:s|ped|ping)?\s+(?:at|as|on)\s+`?replan_required`?\b',

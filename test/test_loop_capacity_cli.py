@@ -7747,6 +7747,156 @@ detail_readiness_recommendation: `detail_ready`
     assert 'Brief Update Summary' not in design
 
 
+@pytest.mark.parametrize(
+    'stop_contract',
+    (
+        'Preserve terminal expectation detail_ready.',
+        'Continue with terminal status detail_ready.',
+    ),
+)
+def test_loop_runner_keeps_real_needs_detail_sequence_at_explicit_terminal_detail_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stop_contract: str,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        task_packet_text=f'# Task: L3 needs-detail\nRoute: needs_detail\n{stop_contract}\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='phase6b-l3-needs-detail', route='needs_detail')
+
+    def fake_submit_detailer(_context, ask_command):
+        assert ask_command.target == 'task_detailer'
+        assert "'status': 'detail_ready'" in ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    activated = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert activated['action'] == 'activated_task_detailer'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_task_detailer',
+        agent_name='task_detailer',
+        reply="""Detail result: `local_detail_ready`
+Detail readiness recommendation: `detail_ready`
+
+## Artifact: `task-detail-design.md`
+```markdown
+# Detail Design
+The missing task detail is resolved.
+```
+
+## Artifact: `brief-update-summary.md`
+```markdown
+# Detail Summary
+The task is locally detail-ready.
+```
+
+## Artifact: `detail-packet.md`
+```markdown
+# Detail Packet
+detail_readiness_recommendation: detail_ready
+```
+""",
+    )
+
+    imported = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, plan_task=plan_task),
+    )
+    assert imported['action'] == 'imported_task_detailer_detail_authority'
+    assert imported['task_status'] == 'detail_ready'
+
+    def forbidden_submit(*_args, **_kwargs):
+        raise AssertionError('explicit terminal detail_ready must not activate Planner or Orchestrator')
+
+    settled = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=forbidden_submit, plan_task=plan_task),
+    )
+    assert settled['loop_runner_status'] == 'idle'
+    assert settled['reason'] == 'no_actionable_task'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='phase6b-l3-needs-detail'))
+    assert shown['task']['status'] == 'detail_ready'
+
+
+@pytest.mark.parametrize(
+    'non_contract',
+    (
+        'detail_ready is not the terminal expectation.',
+        'Do not change terminal expectations.',
+    ),
+)
+def test_loop_runner_does_not_treat_negated_or_generic_terminal_text_as_detail_ready_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    non_contract: str,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='phase6b-l3-needs-detail',
+        task_packet_text=f'# Task: L3 needs-detail\nRoute: needs_detail\n{non_contract}\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    for kind, filename in (
+        ('detail_design', 'detail-design.md'),
+        ('detail_summary', 'detail-summary.md'),
+        ('detail_packet', 'detail-packet.md'),
+    ):
+        source = project_root / 'drafts' / filename
+        _write(source, f'{kind}\n')
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-artifact',
+                task_id='phase6b-l3-needs-detail',
+                artifact_kind=kind,
+                file_path=str(source),
+            ),
+        )
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status',
+            task_id='phase6b-l3-needs-detail',
+            status='detail_ready',
+            activation_reason='detail_ready_from_task_detailer',
+        ),
+    )
+
+    def fake_submit_planner(_context, ask_command):
+        assert ask_command.target == 'planner'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_planner', 'agent_name': 'planner', 'status': 'submitted'},),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_planner, plan_task=plan_task),
+    )
+    assert payload['action'] == 'activated_planner'
+    assert payload['reason'] == 'detail_ready_task'
+
+
 def test_loop_runner_task_detailer_artifact_heading_needs_clarification_is_not_detail_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -56,6 +56,11 @@ _DETAIL_READY_STOP_PATTERNS = (
         'expected_controller_visible_detail_ready',
         r'\bexpected\s+controller-visible\s+(?:task\s+)?(?:outcome|status|stop)\s+is\s+`?detail_ready`?\b',
     ),
+    (
+        'preserve_terminal_expectation_detail_ready',
+        r'\bpreserve\s+terminal\s+expectation\s+`?detail_ready`?\b',
+    ),
+    ('terminal_status_detail_ready', r'\bwith\s+terminal\s+status\s+`?detail_ready`?\b'),
 )
 
 
