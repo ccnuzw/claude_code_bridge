@@ -32,11 +32,13 @@ ROLE_EXPECTATIONS = {
     },
     'agentroles.ccb_planner': {
         'default': 'planner',
-        'skill': 'skills/planner-task-packet',
+        'skills': ('skills/planner-task-packet', 'skills/planner-closure-backfill'),
         'templates': (
             'templates/task-packet.md',
             'templates/readiness.json',
             'templates/candidate-questions.jsonl',
+            'templates/planner-backfill.json',
+            'templates/frontdesk-status.md',
         ),
     },
     'agentroles.ccb_plan_reviewer': {
@@ -407,6 +409,49 @@ def test_planner_rolepack_is_closed_reply_only_planning_surface() -> None:
     assert 'Behavioral prose alone is not a stable interface.' in combined
     assert '## Execution Decomposition Inputs' in combined
     assert 'A stable interface is parallelization evidence' in combined
+
+
+def test_planner_rolepack_defines_revision_fenced_replan_and_task_set_closure_modes() -> None:
+    root = role_root('agentroles.ccb_planner')
+    manifest = load_role_manifest(root)
+    combined = '\n'.join(
+        [
+            (root / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'adapters' / 'ccb' / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'skills' / 'planner-closure-backfill' / 'SKILL.md').read_text(encoding='utf-8'),
+            (root / 'templates' / 'planner-backfill.json').read_text(encoding='utf-8'),
+            (root / 'templates' / 'frontdesk-status.md').read_text(encoding='utf-8'),
+        ]
+    )
+
+    assert 'skills/planner-closure-backfill' in manifest.manifest['skills']['codex']
+    assert 'detail_replan' in combined
+    assert 'task_set_closure' in combined
+    assert 'ccb.planner.backfill.v1' in combined
+    assert 'expected_plan_revision' in combined
+    assert 'preserved_completed_scope' in combined
+    assert 'unresolved_scope' in combined
+    assert 'multiple replan children produce one coherent macro proposal' in combined.lower()
+    assert 'never output `pass`' in combined.lower()
+    assert 'do not modify plantree or send frontdesk messages' in combined.lower()
+
+
+def test_frontdesk_rolepack_reports_validated_closure_without_reinterpreting_result() -> None:
+    root = role_root('agentroles.ccb_frontdesk')
+    combined = '\n'.join(
+        [
+            (root / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'skills' / 'frontdesk-intake' / 'SKILL.md').read_text(encoding='utf-8'),
+            (root / 'templates' / 'workflow-status-report.md').read_text(encoding='utf-8'),
+        ]
+    )
+
+    assert 'ccb.planner.frontdesk_status.v1' in combined
+    assert 'completed|partial|replan_required|blocked' in combined
+    assert 'completed scope' in combined.lower()
+    assert 'unresolved scope' in combined.lower()
+    assert 'never claim global completion from decomposition' in combined.lower()
+    assert 'do not forward this status back to planner' in combined.lower()
 
 
 def test_coder_rolepack_is_workspace_only_and_reply_only_for_workflow_authority() -> None:
@@ -792,3 +837,6 @@ def test_planner_rolepack_projects_planner_skill_to_codex_home(tmp_path: Path, m
     projected = target_home / 'skills' / 'planner-task-packet' / 'SKILL.md'
     assert projected.is_file()
     assert 'readiness recommendations' in projected.read_text(encoding='utf-8')
+    closure = target_home / 'skills' / 'planner-closure-backfill' / 'SKILL.md'
+    assert closure.is_file()
+    assert 'ccb.planner.backfill.v1' in closure.read_text(encoding='utf-8')

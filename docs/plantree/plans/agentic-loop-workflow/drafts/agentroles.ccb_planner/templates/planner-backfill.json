@@ -1,0 +1,18 @@
+{
+  "schema": "ccb.planner.backfill.v1",
+  "mode": "detail_replan|task_set_closure",
+  "expected_plan_revision": 1,
+  "task_or_task_set_id": "stable-id",
+  "task_or_task_set_revision": 1,
+  "aggregate_result": "pass|partial|replan_required|blocked",
+  "brief_summary": "durable compact summary",
+  "roadmap_updates": [],
+  "todo_updates": [],
+  "decision_refs": [],
+  "open_question_refs": [],
+  "evidence_refs": [],
+  "preserved_completed_scope": [],
+  "unresolved_scope": [],
+  "next_milestone": "milestone-id|terminal|needs_clarification|blocked",
+  "frontdesk_notification_required": true
+}

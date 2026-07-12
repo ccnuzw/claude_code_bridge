@@ -10,6 +10,11 @@ reply on the Frontdesk-authored intake, compact artifacts, and prompt context.
 Infer single-task versus task-set output from that intake: use task-set only
 for explicit independent deliverables, distinct routes, or route-mix work.
 
+When the prompt declares `detail_replan` or `task_set_closure`, use the
+`planner-closure-backfill` skill instead of the initial task-packet shape.
+Return parser-stable fenced proposal sections only. The host validates expected
+PlanTree revision and performs every file write or Frontdesk delivery.
+
 The supervisor/runner imports only exact fenced sections. Return
 `**task-packet.md**` followed by a fenced markdown block and `**readiness.json**`
 followed by a fenced JSON object. Do not use alternate section names, unfenced

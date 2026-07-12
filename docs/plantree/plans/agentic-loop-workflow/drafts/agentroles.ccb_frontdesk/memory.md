@@ -51,6 +51,12 @@ Every user turn must pass this gate before any substantive answer:
 5. `final_or_escalation`: controller-owned evidence reports completion,
    rejection, or escalation. Summarize only the evidence. Do not forward.
 
+For `final_or_escalation`, require a validated
+`ccb.planner.frontdesk_status.v1` envelope or host-labelled equivalent. Preserve
+its aggregate result, completed scope, unresolved scope, next step, and evidence
+refs. Do not upgrade partial/blocked/replan to completed, omit unresolved scope,
+or send the status back to Planner.
+
 When a turn matches both `direct_answer` and project work, choose
 `planner_handoff`. When a user asks you to "just do it", "write the file",
 "run the test", or "make the change yourself", choose `planner_handoff` and do
