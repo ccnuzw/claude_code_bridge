@@ -311,7 +311,7 @@ def _task_artifact(context, command) -> dict[str, object]:
             return payload
         if artifact_kind in _SEMANTIC_TASK_ARTIFACTS:
             _reject_running_semantic_mutation(record)
-            if existing is not None:
+            if existing is not None and not _is_role_output_detail_import(command, artifact_kind=artifact_kind):
                 record['task_revision'] = task_revision(record) + 1
             extra['task_revision'] = task_revision(record)
         record, artifact = _import_text_artifact(
@@ -1161,6 +1161,16 @@ def _activation_runner_action_for_record(
                     'next_owner': 'orchestrator',
                 }
             if _detail_packet_ready(record):
+                if project_root is not None and _detail_reconcile_provenance(
+                    Path(project_root),
+                    record,
+                    record.get('artifacts') if isinstance(record.get('artifacts'), dict) else {},
+                ) is None and _has_role_output_detail_artifacts(record):
+                    return {
+                        'action': 'activate_task_detailer',
+                        'reason': 'orchestrator_route_needs_detail_stale_detail_authority',
+                        'next_owner': 'orchestrator',
+                    }
                 return {
                     'action': 'activate_orchestrator',
                     'reason': 'orchestrator_route_needs_detail_detail_ready',
@@ -1283,6 +1293,27 @@ def _orchestrator_route_for_record(record: dict[str, object]) -> str:
 def _detail_packet_ready(record: dict[str, object]) -> bool:
     artifacts = set((record.get('artifacts') or {}).keys()) if isinstance(record.get('artifacts'), dict) else set()
     return _DETAIL_READY_REQUIRED <= artifacts
+
+
+def _is_role_output_detail_import(command, *, artifact_kind: str) -> bool:
+    return (
+        artifact_kind in _DETAIL_READY_REQUIRED
+        and str(getattr(command, 'actor_source', None) or '') == 'loop_runner_role_output_import'
+        and str(getattr(command, 'actor', None) or '') == 'loop_runner'
+        and bool(str(getattr(command, 'job_id', None) or '').strip())
+    )
+
+
+def _has_role_output_detail_artifacts(record: dict[str, object]) -> bool:
+    artifacts = record.get('artifacts') if isinstance(record.get('artifacts'), dict) else {}
+    return all(
+        isinstance(artifacts.get(kind), dict)
+        and isinstance(artifacts[kind].get('actor'), dict)
+        and artifacts[kind]['actor'].get('source') == 'loop_runner_role_output_import'
+        and artifacts[kind]['actor'].get('actor') == 'loop_runner'
+        and bool(str(artifacts[kind]['actor'].get('job_id') or '').strip())
+        for kind in _DETAIL_READY_REQUIRED
+    )
 
 
 def detail_ready_reconcile_authority(

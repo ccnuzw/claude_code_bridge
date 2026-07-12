@@ -1997,6 +1997,9 @@ def _consume_existing_activation_for_task(
     for activation_path, activation in _iter_activation_records(context):
         if str(activation.get('task_id') or '').strip() != task_id:
             continue
+        activation_revision = activation.get('task_revision')
+        if activation_revision is not None and activation_revision != task_revision(record):
+            continue
         ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
         submission = activation.get('submission') if isinstance(activation.get('submission'), dict) else {}
         topology = activation.get('topology') if isinstance(activation.get('topology'), dict) else {}

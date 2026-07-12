@@ -121,3 +121,35 @@ def test_match_detail_ready_stop_contract_allows_exact_current_scope_label(label
         f'{label}\nExpected stop: detail_ready.',
         task_id='current-task',
     ) is not None
+
+
+@pytest.mark.parametrize(
+    'label',
+    (
+        'Task: [other-task](tasks/other-task)',
+        'task-id: other-task',
+        'Task: <other-task>',
+        'Task: **other-task**',
+    ),
+)
+def test_match_detail_ready_stop_contract_rejects_wrapped_other_task_scope(label: str) -> None:
+    assert match_detail_ready_stop_contract(
+        f'{label}\nExpected stop: detail_ready.',
+        task_id='current-task',
+    ) is None
+
+
+@pytest.mark.parametrize(
+    'label',
+    (
+        'Task: [current-task](tasks/current-task)',
+        'task-id: `current-task`',
+        'Task: <current-task>',
+        'Task: **current-task**',
+    ),
+)
+def test_match_detail_ready_stop_contract_allows_wrapped_current_task_scope(label: str) -> None:
+    assert match_detail_ready_stop_contract(
+        f'{label}\nExpected stop: detail_ready.',
+        task_id='current-task',
+    ) is not None
