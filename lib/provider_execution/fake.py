@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 
 from ccbd.api_models import JobRecord
+from ccbd.socket_server_runtime.protocol import _MAX_REQUEST_BYTES as CCB_REQUEST_MAX_BYTES
 from ccbd.system import parse_utc_timestamp
 from completion.models import (
     CompletionConfidence,
@@ -615,7 +616,7 @@ def _decision029_source_request(value: object) -> None:
         if not isinstance(artifact, dict) or set(artifact) != required_artifact:
             raise ValueError('Decision 029 source_request.body_artifact is invalid')
         kind = _decision029_text(artifact.get('kind'), 'source_request.body_artifact.kind')
-        if len(kind) > 80:
+        if kind != 'ask-request':
             raise ValueError('Decision 029 source_request.body_artifact.kind is invalid')
         path_text = _decision029_text(artifact.get('path'), 'source_request.body_artifact.path')
         path = Path(path_text)
@@ -630,7 +631,11 @@ def _decision029_source_request(value: object) -> None:
         ):
             raise ValueError('Decision 029 source_request.body_artifact.path is invalid')
         artifact_bytes = artifact.get('bytes')
-        if isinstance(artifact_bytes, bool) or not isinstance(artifact_bytes, int) or artifact_bytes < 0:
+        if (
+            isinstance(artifact_bytes, bool)
+            or not isinstance(artifact_bytes, int)
+            or not 0 <= artifact_bytes <= CCB_REQUEST_MAX_BYTES
+        ):
             raise ValueError('Decision 029 source_request.body_artifact.bytes is invalid')
         _decision029_hex_digest(artifact.get('sha256'), 'source_request.body_artifact.sha256')
 

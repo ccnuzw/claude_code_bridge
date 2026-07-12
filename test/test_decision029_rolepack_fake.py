@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
+from ccbd.socket_server_runtime.protocol import _MAX_REQUEST_BYTES as CCB_REQUEST_MAX_BYTES
 from cli.services.role_command_policy import claude_permission_allowlist, load_role_command_policy
 from cli.services.plan_tasks import plan_task
 from cli.services.task_set_closure import evaluate_task_set_closure
@@ -220,6 +221,7 @@ def test_fake_notification_semantics_rejects_authority_fields(tmp_path: Path) ->
         ('bytes', True),
         ('sha256', 'not-a-digest'),
         ('kind', ''),
+        ('kind', 'totally-unknown'),
     ),
 )
 def test_fake_planner_rejects_malformed_source_body_artifact(
@@ -227,7 +229,7 @@ def test_fake_planner_rejects_malformed_source_body_artifact(
 ) -> None:
     closure = _generated_closure(tmp_path, ['pass'])
     artifact = {
-        'kind': 'ccb.text', 'path': '.ccb/artifacts/request.txt',
+        'kind': 'ask-request', 'path': '.ccb/artifacts/request.txt',
         'bytes': 12, 'sha256': 'a' * 64,
     }
     if field == 'missing':
@@ -244,16 +246,41 @@ def test_fake_planner_rejects_malformed_source_body_artifact(
         _planner_reply(closure)
 
 
-def test_fake_planner_accepts_exact_source_body_artifact(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    'artifact_bytes',
+    (CCB_REQUEST_MAX_BYTES - 1, CCB_REQUEST_MAX_BYTES),
+)
+def test_fake_planner_accepts_source_body_artifact_byte_boundary(
+    tmp_path: Path, artifact_bytes: int,
+) -> None:
     closure = _generated_closure(tmp_path, ['pass'])
     closure['source_request']['body_artifact'] = {
-        'kind': 'ccb.text', 'path': '.ccb/artifacts/request.txt',
-        'bytes': 12, 'sha256': 'a' * 64,
+        'kind': 'ask-request', 'path': '.ccb/artifacts/request.txt',
+        'bytes': artifact_bytes, 'sha256': 'a' * 64,
     }
     closure['closure_digest'] = _canonical_digest({
         key: item for key, item in closure.items() if key != 'closure_digest'
     })
     assert _planner_reply(closure)['aggregate_result'] == 'pass'
+
+
+@pytest.mark.parametrize(
+    'artifact_bytes',
+    (CCB_REQUEST_MAX_BYTES + 1, 2**100),
+)
+def test_fake_planner_rejects_source_body_artifact_above_byte_ceiling(
+    tmp_path: Path, artifact_bytes: int,
+) -> None:
+    closure = _generated_closure(tmp_path, ['pass'])
+    closure['source_request']['body_artifact'] = {
+        'kind': 'ask-request', 'path': '.ccb/artifacts/request.txt',
+        'bytes': artifact_bytes, 'sha256': 'a' * 64,
+    }
+    closure['closure_digest'] = _canonical_digest({
+        key: item for key, item in closure.items() if key != 'closure_digest'
+    })
+    with pytest.raises(ValueError, match='body_artifact.bytes'):
+        _planner_reply(closure)
 
 
 @pytest.mark.parametrize(
