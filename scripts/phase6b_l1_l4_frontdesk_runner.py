@@ -985,9 +985,85 @@ def resolve_sequence_task_id(manifest: dict[str, Any], task_id: str) -> str:
     return sequence_task_aliases(manifest).get(task_id, task_id)
 
 
+def controlled_task_set_source_parent_ids(manifest: dict[str, Any]) -> set[str]:
+    project = Path(str(manifest["project"]))
+    required_children = [str(item["task_id"]) for item in TASKS]
+    activations: dict[str, dict[str, Any]] = {}
+    for path in (project / ".ccb" / "runtime" / "loops" / "activations").glob(
+        "act-frontdesk-*.json"
+    ):
+        if not CANONICAL_FRONTDESK_ACTIVATION_RE.fullmatch(path.name):
+            continue
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        source_job = payload.get("source_job") if isinstance(payload.get("source_job"), dict) else {}
+        source_task_id = _first_text(payload.get("source_task_id"))
+        if (
+            payload.get("record_type") == "ccb_loop_frontdesk_planner_activation"
+            and source_job.get("agent_name") == "frontdesk"
+            and source_task_id
+            and source_task_id == _first_text(payload.get("request_id"), source_job.get("job_id"))
+            and source_task_id == _first_text(source_job.get("job_id"))
+        ):
+            activations[source_task_id] = payload
+
+    controlled: set[str] = set()
+    for record in task_index_records(manifest):
+        task_id = task_record_id(record)
+        binding = (
+            record.get("task_set_parent")
+            if isinstance(record.get("task_set_parent"), dict)
+            else {}
+        )
+        task_set_id = _first_text(binding.get("task_set_id"))
+        revision = binding.get("task_set_revision")
+        if (
+            task_id not in activations
+            or record.get("status") != "decomposed"
+            or binding.get("schema") != "ccb.plan.task_set_binding.v1"
+            or binding.get("binding_role") != "parent"
+            or not task_set_id
+            or not LABEL_RE.fullmatch(task_set_id)
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 1
+        ):
+            continue
+        task_set = _read_json(
+            project
+            / "docs"
+            / "plantree"
+            / "plans"
+            / PLAN_SLUG
+            / "task-sets"
+            / task_set_id
+            / "task-set.json"
+        )
+        if not isinstance(task_set, dict):
+            continue
+        children = task_set.get("children")
+        if (
+            task_set.get("schema") != "ccb.plan.task_set.v1"
+            or task_set.get("task_set_id") != task_set_id
+            or task_set.get("task_set_revision") != revision
+            or task_set.get("source_task_id") != task_id
+            or task_set.get("ordered_required_children") != required_children
+            or not isinstance(children, list)
+            or len(children) != len(required_children)
+            or [child.get("task_id") for child in children if isinstance(child, dict)]
+            != required_children
+            or any(not isinstance(child, dict) or child.get("required") is not True for child in children)
+        ):
+            continue
+        controlled.add(task_id)
+    return controlled if len(controlled) == 1 else set()
+
+
 def unexpected_plan_task_ids(manifest: dict[str, Any]) -> list[str]:
     allowed = {str(item["task_id"]) for item in TASKS}
     allowed.update(sequence_task_aliases(manifest).values())
+    allowed.update(controlled_task_set_source_parent_ids(manifest))
     unexpected: list[str] = []
     for record in task_index_records(manifest):
         task_id = task_record_id(record)

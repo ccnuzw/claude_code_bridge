@@ -1528,6 +1528,113 @@ def test_unexpected_frontdesk_meta_task_writes_invalid_harness_report(tmp_path: 
     assert 'Status: invalid_harness' in b7_path.read_text(encoding='utf-8')
 
 
+def _write_frontdesk_task_set_parent_authority(
+    runner,
+    manifest: dict[str, object],
+    *,
+    mutation: str | None = None,
+) -> str:
+    project = Path(str(manifest['project']))
+    source_task_id = 'job_da3510bbfe19'
+    task_set_id = 'ts-017b23211d6230850c98'
+    required_children = [str(case['task_id']) for case in runner.TASKS]
+    parent_binding = {
+        'schema': 'ccb.plan.task_set_binding.v1',
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'binding_role': 'parent',
+        'bound_task_revision': 2,
+    }
+    parent = {
+        'task_id': source_task_id,
+        'status': 'decomposed',
+        'task_set_parent': parent_binding,
+    }
+    task_set = {
+        'schema': 'ccb.plan.task_set.v1',
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'source_task_id': source_task_id,
+        'children': [
+            {'task_id': task_id, 'required': True}
+            for task_id in required_children
+        ],
+        'ordered_required_children': required_children,
+    }
+    if mutation == 'task_set_id':
+        parent_binding['task_set_id'] = 'ts-wrong'
+    elif mutation == 'revision':
+        parent_binding['task_set_revision'] = 2
+    elif mutation == 'binding_role':
+        parent_binding['binding_role'] = 'child'
+    elif mutation == 'status':
+        parent['status'] = 'ready_for_orchestration'
+    elif mutation == 'source_task_id':
+        task_set['source_task_id'] = 'job_other'
+    runner._write_json(
+        project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG / 'tasks' / 'index.json',
+        {
+            'schema': 'ccb.plan.tasks.v1',
+            'tasks': [parent, *({'task_id': task_id} for task_id in required_children)],
+        },
+    )
+    runner._write_json(
+        project
+        / '.ccb'
+        / 'runtime'
+        / 'loops'
+        / 'activations'
+        / f'act-frontdesk-{source_task_id}.json',
+        {
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'request_id': source_task_id,
+            'source_task_id': source_task_id,
+            'source_job': {'job_id': source_task_id, 'agent_name': 'frontdesk'},
+        },
+    )
+    runner._write_json(
+        project
+        / 'docs'
+        / 'plantree'
+        / 'plans'
+        / runner.PLAN_SLUG
+        / 'task-sets'
+        / task_set_id
+        / 'task-set.json',
+        task_set,
+    )
+    return source_task_id
+
+
+def test_authoritative_frontdesk_task_set_source_parent_is_not_unexpected(tmp_path: Path) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    source_task_id = _write_frontdesk_task_set_parent_authority(runner, manifest)
+
+    assert runner.unexpected_plan_task_ids(manifest) == []
+    runner.validate_sequence_task_set_only(manifest)
+    assert source_task_id not in runner.unexpected_plan_task_ids(manifest)
+
+
+@pytest.mark.parametrize(
+    'mutation',
+    ('task_set_id', 'revision', 'binding_role', 'status', 'source_task_id'),
+)
+def test_frontdesk_task_set_source_parent_requires_exact_authority(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    source_task_id = _write_frontdesk_task_set_parent_authority(
+        runner,
+        manifest,
+        mutation=mutation,
+    )
+
+    assert runner.unexpected_plan_task_ids(manifest) == [source_task_id]
+
+
 def test_planner_route_equivalent_task_ids_are_aliases_not_meta_tasks(tmp_path: Path) -> None:
     runner = _load_runner()
     _root, manifest = _materialize(tmp_path)
