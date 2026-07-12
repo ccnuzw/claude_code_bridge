@@ -17,6 +17,8 @@ from cli.services.planner_task_set_import_transaction import (
     authority_trace,
     commit,
     prepare,
+    runner_transaction_committed,
+    transaction_digest,
 )
 
 
@@ -110,6 +112,39 @@ def _run_phase2(argv: list[str], *, cwd: Path) -> tuple[int, dict[str, object], 
     return code, payload, out_text, stderr.getvalue()
 
 
+def _committed_transaction_task(tmp_path: Path, *, job_id: str = 'job-runner-gate'):
+    project_root = _project_with_plan(tmp_path)
+    context = CliContextBuilder().build(
+        ParsedPlanTaskCommand(project=None, action='task-show', task_id='gate-child', json_output=True),
+        cwd=project_root, bootstrap_if_missing=False,
+    )
+    identity = {
+        'project_id': context.project.project_id, 'plan_slug': 'demo-plan',
+        'activation_id': 'act-gate', 'source_task_id': 'source-gate',
+        'source_request': {'source_job_id': 'job-source', 'bytes': 4, 'sha256': 'a' * 64},
+        'planner_job_id': job_id, 'planner_reply_sha256': 'b' * 64,
+        'task_set_id': 'ts-gate',
+        'ordered_children': [{'task_id': 'gate-child', 'required': True}],
+    }
+    transaction = prepare(context, identity=identity)
+    trace = authority_trace(transaction, source_job={'job_id': job_id})
+    created = plan_task(context, SimpleNamespace(
+        action='task-create', plan_slug='demo-plan', title='Gate child',
+        task_id='gate-child', authority_trace=trace,
+    ))
+    bound = plan_task(context, SimpleNamespace(
+        action='task-bind-task-set', task_id='gate-child', task_set_id='ts-gate',
+        task_set_revision=1, binding_role='child', required=True, order=0,
+        expected_task_revision=1,
+    ))
+    committed = commit(context, transaction, authority={
+        'task_set_id': 'ts-gate', 'task_set_revision': 1,
+        'children': [{'task_id': 'gate-child', 'task_revision': 1,
+                      'task_set': bound['task']['task_set']}],
+    })
+    return project_root, context, committed, bound['task']
+
+
 def test_planner_task_set_import_transaction_fences_runner_until_commit(tmp_path: Path) -> None:
     project_root = _project_with_plan(tmp_path)
     context = CliContextBuilder().build(
@@ -146,9 +181,17 @@ def test_planner_task_set_import_transaction_fences_runner_until_commit(tmp_path
     plan_task(context, SimpleNamespace(
         action='task-status', task_id='tx-child', status='ready_for_orchestration',
     ))
+    bound = plan_task(context, SimpleNamespace(
+        action='task-bind-task-set', task_id='tx-child', task_set_id='ts-test',
+        task_set_revision=1, binding_role='child', required=True, order=0,
+        expected_task_revision=1,
+    ))
 
     assert find_first_actionable_task(context, task_id='tx-child') is None
-    commit(context, transaction, authority={'task_set_id': 'ts-test'})
+    commit(context, transaction, authority={
+        'task_set_id': 'ts-test', 'task_set_revision': 1,
+        'children': [{'task_id': 'tx-child', 'task_revision': 1, 'task_set': bound['task']['task_set']}],
+    })
     assert find_first_actionable_task(context, task_id='tx-child')['record']['task_id'] == 'tx-child'
 
 
@@ -199,6 +242,100 @@ def test_planner_task_set_import_same_job_different_reply_is_durable_failure(tmp
     assert journal['status'] == 'failed'
     assert journal['identity'] == identity
     assert journal['conflicts'][-1]['observed_identity']['planner_reply_sha256'] == 'c' * 64
+
+
+def test_committed_planner_task_set_import_rejects_conflict_without_downgrade(tmp_path: Path) -> None:
+    project_root = _project_with_plan(tmp_path)
+    context = CliContextBuilder().build(
+        ParsedPlanTaskCommand(project=None, action='task-show', task_id='unused', json_output=True),
+        cwd=project_root, bootstrap_if_missing=False,
+    )
+    identity = {
+        'project_id': context.project.project_id, 'plan_slug': 'demo-plan',
+        'activation_id': 'act-committed', 'source_task_id': 'source-committed',
+        'source_request': {'source_job_id': 'job-source', 'bytes': 4, 'sha256': 'a' * 64},
+        'planner_job_id': 'job-planner-committed', 'planner_reply_sha256': 'b' * 64,
+        'task_set_id': 'ts-committed',
+        'ordered_children': [{'task_id': 'child-a', 'required': True}],
+    }
+    transaction = prepare(context, identity=identity)
+    binding = {'schema': 'ccb.plan.task_set_binding.v1', 'task_set_id': 'ts-committed',
+               'task_set_revision': 1, 'binding_role': 'child', 'bound_task_revision': 1,
+               'required': True, 'order': 0}
+    committed = commit(context, transaction, authority={
+        'task_set_id': 'ts-committed', 'task_set_revision': 1,
+        'children': [{'task_id': 'child-a', 'task_revision': 1, 'task_set': binding}],
+    })
+    with pytest.raises(PlannerTaskSetImportConflict, match='identity_conflict'):
+        prepare(context, identity={**identity, 'planner_reply_sha256': 'c' * 64})
+    journal = json.loads((project_root / committed['journal_ref']).read_text(encoding='utf-8'))
+    assert journal == committed
+    conflict_path = (project_root / committed['journal_ref']).with_name(
+        'planner-task-set-import.transaction.conflicts.json'
+    )
+    conflicts = json.loads(conflict_path.read_text(encoding='utf-8'))
+    assert conflicts['transaction_digest'] == committed['transaction_digest']
+    assert conflicts['conflicts'][-1]['observed_identity']['planner_reply_sha256'] == 'c' * 64
+
+
+@pytest.mark.parametrize(
+    'mutation',
+    ('missing', 'prepared', 'failed', 'corrupt', 'foreign_task', 'missing_membership',
+     'duplicate_membership', 'tampered_authority', 'tampered_binding'),
+)
+def test_runner_transaction_gate_fails_closed_for_invalid_authority(tmp_path: Path, mutation: str) -> None:
+    project_root, _context, committed, task = _committed_transaction_task(tmp_path)
+    journal_path = project_root / committed['journal_ref']
+    candidate = dict(task)
+    record = json.loads(journal_path.read_text(encoding='utf-8'))
+    if mutation == 'missing':
+        journal_path.unlink()
+    elif mutation in {'prepared', 'failed'}:
+        record['status'] = mutation
+        _write(journal_path, json.dumps(record))
+    elif mutation == 'corrupt':
+        _write(journal_path, '{not-json')
+    elif mutation == 'foreign_task':
+        candidate['task_id'] = 'foreign-task'
+    elif mutation == 'missing_membership':
+        record['identity']['ordered_children'] = []
+        record['transaction_digest'] = transaction_digest(record['identity'])
+        _write(journal_path, json.dumps(record))
+    elif mutation == 'duplicate_membership':
+        record['identity']['ordered_children'].append(dict(record['identity']['ordered_children'][0]))
+        record['transaction_digest'] = transaction_digest(record['identity'])
+        _write(journal_path, json.dumps(record))
+    elif mutation == 'tampered_authority':
+        record['authority']['children'][0]['task_id'] = 'other-child'
+        _write(journal_path, json.dumps(record))
+    elif mutation == 'tampered_binding':
+        candidate['task_set'] = {**candidate['task_set'], 'task_set_id': 'ts-other'}
+    assert runner_transaction_committed(project_root, candidate) is False
+
+
+@pytest.mark.parametrize('target', ('journal', 'lock', 'parent'))
+def test_runner_transaction_gate_rejects_symlink_layout(tmp_path: Path, target: str) -> None:
+    project_root, _context, committed, task = _committed_transaction_task(
+        tmp_path, job_id=f'job-symlink-{target}'
+    )
+    journal_path = project_root / committed['journal_ref']
+    external = tmp_path / 'external'
+    external.mkdir()
+    if target == 'journal':
+        copy = external / journal_path.name
+        copy.write_bytes(journal_path.read_bytes())
+        journal_path.unlink()
+        journal_path.symlink_to(copy)
+    elif target == 'lock':
+        lock = journal_path.with_name('planner-task-set-import.transaction.lock')
+        lock.unlink()
+        lock.symlink_to(external / 'lock')
+    else:
+        job_dir = journal_path.parent
+        moved = external / job_dir.name
+        job_dir.rename(moved)
+        job_dir.symlink_to(moved, target_is_directory=True)
+    assert runner_transaction_committed(project_root, task) is False
 
 
 def test_plan_parser_supports_v1_task_commands() -> None:

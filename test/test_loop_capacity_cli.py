@@ -44,7 +44,7 @@ from cli.services.loop_effective_capacity import (
     compile_project_effective_capacity_snapshot,
     effective_capacity_digest,
 )
-from cli.services.plan_tasks import plan_task
+from cli.services.plan_tasks import find_first_actionable_task, plan_task
 from cli.services.frontdesk_intake import frontdesk_intake
 import cli.services.frontdesk_intake_command as frontdesk_intake_command_module
 from cli.services.frontdesk_intake_command import frontdesk_intake_command
@@ -10838,6 +10838,142 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
             )
         )
         assert len(index['tasks']) == len(expected_task_ids) + 1
+
+
+def _planner_transaction_crash_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        role_output_import_module, 'compile_project_effective_capacity_snapshot',
+        lambda _root: {'config_version': 3},
+    )
+    command = ParsedLoopRunnerCommand(
+        project=None, once=True, plan_slug='demo-plan', role_job_id='job-crash-planner',
+        consume_role_output=True, json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _write(project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'README.md', '# Demo Plan\n')
+    plan_task(context, SimpleNamespace(
+        action='task-create', plan_slug='demo-plan', title='Crash intake', task_id='crash-intake',
+    ))
+    intake = 'Crash recovery intake'
+    _write_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-crash.json',
+        {
+            'schema_version': 1, 'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'activation_id': 'act-crash', 'project_id': context.project.project_id,
+            'project_root': str(project_root), 'action': 'activate_planner_from_frontdesk',
+            'plan_slug': 'demo-plan', 'planner_contract': 'task_set',
+            'source_task_id': 'crash-intake',
+            'source_job': {'job_id': 'job-frontdesk-crash', 'agent_name': 'frontdesk'},
+            'source_request': {
+                'source_job_id': 'job-frontdesk-crash',
+                'sha256': hashlib.sha256(intake.encode()).hexdigest(),
+                'bytes': len(intake.encode()),
+            },
+            'ask': {'target': 'planner', 'job_id': 'job-crash-planner', 'status': 'accepted'},
+        },
+    )
+    tasks = [
+        {
+            'task_id': f'crash-child-{index}', 'title': f'Crash child {index}',
+            'route': 'direct_execution', 'readiness': 'ready',
+            'task_packet': f'# Task: Crash child {index}\nRoute: direct_execution\n',
+            'execution_contract': f'# Execution Contract\nRoute: direct_execution\nChild {index}.\n',
+            'allowed_paths': [f'child-{index}.txt'], 'verification': [f'test -f child-{index}.txt'],
+            'blockers': [],
+        }
+        for index in range(2)
+    ]
+    _write_completion_snapshot(
+        project_root, job_id='job-crash-planner', agent_name='planner',
+        reply='**task-set.json**\n```json\n' + json.dumps({'tasks': tasks}) + '\n```\n',
+    )
+    return project_root, context, command, [task['task_id'] for task in tasks]
+
+
+@pytest.mark.parametrize(
+    ('failure_stage', 'binding_crash_after'),
+    (
+        ('prepared', None),
+        ('child_created:0', None),
+        ('artifact_task_packet:0', None),
+        ('artifact_execution_contract:0', None),
+        (None, 1),
+        (None, 2),
+        ('child_ready:0', None),
+        ('committed_before_log', None),
+    ),
+)
+def test_planner_task_set_import_crash_replay_is_atomic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str | None,
+    binding_crash_after: int | None,
+) -> None:
+    project_root, context, command, child_ids = _planner_transaction_crash_case(tmp_path, monkeypatch)
+    original_plan_task = plan_task
+    binding_calls = 0
+
+    def crash_hook(stage: str) -> None:
+        if stage == failure_stage:
+            raise SystemExit(f'crash:{stage}')
+
+    def crash_plan_task(ctx, cmd):
+        nonlocal binding_calls
+        result = original_plan_task(ctx, cmd)
+        if getattr(cmd, 'action', None) == 'task-bind-task-set':
+            binding_calls += 1
+            if binding_calls == binding_crash_after:
+                raise SystemExit(f'crash:binding:{binding_calls}')
+        return result
+
+    monkeypatch.setattr(role_output_import_module, '_planner_task_set_import_failure_point', crash_hook)
+    with pytest.raises(SystemExit, match='crash:'):
+        loop_runner_once(
+            context, command,
+            services=SimpleNamespace(plan_task=crash_plan_task if binding_crash_after else original_plan_task),
+        )
+    journal_path = (
+        project_root / '.ccb' / 'runtime' / 'role-output-imports' / 'job-crash-planner'
+        / 'planner-task-set-import.transaction.json'
+    )
+    journal = json.loads(journal_path.read_text(encoding='utf-8'))
+    expected_status = 'committed' if failure_stage == 'committed_before_log' else 'prepared'
+    assert journal['status'] == expected_status
+    source = plan_task(context, SimpleNamespace(action='task-show', task_id='crash-intake'))['task']
+    assert source['status'] != 'done'
+    for task_id in child_ids:
+        try:
+            child = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+        except ValueError:
+            continue
+        if child['status'] == 'ready_for_orchestration' and expected_status == 'prepared':
+            assert find_first_actionable_task(context, task_id=task_id) is None
+
+    monkeypatch.setattr(role_output_import_module, '_planner_task_set_import_failure_point', lambda _stage: None)
+    replay = loop_runner_once(context, command, services=SimpleNamespace(plan_task=original_plan_task))
+    assert replay['action'] == 'imported_planner_task_set_authority'
+    assert replay['task_ids'] == child_ids
+    committed = json.loads(journal_path.read_text(encoding='utf-8'))
+    assert committed['status'] == 'committed'
+    assert [child['task_id'] for child in committed['authority']['children']] == child_ids
+    task_set_paths = list(
+        (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'task-sets').glob('*/task-set.json')
+    )
+    assert len(task_set_paths) == 1
+    index = json.loads(
+        (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'index.json').read_text()
+    )
+    assert [task['task_id'] for task in index['tasks']] == ['crash-intake', *child_ids]
+    for task_id in child_ids:
+        task = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+        assert set(task['artifacts']) == {'task_packet', 'execution_contract'}
+        assert task['task_set']['task_set_id'] == committed['identity']['task_set_id']
+        assert find_first_actionable_task(context, task_id=task_id) is not None
+    import_lines = (
+        project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+    ).read_text().splitlines()
+    assert len([line for line in import_lines if 'job-crash-planner' in line]) == 1
 
 
 def test_loop_runner_imports_single_planner_task_settles_frontdesk_source_task(
