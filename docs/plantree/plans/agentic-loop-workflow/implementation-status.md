@@ -4,7 +4,7 @@ Date: 2026-07-12
 Status: In progress — G6C implementation integrated, P5 acceptance active
 Branch: `workflow/g6c-integration`
 Worktree: `/home/bfly/yunwei/ccb_worktrees/g6c-integration`
-Current HEAD before this status update: `c3b4bba0`
+Current HEAD before this status update: `2d897845`
 
 ## Current Phase
 
@@ -20,7 +20,7 @@ L3 repeated until the 24-step runner limit. The fail-closed matcher,
 provenance, revision, stale-replay, and reconciliation repairs are integrated
 through `c37c4ac4`. Fourth-round independent review passed with `344` focused
 tests and no High/Medium finding. Root8 remains preserved; the current-HEAD
-full source gate is active before a fresh root9 run.
+full source gate is accepted; a fresh root9 run is now active.
 
 ## Authority
 
@@ -53,13 +53,11 @@ Earlier accepted R1 authority/runtime evidence remains indexed at
 
 ## Active TODO
 
-1. Run the complete current-HEAD non-provider-blackbox suite and static/diff
-   gates from the dedicated external test project.
-2. Run fresh visible root9 L1-L4 through task-set closure, Planner backfill,
+1. Run fresh visible root9 L1-L4 through task-set closure, Planner backfill,
    Frontdesk reporting, B7, release, shutdown, and zero-residue audit.
-3. Complete remaining G6 three/four-workgroup, restart, busy-retain, and
+2. Complete remaining G6 three/four-workgroup, restart, busy-retain, and
    provider-profile rows from fresh opened projects.
-4. Run G7 package/install/update/rollback gates and one visible installed-
+3. Run G7 package/install/update/rollback gates and one visible installed-
    candidate workflow; keep G8 publication separately authorized.
 
 ## Blocked By
@@ -87,11 +85,14 @@ independent work whose successful result is not needed upstream.
   `/home/bfly/yunwei/ccb_source/.ccb/ccbd/snapshots/job_2ccb4102700d.json`,
   SHA-256 `1d920d45af105b2ec1e9f1e8b455e2fc8ba133dcde5603e3b78f589dbd9b20b0`.
 - Parent-authority harness checkpoint: `78 passed`.
-- Latest full repository gate before the final fixes: `4583 passed, 2 skipped,
-  21 deselected in 675.06s`; current HEAD still requires a full rerun.
+- Current-HEAD full non-provider-blackbox gate: `4739 passed, 2 skipped,
+  21 deselected in 732.49s`; `compileall`, `pyflakes`, and `git diff --check`
+  passed after the one-line unused-import cleanup at `2d897845`.
 - Root8: L1/L2 `done/pass`, L4 macro `replan_required`, L4 blocked `blocked`;
   L3 rejected after repeated Orchestrator activation and runner step limit.
-- Integration worktree was clean at `c3b4bba0` before this status update.
+- Historical roots 1-8 retain their files and evidence but are all unmounted
+  with `pid_alive=False` before root9 materialization.
+- Integration worktree was clean at `2d897845` before this status update.
 
 ## Non-Claims
 

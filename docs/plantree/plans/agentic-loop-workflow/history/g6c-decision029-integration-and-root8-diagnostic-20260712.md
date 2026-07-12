@@ -43,10 +43,12 @@ reconciliation fix. It is not an acceptance report.
   `/home/bfly/yunwei/ccb_source/.ccb/ccbd/snapshots/job_2ccb4102700d.json`,
   SHA-256 `1d920d45af105b2ec1e9f1e8b455e2fc8ba133dcde5603e3b78f589dbd9b20b0`.
 - Parent-authority harness checkpoint: `78 passed`.
-- The most recent full repository gate predates the final harness and
-  detail-ready fixes: `4583 passed, 2 skipped, 21 deselected in 675.06s`.
-  It is historical evidence only; the full gate must be rerun at current HEAD.
-- Current integration worktree was clean at `d941fa2e` before this plan update.
+- Current-HEAD full non-provider-blackbox gate after the final authority and
+  plan retrieval repairs: `4739 passed, 2 skipped, 21 deselected in 732.49s`.
+- `compileall`, `pyflakes`, and `git diff --check` passed after the one-line
+  unused-import cleanup at `2d897845`.
+- Historical real roots 1-8 retain their evidence files but were all safely
+  unmounted with no active/queued/pending work before root9 materialization.
 
 ## Root8 Real-Provider Evidence
 
@@ -83,13 +85,12 @@ The accepted repair has two layers:
 
 ## Remaining Acceptance Gates
 
-1. Current-HEAD full non-provider-blackbox suite plus static/diff checks.
-2. Fresh root9 opened-project L1-L4 run proving L3 reconciliation, task-set
+1. Fresh root9 opened-project L1-L4 run proving L3 reconciliation, task-set
    aggregate closure, Planner backfill, Frontdesk notification, B7, visible
    panes, release, shutdown, and zero residue.
-3. Remaining G6 real rows: three/four workgroups, in-flight restart,
+2. Remaining G6 real rows: three/four workgroups, in-flight restart,
    busy-retain, and provider-profile qualification.
-4. G7 clean candidate package/install/update/rollback and one visible
+3. G7 clean candidate package/install/update/rollback and one visible
    installed-candidate workflow. Publication remains a separate explicit
    authorization gate.
 
