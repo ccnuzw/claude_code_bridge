@@ -8,10 +8,11 @@ Current HEAD before this status update: `c3b4bba0`
 
 ## Current Phase
 
-The active release target remains one visible Frontdesk-started lane with one
-semantic orchestration bundle and one to four reviewed `Worker + Reviewer`
-workgroups. G0-G5, Decision 027, and Decision 028 are accepted. Decision 029
-P0-P4 source implementation is integrated; P5 direct acceptance is active.
+The active release target is single-lane production closure: one visible
+Frontdesk-started lane with one semantic orchestration bundle and one to four
+reviewed `Worker + Reviewer` workgroups. G0-G5, Decision 027, and Decision 028
+are accepted. Decision 029 P0-P4 source implementation is integrated; P5
+direct acceptance is active.
 
 The first fresh G6C run, root8, proved L1/L2 and both L4 branches but was
 rejected because an affirmative Detailer stop contract was not recognized and
@@ -46,6 +47,9 @@ closure, integration, topology, round, release, and delivery authority.
   and auto-runner reconciliation semantics.
 - `f09cb211` through `ec8fee16`: public three-layer architecture document,
   Mermaid flows, and reviewed SVG/PNG promotional graphic.
+
+Earlier accepted R1 authority/runtime evidence remains indexed at
+[history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
 
 ## Active TODO
 
@@ -91,7 +95,10 @@ independent work whose successful result is not needed upstream.
 
 ## Non-Claims
 
-The branch is not yet a packaged candidate or production/default-enablement
-claim. Root8 is diagnostic evidence, not a pass. Three/four-workgroup,
-restart, busy-retain, provider qualification, G7 packaging, and G8 publication
-remain outside the current accepted claim.
+The branch is not production-ready. It is not yet a packaged candidate or
+production/default-enablement claim. Root8 is diagnostic evidence, not a pass.
+Three/four-workgroup, restart, busy-retain, provider qualification, G7
+packaging, and G8 publication remain outside the current accepted claim.
+
+The bounded earlier Phase 1-6 claim remains archived in
+[history/phase1-6-acceptance-report-20260705.md](history/phase1-6-acceptance-report-20260705.md).
