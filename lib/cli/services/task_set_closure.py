@@ -13,6 +13,7 @@ from storage.locks import file_lock
 from storage.paths import PathLayout
 from storage.text_artifacts import read_text_artifact
 from jobs.store import JobStore
+from message_bureau import RetryLineageError, authoritative_retry_successor
 from completion.snapshot_store import CompletionSnapshotStore
 
 from .planner_feedback_apply import plan_revision_authority, validate_planner_backfill_record
@@ -779,7 +780,11 @@ def _validate_retry_lineage(context, transport) -> None:
     layout = PathLayout(context.project.project_root)
     store = JobStore(layout)
     for edge in lineage:
-        if not isinstance(edge, dict) or set(edge) != {'retry_source_job_id', 'retry_successor_job_id'}:
+        edge_fields = {
+            'message_id', 'source_attempt_id', 'successor_attempt_id',
+            'retry_source_job_id', 'retry_successor_job_id', 'retry_index',
+        }
+        if not isinstance(edge, dict) or set(edge) != edge_fields:
             raise ValueError('task-set closure retry lineage edge invalid')
         successor = str(edge['retry_successor_job_id'])
         if edge['retry_source_job_id'] != current or successor in seen:
@@ -791,14 +796,15 @@ def _validate_retry_lineage(context, transport) -> None:
             or source_job.terminal_decision is None
         ):
             raise ValueError('task-set closure retry source is not terminal non-success')
-        candidates = {
-            job.job_id: job
-            for job in store.list_agent(str(transport['target']))
-            if str(job.provider_options.get('retry_source_job_id') or '') == current
-        }
-        if set(candidates) != {successor}:
-            raise ValueError('task-set closure retry successor authority ambiguous')
-        job = candidates[successor]
+        try:
+            authority = authoritative_retry_successor(layout, current)
+        except RetryLineageError as exc:
+            raise ValueError(f'task-set closure retry lineage authority invalid: {exc}') from exc
+        if authority is None or authority.to_record() != edge:
+            raise ValueError('task-set closure retry successor authority mismatch')
+        job = store.get_latest(str(transport['target']), successor)
+        if job is None:
+            raise ValueError('task-set closure retry successor job missing')
         body = str(job.request.body or '')
         if job.request.body_artifact:
             body = read_text_artifact(layout, job.request.body_artifact)
@@ -809,6 +815,9 @@ def _validate_retry_lineage(context, transport) -> None:
             or hashlib.sha256(body.encode('utf-8')).hexdigest() != transport['message_sha256']
         ):
             raise ValueError('task-set closure retry successor request mismatch')
+        option_source = str(job.provider_options.get('retry_source_job_id') or '')
+        if option_source and option_source != current:
+            raise ValueError('task-set closure retry successor provider option mismatch')
         current = successor
         seen.add(successor)
     if current != effective or (not lineage and source != effective):

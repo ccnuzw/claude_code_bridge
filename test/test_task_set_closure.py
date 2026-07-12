@@ -9,6 +9,7 @@ import pytest
 
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
 from jobs.store import JobStore
+from message_bureau import AttemptRecord, AttemptState, AttemptStore, MessageRecord, MessageState, MessageStore
 from storage.paths import PathLayout
 from cli.services.plan_tasks import find_first_actionable_task, plan_task, settle_task_set_parent
 from cli.services.planner_feedback import (
@@ -262,6 +263,39 @@ def _failed_job(context, *, target: str, job_id: str, task_id: str, message: str
     ))
 
 
+def _retry_authority(context, *, target: str, jobs: list[str]) -> list[dict[str, object]]:
+    layout = PathLayout(context.project.project_root)
+    message_id = f'msg_{target}_retry'
+    MessageStore(layout).append(MessageRecord(
+        message_id=message_id, origin_message_id=None, from_actor='system',
+        target_scope='single', target_agents=(target,), message_class='ask',
+        retry_policy={'mode': 'auto', 'max_attempts': 3},
+        created_at='2026-07-12T00:00:00Z', updated_at='2026-07-12T00:00:03Z',
+        message_state=MessageState.COMPLETED,
+    ))
+    attempts = AttemptStore(layout)
+    records = []
+    for index, job_id in enumerate(jobs):
+        attempt_id = f'att_{target}_{index}'
+        attempts.append(AttemptRecord(
+            attempt_id=attempt_id, message_id=message_id, agent_name=target,
+            provider='codex', job_id=job_id, retry_index=index,
+            health_snapshot_ref=None, started_at=f'2026-07-12T00:00:0{index}Z',
+            updated_at=f'2026-07-12T00:00:0{index + 1}Z',
+            attempt_state=(AttemptState.COMPLETED if index == len(jobs) - 1 else AttemptState.FAILED),
+        ))
+        if index:
+            records.append({
+                'message_id': message_id,
+                'source_attempt_id': f'att_{target}_{index - 1}',
+                'successor_attempt_id': attempt_id,
+                'retry_source_job_id': jobs[index - 1],
+                'retry_successor_job_id': job_id,
+                'retry_index': index,
+            })
+    return records
+
+
 def _closure_ref(task_set_id: str, closure: dict[str, object]) -> dict[str, object]:
     return {
         'path': f'docs/plantree/plans/demo/task-sets/{task_set_id}/closure.json',
@@ -276,6 +310,7 @@ def _settlement_fixture(
     notification_required: bool = False,
     planner_retry: bool = False,
     frontdesk_retry: bool = False,
+    retry_chain: bool = False,
 ):
     created = _create_set(context, [('child-a', True)])
     task_set_id = created['task_set']['task_set_id']
@@ -293,11 +328,13 @@ def _settlement_fixture(
     )
     feedback_digest = planner_feedback_digest(proposal)
     planner_source_job_id = 'job_planner_source' if planner_retry else 'job_planner'
-    planner_job_id = 'job_planner_retry' if planner_retry else planner_source_job_id
-    planner_lineage = ([{
-        'retry_source_job_id': planner_source_job_id,
-        'retry_successor_job_id': planner_job_id,
-    }] if planner_retry else [])
+    planner_jobs = ([planner_source_job_id, 'job_planner_retry'] + (
+        ['job_planner_retry_2'] if retry_chain else []
+    )) if planner_retry else [planner_source_job_id]
+    planner_job_id = planner_jobs[-1]
+    planner_lineage = (_retry_authority(
+        context, target='planner', jobs=planner_jobs
+    ) if planner_retry else [])
     imported = apply_planner_feedback(context, proposal, {
         'task_set_id': task_set_id,
         'task_set_revision': 1,
@@ -328,15 +365,16 @@ def _settlement_fixture(
     })
     planner['retry_lineage'] = planner_lineage
     if planner_retry:
-        _failed_job(
-            context, target='planner', job_id=planner_source_job_id,
-            task_id=str(planner['task_id']), message=planner_message,
-        )
+        for failed_job_id in planner_jobs[:-1]:
+            _failed_job(
+                context, target='planner', job_id=failed_job_id,
+                task_id=str(planner['task_id']), message=planner_message,
+            )
     _completed_job(
         context, target='planner', job_id=planner_job_id,
         task_id=str(planner['task_id']), message=planner_message, reply=proposal_reply,
         provider_options=(
-            {'retry_source_job_id': planner_source_job_id} if planner_retry else None
+            {'retry_source_job_id': planner_jobs[-2]} if planner_retry else None
         ),
     )
     frontdesk = None
@@ -344,11 +382,13 @@ def _settlement_fixture(
     frontdesk_job_id = None
     if notification_required:
         frontdesk_source_job_id = 'job_frontdesk_source' if frontdesk_retry else 'job_frontdesk'
-        frontdesk_job_id = 'job_frontdesk_retry' if frontdesk_retry else frontdesk_source_job_id
-        frontdesk_lineage = ([{
-            'retry_source_job_id': frontdesk_source_job_id,
-            'retry_successor_job_id': frontdesk_job_id,
-        }] if frontdesk_retry else [])
+        frontdesk_jobs = ([frontdesk_source_job_id, 'job_frontdesk_retry'] + (
+            ['job_frontdesk_retry_2'] if retry_chain else []
+        )) if frontdesk_retry else [frontdesk_source_job_id]
+        frontdesk_job_id = frontdesk_jobs[-1]
+        frontdesk_lineage = (_retry_authority(
+            context, target='frontdesk', jobs=frontdesk_jobs
+        ) if frontdesk_retry else [])
         frontdesk_message = _frontdesk_message(frontdesk_status_envelope(proposal))
         frontdesk = _prepared_transport(
             target='frontdesk', purpose='frontdesk_status',
@@ -361,15 +401,16 @@ def _settlement_fixture(
             'status': 'completed', 'reply': 'delivered',
         })
         if frontdesk_retry:
-            _failed_job(
-                context, target='frontdesk', job_id=frontdesk_source_job_id,
-                task_id=str(frontdesk['task_id']), message=frontdesk_message,
-            )
+            for failed_job_id in frontdesk_jobs[:-1]:
+                _failed_job(
+                    context, target='frontdesk', job_id=failed_job_id,
+                    task_id=str(frontdesk['task_id']), message=frontdesk_message,
+                )
         _completed_job(
             context, target='frontdesk', job_id=frontdesk_job_id,
             task_id=str(frontdesk['task_id']), message=frontdesk_message, reply='delivered',
             provider_options=(
-                {'retry_source_job_id': frontdesk_source_job_id} if frontdesk_retry else None
+                {'retry_source_job_id': frontdesk_jobs[-2]} if frontdesk_retry else None
             ),
         )
         notification = {'status': 'delivered', 'job_id': frontdesk_job_id}
@@ -885,6 +926,24 @@ def test_settlement_accepts_completed_planner_and_frontdesk_retry_successors(
     assert transport['planner_effective_job_id'] == 'job_planner_retry'
     assert transport['frontdesk_source_job_id'] == 'job_frontdesk_source'
     assert transport['frontdesk_effective_job_id'] == 'job_frontdesk_retry'
+
+
+def test_settlement_accepts_authoritative_planner_and_frontdesk_retry_chains(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    authority, _runtime_path, _backfill_path = _settlement_fixture(
+        context, notification_required=True, planner_retry=True,
+        frontdesk_retry=True, retry_chain=True,
+    )
+
+    settled = settle_task_set_closure_feedback(context, **authority)
+
+    transport = settled['intent']['transport_ref']
+    assert transport['planner_effective_job_id'] == 'job_planner_retry_2'
+    assert transport['frontdesk_effective_job_id'] == 'job_frontdesk_retry_2'
+    assert [edge['retry_index'] for edge in transport['planner_retry_lineage']] == [1, 2]
+    assert [edge['retry_index'] for edge in transport['frontdesk_retry_lineage']] == [1, 2]
 
 
 @pytest.mark.parametrize('target', ('planner', 'frontdesk'))

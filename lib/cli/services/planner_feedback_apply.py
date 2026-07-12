@@ -482,7 +482,39 @@ def _authority(proposal, value) -> dict[str, object]:
         or not isinstance(result['planner_retry_lineage'], list)
     ):
         raise ValueError('planner backfill Planner retry authority invalid')
+    _validate_retry_lineage_authority(result)
     return result
+
+
+def _validate_retry_lineage_authority(authority: dict[str, object]) -> None:
+    source = str(authority['planner_source_job_id'])
+    current = source
+    message_id = None
+    seen = {source}
+    edge_fields = {
+        'message_id', 'source_attempt_id', 'successor_attempt_id',
+        'retry_source_job_id', 'retry_successor_job_id', 'retry_index',
+    }
+    for expected_index, edge in enumerate(authority['planner_retry_lineage'], start=1):
+        if not isinstance(edge, dict) or set(edge) != edge_fields:
+            raise ValueError('planner backfill retry lineage edge invalid')
+        successor = str(edge['retry_successor_job_id'])
+        if (
+            edge['retry_source_job_id'] != current
+            or successor in seen
+            or edge['retry_index'] != expected_index
+            or not str(edge['source_attempt_id'] or '')
+            or not str(edge['successor_attempt_id'] or '')
+        ):
+            raise ValueError('planner backfill retry lineage chain invalid')
+        if message_id is None:
+            message_id = str(edge['message_id'] or '')
+        if not message_id or edge['message_id'] != message_id:
+            raise ValueError('planner backfill retry lineage message invalid')
+        current = successor
+        seen.add(successor)
+    if current != authority['planner_effective_job_id']:
+        raise ValueError('planner backfill retry lineage effective job invalid')
 
 
 def _validate_source_authority(task_set, closure, proposal, authority) -> None:

@@ -13,6 +13,7 @@ from .models import (
     SCHEMA_VERSION,
 )
 from .store import AttemptStore, MessageStore, ReplyStore
+from .retry_lineage import RetryLineageError, RetrySuccessorEdge, authoritative_retry_successor
 
 __all__ = [
     'AttemptRecord',
@@ -29,5 +30,8 @@ __all__ = [
     'ReplyRecord',
     'ReplyStore',
     'ReplyTerminalStatus',
+    'RetryLineageError',
+    'RetrySuccessorEdge',
     'SCHEMA_VERSION',
+    'authoritative_retry_successor',
 ]

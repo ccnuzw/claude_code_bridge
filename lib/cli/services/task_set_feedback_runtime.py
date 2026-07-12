@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from cli.models import ParsedAskCommand
 from jobs.store import JobStore
+from message_bureau import RetryLineageError, authoritative_retry_successor
 from storage.atomic import atomic_write_json
 from storage.locks import file_lock
 from storage.paths import PathLayout
@@ -314,13 +315,11 @@ def _advance_transport(context, transport: dict[str, object], deps) -> dict[str,
                 'effective_job_id': current_job_id, 'retry_lineage': lineage,
                 'status': status, 'reply': str(terminal.get('reply') or ''),
             }
-        if successor in seen:
+        successor_job_id = str(successor['retry_successor_job_id'])
+        if successor_job_id in seen:
             raise RuntimeError('task_set_feedback_retry_lineage_cycle')
-        lineage.append({
-            'retry_source_job_id': current_job_id,
-            'retry_successor_job_id': successor,
-        })
-        current_job_id = successor
+        lineage.append(successor)
+        current_job_id = successor_job_id
     raise RuntimeError('task_set_feedback_retry_lineage_depth_exceeded')
 
 
@@ -378,19 +377,19 @@ def _retry_successor_job(
     task_id: str,
     message: str,
     message_sha256: str,
-) -> str | None:
+) -> dict[str, object] | None:
     layout = context.paths if isinstance(getattr(context, 'paths', None), PathLayout) else PathLayout(
         context.project.project_root
     )
-    latest = {}
-    for job in JobStore(layout).list_agent(target):
-        if str(job.provider_options.get('retry_source_job_id') or '') == source_job_id:
-            latest[job.job_id] = job
-    if len(latest) > 1:
-        raise RuntimeError('task_set_feedback_retry_successor_ambiguous')
-    if not latest:
+    try:
+        edge = authoritative_retry_successor(layout, source_job_id)
+    except RetryLineageError as exc:
+        raise RuntimeError(f'task_set_feedback_retry_lineage_authority_invalid: {exc}') from exc
+    if edge is None:
         return None
-    job = next(iter(latest.values()))
+    job = JobStore(layout).get_latest(target, edge.retry_successor_job_id)
+    if job is None:
+        raise RuntimeError('task_set_feedback_retry_successor_job_missing')
     body = str(job.request.body or '')
     if job.request.body_artifact:
         body = read_text_artifact(layout, job.request.body_artifact)
@@ -401,7 +400,10 @@ def _retry_successor_job(
         or hashlib.sha256(body.encode('utf-8')).hexdigest() != message_sha256
     ):
         raise RuntimeError('task_set_feedback_retry_successor_authority_mismatch')
-    return job.job_id
+    option_source = str(job.provider_options.get('retry_source_job_id') or '')
+    if option_source and option_source != source_job_id:
+        raise RuntimeError('task_set_feedback_retry_successor_provider_option_mismatch')
+    return edge.to_record()
 
 
 def _planner_message(

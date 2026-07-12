@@ -9,6 +9,7 @@ import pytest
 
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
 from jobs.store import JobStore
+from message_bureau import AttemptRecord, AttemptState, AttemptStore, MessageRecord, MessageState, MessageStore
 from storage.paths import PathLayout
 from cli.services.ask_runtime import AskSummary
 from cli.models_start import ParsedLoopRunnerCommand
@@ -129,9 +130,7 @@ class Harness:
             submit_ask=self.submit,
             persisted_terminal_watch=lambda _context, job_id: self.terminals.get(job_id),
             find_task_set_transport_job=self.find,
-            find_task_set_retry_successor=(
-                lambda _context, source_job_id, **_kwargs: self.successors.get(source_job_id)
-            ),
+            find_task_set_retry_successor=self.retry_successor,
             apply_planner_feedback=self.apply,
             settle_task_set_feedback=self.settle,
             resolve_plan_revision=lambda *_args, **_kwargs: 'sha256:' + 'c' * 64,
@@ -149,6 +148,19 @@ class Harness:
 
     def find(self, _context, *, task_id: str, **_kwargs):
         return self.persisted.get(task_id)
+
+    def retry_successor(self, _context, source_job_id: str, **_kwargs):
+        successor = self.successors.get(source_job_id)
+        if successor is None:
+            return None
+        return {
+            'message_id': f'msg-{source_job_id}',
+            'source_attempt_id': f'att-{source_job_id}',
+            'successor_attempt_id': f'att-{successor}',
+            'retry_source_job_id': source_job_id,
+            'retry_successor_job_id': successor,
+            'retry_index': 1,
+        }
 
     def apply(self, _context, _proposal, authority):
         self.imports.append(authority)
@@ -228,8 +240,12 @@ def test_planner_and_frontdesk_retry_successors_resume_exactly_once(tmp_path: Pa
     assert harness.imports[0]['planner_source_job_id'] == 'job_1'
     assert harness.imports[0]['planner_effective_job_id'] == 'job_1_retry'
     assert harness.imports[0]['planner_retry_lineage'] == [{
+        'message_id': 'msg-job_1',
+        'source_attempt_id': 'att-job_1',
+        'successor_attempt_id': 'att-job_1_retry',
         'retry_source_job_id': 'job_1',
         'retry_successor_job_id': 'job_1_retry',
+        'retry_index': 1,
     }]
     harness.terminals['job_2'] = {'status': 'incomplete', 'reply': 'delivery failed'}
     harness.successors['job_2'] = 'job_2_retry'
@@ -242,8 +258,12 @@ def test_planner_and_frontdesk_retry_successors_resume_exactly_once(tmp_path: Pa
     assert settlement['frontdesk_source_job_id'] == 'job_2'
     assert settlement['frontdesk_effective_job_id'] == 'job_2_retry'
     assert settlement['frontdesk_retry_lineage'] == [{
+        'message_id': 'msg-job_2',
+        'source_attempt_id': 'att-job_2',
+        'successor_attempt_id': 'att-job_2_retry',
         'retry_source_job_id': 'job_2',
         'retry_successor_job_id': 'job_2_retry',
+        'retry_index': 1,
     }]
     assert len(harness.imports) == 1
 
@@ -286,13 +306,59 @@ def test_retry_successor_authority_rejects_ambiguous_or_mismatched_jobs(
             provider_options={'retry_source_job_id': 'job_source'},
         ))
 
-    with pytest.raises(RuntimeError, match='ambiguous|authority_mismatch'):
+    with pytest.raises(RuntimeError, match='source attempt authority missing'):
         _retry_successor_job(
             context,
             source_job_id='job_source', target='planner', task_id='task-a',
             message=message,
             message_sha256=hashlib.sha256(message.encode()).hexdigest(),
         )
+
+
+def test_retry_successor_requires_attempt_message_authority_and_supports_chain(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    layout = PathLayout(tmp_path)
+    message = 'exact retry message'
+    MessageStore(layout).append(MessageRecord(
+        message_id='msg-authority', origin_message_id=None, from_actor='system',
+        target_scope='single', target_agents=('planner',), message_class='ask',
+        retry_policy={'mode': 'auto', 'max_attempts': 3}, created_at='2026-07-12T00:00:00Z',
+        updated_at='2026-07-12T00:00:03Z', message_state=MessageState.COMPLETED,
+    ))
+    attempts = AttemptStore(layout)
+    jobs = ['job_source', 'job_retry_1', 'job_retry_2']
+    for index, job_id in enumerate(jobs):
+        attempts.append(AttemptRecord(
+            attempt_id=f'att_{index}', message_id='msg-authority', agent_name='planner',
+            provider='codex', job_id=job_id, retry_index=index, health_snapshot_ref=None,
+            started_at=f'2026-07-12T00:00:0{index}Z', updated_at=f'2026-07-12T00:00:0{index + 1}Z',
+            attempt_state=AttemptState.COMPLETED if index == 2 else AttemptState.FAILED,
+        ))
+        request = MessageEnvelope(
+            project_id='project-test', to_agent='planner', from_actor='system', body=message,
+            task_id='task-a', reply_to=None, message_type='ask', delivery_scope=DeliveryScope.SINGLE,
+        )
+        JobStore(layout).append(JobRecord(
+            job_id=job_id, submission_id=None, agent_name='planner', provider='codex', request=request,
+            status=JobStatus.COMPLETED if index == 2 else JobStatus.FAILED,
+            terminal_decision={'terminal': True, 'status': 'completed' if index == 2 else 'failed', 'reply': ''},
+            cancel_requested_at=None, created_at='2026-07-12T00:00:00Z',
+            updated_at='2026-07-12T00:00:01Z',
+        ))
+
+    first = _retry_successor_job(
+        context, source_job_id='job_source', target='planner', task_id='task-a',
+        message=message, message_sha256=hashlib.sha256(message.encode()).hexdigest(),
+    )
+    second = _retry_successor_job(
+        context, source_job_id='job_retry_1', target='planner', task_id='task-a',
+        message=message, message_sha256=hashlib.sha256(message.encode()).hexdigest(),
+    )
+
+    assert first['retry_successor_job_id'] == 'job_retry_1'
+    assert first['source_attempt_id'] == 'att_0'
+    assert second['retry_successor_job_id'] == 'job_retry_2'
+    assert second['retry_index'] == 2
 
 
 @pytest.mark.parametrize('accepted_before_raise', [False, True])
