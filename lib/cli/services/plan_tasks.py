@@ -19,6 +19,7 @@ from .loop_orchestration_bundle import (
     task_revision,
 )
 from .loop_effective_capacity import compile_project_effective_capacity_snapshot
+from .planner_task_set_import_transaction import runner_transaction_committed
 
 
 _SEGMENT_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$')
@@ -1035,6 +1036,8 @@ def _runner_action_for_record(
     *,
     project_root: Path | None = None,
 ) -> dict[str, str] | None:
+    if project_root is not None and not runner_transaction_committed(Path(project_root), record):
+        return None
     if _has_activation_metadata(record):
         return _activation_runner_action_for_record(record, project_root=project_root)
     return _legacy_runner_action_for_record(record)

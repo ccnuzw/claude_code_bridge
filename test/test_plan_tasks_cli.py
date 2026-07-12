@@ -11,7 +11,13 @@ from cli.context import CliContextBuilder
 from cli.models import ParsedPlanTaskCommand
 from cli.parser import CliParser
 from cli.phase2 import maybe_handle_phase2
-from cli.services.plan_tasks import plan_task
+from cli.services.plan_tasks import find_first_actionable_task, plan_task
+from cli.services.planner_task_set_import_transaction import (
+    PlannerTaskSetImportConflict,
+    authority_trace,
+    commit,
+    prepare,
+)
 
 
 def _write(path: Path, text: str) -> None:
@@ -102,6 +108,97 @@ def _run_phase2(argv: list[str], *, cwd: Path) -> tuple[int, dict[str, object], 
     out_text = stdout.getvalue()
     payload = json.loads(out_text) if out_text.strip().startswith('{') else {}
     return code, payload, out_text, stderr.getvalue()
+
+
+def test_planner_task_set_import_transaction_fences_runner_until_commit(tmp_path: Path) -> None:
+    project_root = _project_with_plan(tmp_path)
+    context = CliContextBuilder().build(
+        ParsedPlanTaskCommand(project=None, action='task-show', task_id='tx-child', json_output=True),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+    identity = {
+        'project_id': context.project.project_id,
+        'plan_slug': 'demo-plan',
+        'activation_id': 'act-tx',
+        'source_task_id': 'source-tx',
+        'source_request': {'source_job_id': 'job-source', 'bytes': 4, 'sha256': 'a' * 64},
+        'planner_job_id': 'job-planner-tx',
+        'planner_reply_sha256': 'b' * 64,
+        'task_set_id': 'ts-test',
+        'ordered_children': [{'task_id': 'tx-child'}],
+    }
+    transaction = prepare(context, identity=identity)
+    trace = authority_trace(
+        transaction,
+        source_job={'job_id': 'job-planner-tx', 'reply_sha256': 'b' * 64},
+    )
+    plan_task(context, SimpleNamespace(
+        action='task-create', plan_slug='demo-plan', title='Transaction child',
+        task_id='tx-child', authority_trace=trace,
+    ))
+    for kind in ('task_packet', 'execution_contract'):
+        source = project_root / 'drafts' / f'{kind}.md'
+        _write(source, f'{kind}\n')
+        plan_task(context, SimpleNamespace(
+            action='task-artifact', task_id='tx-child', artifact_kind=kind, file_path=str(source),
+        ))
+    plan_task(context, SimpleNamespace(
+        action='task-status', task_id='tx-child', status='ready_for_orchestration',
+    ))
+
+    assert find_first_actionable_task(context, task_id='tx-child') is None
+    commit(context, transaction, authority={'task_set_id': 'ts-test'})
+    assert find_first_actionable_task(context, task_id='tx-child')['record']['task_id'] == 'tx-child'
+
+
+def test_planner_task_set_import_transaction_ref_cannot_redirect_runner(tmp_path: Path) -> None:
+    project_root = _project_with_plan(tmp_path)
+    context = CliContextBuilder().build(
+        ParsedPlanTaskCommand(project=None, action='task-show', task_id='tx-redirect', json_output=True),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+    transaction = prepare(context, identity={
+        'project_id': context.project.project_id, 'plan_slug': 'demo-plan',
+        'activation_id': 'act-tx', 'source_task_id': 'source-tx',
+        'source_request': {'source_job_id': 'job-source', 'bytes': 4, 'sha256': 'a' * 64},
+        'planner_job_id': 'job-planner-redirect', 'planner_reply_sha256': 'b' * 64,
+        'task_set_id': 'ts-test', 'ordered_children': [{'task_id': 'tx-redirect'}],
+    })
+    trace = authority_trace(transaction, source_job={'job_id': 'job-planner-redirect'})
+    trace['planner_task_set_import_transaction']['journal_ref'] = '.ccb/runtime/elsewhere.json'
+    plan_task(context, SimpleNamespace(
+        action='task-create', plan_slug='demo-plan', title='Redirect child',
+        task_id='tx-redirect', authority_trace=trace,
+    ))
+    assert find_first_actionable_task(context, task_id='tx-redirect') is None
+
+
+def test_planner_task_set_import_same_job_different_reply_is_durable_failure(tmp_path: Path) -> None:
+    project_root = _project_with_plan(tmp_path)
+    context = CliContextBuilder().build(
+        ParsedPlanTaskCommand(project=None, action='task-show', task_id='unused', json_output=True),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+    identity = {
+        'project_id': context.project.project_id, 'plan_slug': 'demo-plan',
+        'activation_id': 'act-conflict', 'source_task_id': 'source-conflict',
+        'source_request': {'source_job_id': 'job-source', 'bytes': 4, 'sha256': 'a' * 64},
+        'planner_job_id': 'job-planner-conflict', 'planner_reply_sha256': 'b' * 64,
+        'task_set_id': 'ts-conflict', 'ordered_children': [{'task_id': 'child-a'}],
+    }
+    first = prepare(context, identity=identity)
+    assert prepare(context, identity=identity)['transaction_digest'] == first['transaction_digest']
+    with pytest.raises(PlannerTaskSetImportConflict, match='identity_conflict'):
+        prepare(context, identity={**identity, 'planner_reply_sha256': 'c' * 64})
+    journal = json.loads(
+        (project_root / first['journal_ref']).read_text(encoding='utf-8')
+    )
+    assert journal['status'] == 'failed'
+    assert journal['identity'] == identity
+    assert journal['conflicts'][-1]['observed_identity']['planner_reply_sha256'] == 'c' * 64
 
 
 def test_plan_parser_supports_v1_task_commands() -> None:

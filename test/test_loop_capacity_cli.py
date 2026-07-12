@@ -10814,6 +10814,14 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
         assert source['task']['activation_reason'] == 'planner_task_set_decomposed_source_task'
         completion = source['task']['artifacts']['completion']
         assert completion['actor']['source'] == 'loop_runner_role_output_import'
+    if expects_task_set_authority:
+        import_log = project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+        import_log.unlink()
+        post_commit_replay = loop_runner_once(
+            context, command, services=SimpleNamespace(plan_task=plan_task)
+        )
+        assert post_commit_replay['action'] == 'imported_planner_task_set_authority'
+        assert post_commit_replay['task_ids'] == expected_task_ids
     replay = loop_runner_once(context, command, services=SimpleNamespace(plan_task=plan_task))
     assert replay['action'] == 'role_output_already_consumed'
     assert replay['task_ids'] == expected_task_ids

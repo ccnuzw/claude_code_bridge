@@ -26,6 +26,14 @@ from .loop_effective_capacity import (
 )
 from .plan_tasks import plan_task
 from .task_set_closure import create_task_set_authority
+from .planner_feedback_apply import plan_revision_authority
+from .planner_task_set_import_transaction import (
+    PlannerTaskSetImportConflict,
+    authority_trace as planner_task_set_transaction_trace,
+    commit as commit_planner_task_set_transaction,
+    fail as fail_planner_task_set_transaction,
+    prepare as prepare_planner_task_set_transaction,
+)
 
 
 _VALID_ROUTES = frozenset({'direct_execution', 'needs_detail', 'macro_adjustment_request', 'blocked', 'partial_completion'})
@@ -618,6 +626,17 @@ def _consume_planner_task_set(
                 reason=str(source_task_error['reason']),
                 evidence=source_task_error,
             )
+        return _consume_controlled_planner_task_set(
+            context,
+            deps,
+            snapshot=snapshot,
+            reply=reply,
+            activation=activation,
+            parsed=parsed,
+            plan_slug=plan_slug,
+            plan_result=plan_result,
+            source_task_id=source_task_id,
+        )
     import_root = _role_import_dir(context, job_id)
     imported_tasks: list[dict[str, object]] = []
     for task in tuple(parsed.get('tasks') or ()):
@@ -779,6 +798,234 @@ def _consume_planner_task_set(
         agent_name=str(snapshot.get('agent_name') or ''),
         extra=payload_extra,
     )
+
+
+def _consume_controlled_planner_task_set(
+    context,
+    deps,
+    *,
+    snapshot: dict[str, object],
+    reply: str,
+    activation: dict[str, object],
+    parsed: dict[str, object],
+    plan_slug: str,
+    plan_result: dict[str, object],
+    source_task_id: str,
+) -> dict[str, object]:
+    job_id = str(snapshot.get('job_id') or '')
+    reply_digest = hashlib.sha256(reply.encode('utf-8')).hexdigest()
+    allocated: list[dict[str, object]] = []
+    for raw in tuple(parsed.get('tasks') or ()):
+        if not isinstance(raw, dict):
+            continue
+        requested = str(raw.get('task_id') or '')
+        task_id = _task_set_import_task_id(context, deps, requested_task_id=requested, job_id=job_id)
+        allocated.append({
+            'requested_task_id': requested,
+            'task_id': task_id,
+            'title': str(raw.get('title') or _task_title_from_packet(str(raw.get('task_packet') or ''))).strip(),
+            'required': bool(raw.get('required', True)),
+            'route': raw.get('route'),
+            'readiness': raw.get('readiness'),
+            'task_packet_sha256': hashlib.sha256(str(raw['task_packet']).encode('utf-8')).hexdigest(),
+            'execution_contract_sha256': hashlib.sha256(str(raw['execution_contract']).encode('utf-8')).hexdigest(),
+            'task_packet': str(raw['task_packet']),
+            'execution_contract': str(raw['execution_contract']),
+        })
+    task_set_id = 'ts-' + hashlib.sha256(
+        f'{plan_slug}\0{source_task_id}\0{job_id}'.encode('utf-8')
+    ).hexdigest()[:20]
+    source_request = dict(activation['source_request'])
+    identity = {
+        'project_id': context.project.project_id,
+        'plan_slug': plan_slug,
+        'plan_revision': plan_revision_authority(context, plan_slug),
+        'activation_id': str(activation.get('activation_id') or ''),
+        'source_task_id': source_task_id,
+        'source_request': source_request,
+        'source_job': activation.get('source_job'),
+        'planner_job_id': job_id,
+        'planner_reply_sha256': reply_digest,
+        'task_set_id': task_set_id,
+        'ordered_children': [
+            {key: child[key] for key in (
+                'requested_task_id', 'task_id', 'title', 'required', 'route', 'readiness',
+                'task_packet_sha256', 'execution_contract_sha256',
+            )}
+            for child in allocated
+        ],
+    }
+    try:
+        transaction = prepare_planner_task_set_transaction(context, identity=identity)
+    except PlannerTaskSetImportConflict as exc:
+        return _blocked_payload(
+            context, job_id=job_id, agent_name=str(snapshot.get('agent_name') or ''),
+            reason='planner_task_set_import_transaction_conflict', evidence={'error': str(exc)},
+        )
+    if transaction.get('status') == 'committed':
+        return _settle_committed_planner_task_set_import(
+            context, snapshot=snapshot, transaction=transaction, plan_result=plan_result
+        )
+    _planner_task_set_import_failure_point('prepared')
+    import_root = _role_import_dir(context, job_id)
+    imported_tasks: list[dict[str, object]] = []
+    try:
+        trace = planner_task_set_transaction_trace(transaction, source_job=_job_trace(snapshot, reply))
+        for index, child in enumerate(allocated):
+            existing = _show_task_optional(context, deps, task_id=str(child['task_id']))
+            if existing is None:
+                task_payload = deps.plan_task(context, SimpleNamespace(
+                    action='task-create', plan_slug=plan_slug, title=child['title'],
+                    task_id=child['task_id'], authority_trace=trace,
+                ))
+                created = True
+            else:
+                task_payload = existing
+                record = existing.get('task') if isinstance(existing.get('task'), dict) else {}
+                if (
+                    record.get('plan_slug') != plan_slug
+                    or record.get('title') != child['title']
+                    or record.get('authority_trace') != trace
+                ):
+                    raise PlannerTaskSetImportConflict(f'child authority conflict: {child["task_id"]}')
+                created = False
+            _planner_task_set_import_failure_point(f'child_created:{index}')
+            expected_revision = _task_payload_revision(task_payload)
+            task_root = import_root / str(child['task_id'])
+            packet_path = task_root / 'task_packet.md'
+            contract_path = task_root / 'execution_contract.md'
+            atomic_write_text(packet_path, str(child['task_packet']))
+            atomic_write_text(contract_path, str(child['execution_contract']))
+            packet = deps.plan_task(context, SimpleNamespace(
+                action='task-artifact', task_id=child['task_id'], artifact_kind='task_packet',
+                file_path=str(packet_path), actor_source='loop_runner_role_output_import',
+                actor='loop_runner', job_id=job_id, expected_task_revision=expected_revision,
+            ))
+            if str((packet.get('artifact') or {}).get('sha256') or '') != child['task_packet_sha256']:
+                raise PlannerTaskSetImportConflict(f'task packet digest conflict: {child["task_id"]}')
+            _assert_transaction_artifact_actor(packet.get('artifact'), job_id=job_id, task_id=str(child['task_id']))
+            _planner_task_set_import_failure_point(f'artifact_task_packet:{index}')
+            contract = deps.plan_task(context, SimpleNamespace(
+                action='task-artifact', task_id=child['task_id'], artifact_kind='execution_contract',
+                file_path=str(contract_path), actor_source='loop_runner_role_output_import',
+                actor='loop_runner', job_id=job_id, expected_task_revision=_task_payload_revision(packet),
+            ))
+            if str((contract.get('artifact') or {}).get('sha256') or '') != child['execution_contract_sha256']:
+                raise PlannerTaskSetImportConflict(f'execution contract digest conflict: {child["task_id"]}')
+            _assert_transaction_artifact_actor(contract.get('artifact'), job_id=job_id, task_id=str(child['task_id']))
+            _planner_task_set_import_failure_point(f'artifact_execution_contract:{index}')
+            imported_tasks.append({
+                'task_id': child['task_id'], 'planner_task_id': child['requested_task_id'],
+                'title': child['title'], 'route': child['route'], 'readiness': child['readiness'],
+                'required': child['required'], 'created_task': created,
+                'artifacts': {'task_packet': packet.get('artifact'), 'execution_contract': contract.get('artifact')},
+            })
+        task_set = create_task_set_authority(
+            context, plan_slug=plan_slug, source_task_id=source_task_id,
+            source_request=source_request, planner_job={'job_id': job_id, 'reply_sha256': reply_digest},
+            children=[{'task_id': child['task_id'], 'required': child['required']} for child in allocated],
+            plan_task_fn=deps.plan_task, task_set_id=task_set_id,
+        )
+        _planner_task_set_import_failure_point('task_set_bound')
+        _planner_task_set_import_failure_point('parent_bound')
+        for index, item in enumerate(imported_tasks):
+            shown = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=item['task_id']))
+            _planner_task_set_import_failure_point(f'child_bound:{index}')
+            ready = deps.plan_task(context, SimpleNamespace(
+                action='task-status', task_id=item['task_id'], status='ready_for_orchestration',
+                next_owner='orchestrator', activation_reason='planner_task_set_imported',
+                expected_task_revision=_task_payload_revision(shown),
+            ))
+            item['status_transition'] = _compact_plan_payload(ready)
+            _planner_task_set_import_failure_point(f'child_ready:{index}')
+        authority = _verify_planner_task_set_import_authority(
+            context, deps, transaction=transaction, task_set=task_set, imported_tasks=imported_tasks,
+            source_task_id=source_task_id,
+        )
+        transaction = commit_planner_task_set_transaction(context, transaction, authority=authority)
+        _planner_task_set_import_failure_point('committed_before_log')
+    except Exception as exc:
+        if not isinstance(exc, RuntimeError) or not str(exc).startswith('planner_task_set_import_failure:'):
+            fail_planner_task_set_transaction(
+                context, transaction, reason='planner_task_set_import_authority_conflict',
+                evidence={'type': type(exc).__name__, 'message': str(exc)},
+            )
+        raise
+    return _settle_committed_planner_task_set_import(
+        context, snapshot=snapshot, transaction=transaction, plan_result=plan_result
+    )
+
+
+def _verify_planner_task_set_import_authority(
+    context, deps, *, transaction, task_set, imported_tasks, source_task_id,
+) -> dict[str, object]:
+    identity = transaction['identity']
+    task_set_record = task_set['task_set']
+    if task_set_record.get('task_set_id') != identity['task_set_id'] or task_set_record.get('state') != 'running':
+        raise PlannerTaskSetImportConflict('task-set authority is not running with expected identity')
+    parent = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=source_task_id))['task']
+    parent_binding = parent.get('task_set_parent') if isinstance(parent.get('task_set_parent'), dict) else {}
+    if parent.get('status') != 'decomposed' or parent_binding.get('task_set_id') != identity['task_set_id']:
+        raise PlannerTaskSetImportConflict('source parent binding authority mismatch')
+    children = []
+    for expected, imported in zip(identity['ordered_children'], imported_tasks):
+        task = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=expected['task_id']))['task']
+        binding = task.get('task_set') if isinstance(task.get('task_set'), dict) else {}
+        artifacts = task.get('artifacts') if isinstance(task.get('artifacts'), dict) else {}
+        if (
+            task.get('status') != 'ready_for_orchestration'
+            or binding.get('task_set_id') != identity['task_set_id']
+            or binding.get('task_set_revision') != 1
+            or artifacts.get('task_packet', {}).get('sha256') != expected['task_packet_sha256']
+            or artifacts.get('execution_contract', {}).get('sha256') != expected['execution_contract_sha256']
+        ):
+            raise PlannerTaskSetImportConflict(f'child authority mismatch: {expected["task_id"]}')
+        children.append({'task_id': expected['task_id'], 'task_revision': task.get('task_revision'), 'task_set': binding})
+    return {
+        'task_set_id': identity['task_set_id'], 'task_set_revision': 1,
+        'task_set': task_set_record, 'task_set_path': task_set['task_set_path'], 'source_task_id': source_task_id,
+        'children': children, 'tasks': imported_tasks,
+    }
+
+
+def _assert_transaction_artifact_actor(artifact: object, *, job_id: str, task_id: str) -> None:
+    actor = artifact.get('actor') if isinstance(artifact, dict) and isinstance(artifact.get('actor'), dict) else {}
+    if actor.get('source') != 'loop_runner_role_output_import' or actor.get('job_id') != job_id:
+        raise PlannerTaskSetImportConflict(f'artifact authority conflict: {task_id}')
+
+
+def _settle_committed_planner_task_set_import(context, *, snapshot, transaction, plan_result):
+    authority = transaction['authority']
+    imported_tasks = authority['tasks']
+    task_ids = [str(task['task_id']) for task in imported_tasks]
+    source_job = _job_trace(snapshot, '')
+    source_job['reply_sha256'] = transaction['identity']['planner_reply_sha256']
+    source_settlement = {
+        'status': 'decomposed', 'task_id': authority['source_task_id'],
+        'child_task_ids': task_ids, 'task_set_id': authority['task_set_id'],
+        'task_set_revision': authority['task_set_revision'],
+    }
+    record_payload = {
+        'action': 'imported_planner_task_set_authority', 'status': 'ok',
+        'source_job': source_job, 'planner_contract': _PLANNER_CONTRACT_TASK_SET,
+        'plan_slug': transaction['identity']['plan_slug'], 'task_ids': task_ids,
+        'tasks': imported_tasks, 'task_count': len(imported_tasks), 'plan_bootstrap': plan_result,
+        'source_task_settlement': source_settlement,
+        'task_set_authority': {'task_set': authority['task_set'],
+                               'task_set_path': authority['task_set_path']},
+        'transaction': {'journal_ref': transaction['journal_ref'], 'transaction_digest': transaction['transaction_digest']},
+    }
+    record_payload.update(_single_task_set_fields(imported_tasks))
+    record = _log_import(context, record_payload)
+    return _base_payload(
+        context, loop_runner_status='ok', action='imported_planner_task_set_authority',
+        job_id=str(transaction['identity']['planner_job_id']), agent_name=str(snapshot.get('agent_name') or ''),
+        extra={**record_payload, 'role_output_import': record, 'next_activation': 'orchestrator'},
+    )
+
+
+def _planner_task_set_import_failure_point(stage: str) -> None:
+    return None
 
 
 def _settle_frontdesk_task_set_source_task(
