@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -56,6 +57,123 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gatewayRepository.focusWindowCalls, [('proj-demo', 'review', 4)]);
+    expectWindowSelected(tester, 'review');
+    expectAgentSelected(tester, 'reviewer');
+  });
+
+  testWidgets('stale view refresh cannot revert a newer agent selection', (
+    tester,
+  ) async {
+    final profileStore = await _profileStoreWithHost();
+    final gatewayRepository = _FocusWidgetRepository(
+      initialPayload: demoPayloadWithReviewWindow(),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: FakeMobileCcbRepository(
+            projectViewPayload: demoPayloadWithReviewWindow(),
+          ),
+          profileStore: profileStore,
+          gatewayRepositoryFactory: (_) => gatewayRepository,
+          gatewayTerminalTransportFactory: (_) => RecordingTerminalTransport(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await activateStoredGatewayProfile(tester);
+
+    gatewayRepository.deferNextProjectView();
+    await tester.tap(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('agent-lead')));
+    await tester.pump();
+    expectAgentSelected(tester, 'lead');
+
+    await gatewayRepository.completeDeferredProjectView();
+    await tester.pumpAndSettle();
+
+    expectAgentSelected(tester, 'lead');
+  });
+
+  testWidgets('stale view refresh cannot revert a newer window focus', (
+    tester,
+  ) async {
+    final profileStore = await _profileStoreWithHost();
+    final gatewayRepository = _FocusWidgetRepository(
+      initialPayload: demoPayloadWithReviewWindow(),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: FakeMobileCcbRepository(
+            projectViewPayload: demoPayloadWithReviewWindow(),
+          ),
+          profileStore: profileStore,
+          gatewayRepositoryFactory: (_) => gatewayRepository,
+          gatewayTerminalTransportFactory: (_) => RecordingTerminalTransport(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await activateStoredGatewayProfile(tester);
+
+    gatewayRepository.deferNextProjectView();
+    await tester.tap(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('window-tab-review')));
+    await tester.pump();
+    expectWindowSelected(tester, 'review');
+    expectAgentSelected(tester, 'reviewer');
+
+    await gatewayRepository.completeDeferredProjectView();
+    await tester.pumpAndSettle();
+
+    expectWindowSelected(tester, 'review');
+    expectAgentSelected(tester, 'reviewer');
+  });
+
+  testWidgets('window selection is optimistic while focus is in flight', (
+    tester,
+  ) async {
+    final profileStore = await _profileStoreWithHost();
+    final gatewayRepository = _FocusWidgetRepository(
+      initialPayload: demoPayloadWithReviewWindow(),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: FakeMobileCcbRepository(
+            projectViewPayload: demoPayloadWithReviewWindow(),
+          ),
+          profileStore: profileStore,
+          gatewayRepositoryFactory: (_) => gatewayRepository,
+          gatewayTerminalTransportFactory: (_) => RecordingTerminalTransport(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await activateStoredGatewayProfile(tester);
+
+    gatewayRepository.deferNextWindowFocus();
+    await tester.tap(find.byKey(const ValueKey('window-tab-review')));
+    await tester.pump();
+    expectWindowSelected(tester, 'review');
+    expectAgentSelected(tester, 'reviewer');
+
+    await tester.tap(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+    );
+    await tester.pumpAndSettle();
+    expectWindowSelected(tester, 'review');
+    expectAgentSelected(tester, 'reviewer');
+
+    await gatewayRepository.completeDeferredWindowFocus();
+    await tester.pumpAndSettle();
     expectWindowSelected(tester, 'review');
     expectAgentSelected(tester, 'reviewer');
   });
@@ -272,8 +390,38 @@ class _FocusWidgetRepository implements MobileCcbRepository {
   final focusAgentCalls = <(String, String, int)>[];
   final focusWindowCalls = <(String, String, int)>[];
   var _focusedOnce = false;
+  Completer<CcbProjectView>? _deferredProjectView;
+  Completer<CcbProjectView>? _deferredWindowFocus;
 
   FakeMobileCcbRepository get _current => _focusedOnce ? _focused : _initial;
+
+  void deferNextProjectView() {
+    _deferredProjectView = Completer<CcbProjectView>();
+  }
+
+  Future<void> completeDeferredProjectView() async {
+    final completer = _deferredProjectView;
+    if (completer == null) {
+      throw StateError('No deferred project view');
+    }
+    final project = (await _current.listProjects()).single;
+    _deferredProjectView = null;
+    completer.complete(await _current.getProjectView(project.id));
+  }
+
+  void deferNextWindowFocus() {
+    _deferredWindowFocus = Completer<CcbProjectView>();
+  }
+
+  Future<void> completeDeferredWindowFocus() async {
+    final completer = _deferredWindowFocus;
+    if (completer == null) {
+      throw StateError('No deferred window focus');
+    }
+    _focusedOnce = true;
+    _deferredWindowFocus = null;
+    completer.complete(await _focusedProjectView());
+  }
 
   @override
   Future<CcbProjectView> focusAgent({
@@ -301,6 +449,10 @@ class _FocusWidgetRepository implements MobileCcbRepository {
     if (error != null) {
       throw error;
     }
+    final deferred = _deferredWindowFocus;
+    if (deferred != null) {
+      return deferred.future;
+    }
     _focusedOnce = true;
     return _focusedProjectView();
   }
@@ -312,6 +464,10 @@ class _FocusWidgetRepository implements MobileCcbRepository {
 
   @override
   Future<CcbProjectView> getProjectView(String projectId) {
+    final deferred = _deferredProjectView;
+    if (deferred != null) {
+      return deferred.future;
+    }
     return _current.getProjectView(projectId);
   }
 

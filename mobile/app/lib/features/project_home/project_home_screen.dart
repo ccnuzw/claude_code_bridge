@@ -166,6 +166,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   String _activeProjectId = _defaultProjectId;
   String? _openedProjectId;
   String? _selectedAgentName;
+  int _selectionRevision = 0;
   TerminalTransport? _terminalTransport;
   bool _loadingProfiles = false;
   bool _claimingPairing = false;
@@ -909,6 +910,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   void _selectAgent(String agentName) {
     final outcome = selectProjectHomeAgent(agentName);
     setState(() {
+      _selectionRevision += 1;
       _selectedAgentName = outcome.selectedAgentName;
     });
     unawaited(_viewFuture.then(_updateNotificationWatch));
@@ -947,7 +949,34 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   void _selectWindow(CcbProjectView view, String windowName) {
     if (_mode == AppRuntimeMode.pairedGateway) {
-      _focusWindow(view, windowName);
+      if (view.namespaceEpoch == null) {
+        unawaited(
+          _focusWindow(
+            view,
+            windowName,
+            selectionRevision: _selectionRevision,
+            previousSelectedAgentName: _selectedAgentName,
+          ),
+        );
+        return;
+      }
+      final outcome = selectProjectHomeLocalWindow(view, windowName);
+      if (!outcome.shouldUpdate) {
+        return;
+      }
+      final previousSelectedAgentName = _selectedAgentName;
+      final selectionRevision = ++_selectionRevision;
+      setState(() {
+        _selectedAgentName = outcome.selectedAgentName;
+      });
+      unawaited(
+        _focusWindow(
+          view,
+          windowName,
+          selectionRevision: selectionRevision,
+          previousSelectedAgentName: previousSelectedAgentName,
+        ),
+      );
       return;
     }
     final outcome = selectProjectHomeLocalWindow(view, windowName);
@@ -955,6 +984,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       return;
     }
     setState(() {
+      _selectionRevision += 1;
       _selectedAgentName = outcome.selectedAgentName;
     });
   }
@@ -1458,22 +1488,26 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   Future<CcbProjectView?> _refreshActiveView({
     String? preserveSelectedAgentName,
   }) async {
+    final projectId = _activeProjectId;
+    final selectionRevision = _selectionRevision;
     final outcome = await _viewRefreshCoordinator.refresh(
       repository: _activeRepository,
-      projectId: _activeProjectId,
+      projectId: projectId,
       selectedAgentName: preserveSelectedAgentName ?? _selectedAgentName,
     );
+    if (!mounted || _activeProjectId != projectId) {
+      return null;
+    }
     if (outcome.kind == ProjectHomeViewRefreshOutcomeKind.success) {
-      if (!mounted) {
-        return null;
-      }
       final refreshed = outcome.refreshedView!;
       _markGatewayRequestSucceeded();
       _persistProjectViewSnapshot(refreshed);
       _updateNotificationWatch(refreshed);
       setState(() {
         _viewFuture = SynchronousFuture(refreshed);
-        _selectedAgentName = outcome.selectedAgentName;
+        if (_selectionRevision == selectionRevision) {
+          _selectedAgentName = outcome.selectedAgentName;
+        }
       });
       return refreshed;
     }
@@ -1676,27 +1710,28 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     CcbProjectView view,
     String agentName,
   ) async {
+    final projectId = view.project.id;
+    final selectionRevision = _selectionRevision;
     final outcome = await _focusCoordinator.focusAgent(
       repository: _activeRepository,
       view: view,
       agentName: agentName,
     );
+    if (!mounted || _activeProjectId != projectId) {
+      return null;
+    }
     if (outcome.kind == ProjectHomeFocusOutcomeKind.stale) {
-      if (!mounted) {
-        return null;
-      }
       _showSnack(outcome.snackMessage!);
       return null;
     }
     if (outcome.kind == ProjectHomeFocusOutcomeKind.success) {
-      if (!mounted) {
-        return null;
-      }
       final focusedView = outcome.focusedView!;
       _rememberProjectActivity(focusedView);
       setState(() {
         _rememberProjectUsed(focusedView.project.id);
-        _selectedAgentName = outcome.selectedAgentName;
+        if (_selectionRevision == selectionRevision) {
+          _selectedAgentName = outcome.selectedAgentName;
+        }
         _viewFuture = Future<CcbProjectView>.value(focusedView);
       });
       final selectedAgent = outcome.selectedAgentName;
@@ -1709,9 +1744,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         );
       }
       return focusedView;
-    }
-    if (!mounted) {
-      return null;
     }
     setState(() {
       _viewFuture = Future<CcbProjectView>.value(outcome.originalView!);
@@ -1722,30 +1754,37 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   Future<CcbProjectView?> _focusWindow(
     CcbProjectView view,
-    String windowName,
-  ) async {
+    String windowName, {
+    required int selectionRevision,
+    required String? previousSelectedAgentName,
+  }) async {
+    final projectId = view.project.id;
     final outcome = await _focusCoordinator.focusWindow(
       repository: _activeRepository,
       view: view,
       windowName: windowName,
-      previousSelectedAgentName: _selectedAgentName,
+      previousSelectedAgentName: previousSelectedAgentName,
     );
+    if (!mounted || _activeProjectId != projectId) {
+      return null;
+    }
     if (outcome.kind == ProjectHomeFocusOutcomeKind.stale) {
-      if (!mounted) {
-        return null;
+      if (_selectionRevision == selectionRevision) {
+        setState(() {
+          _selectedAgentName = previousSelectedAgentName;
+        });
       }
       _showSnack(outcome.snackMessage!);
       return null;
     }
     if (outcome.kind == ProjectHomeFocusOutcomeKind.success) {
-      if (!mounted) {
-        return null;
-      }
       final focusedView = outcome.focusedView!;
       _rememberProjectActivity(focusedView);
       setState(() {
         _rememberProjectUsed(focusedView.project.id);
-        _selectedAgentName = outcome.selectedAgentName;
+        if (_selectionRevision == selectionRevision) {
+          _selectedAgentName = outcome.selectedAgentName;
+        }
         _viewFuture = Future<CcbProjectView>.value(focusedView);
       });
       final selectedAgent = outcome.selectedAgentName;
@@ -1759,11 +1798,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       }
       return focusedView;
     }
-    if (!mounted) {
-      return null;
-    }
     setState(() {
       _viewFuture = Future<CcbProjectView>.value(outcome.originalView!);
+      if (_selectionRevision == selectionRevision) {
+        _selectedAgentName = previousSelectedAgentName;
+      }
     });
     _showSnack(outcome.snackMessage!);
     return null;
