@@ -1070,11 +1070,16 @@ def _valid_frontdesk_activation(
     assert isinstance(direct_ask, dict)
     assert isinstance(ask, dict)
     activation_id = path.stem
-    body = source_request.get("text")
-    if not isinstance(body, str):
+    body_sha256 = _first_text(source_request.get("sha256"))
+    body_size = source_request.get("bytes")
+    if (
+        not body_sha256
+        or not re.fullmatch(r"[0-9a-f]{64}", body_sha256)
+        or isinstance(body_size, bool)
+        or not isinstance(body_size, int)
+        or body_size < 0
+    ):
         return False
-    body_bytes = body.encode("utf-8")
-    body_sha256 = hashlib.sha256(body_bytes).hexdigest()
     project_id = _first_text(activation.get("project_id"))
     return bool(
         activation.get("schema_version") == 1
@@ -1090,23 +1095,22 @@ def _valid_frontdesk_activation(
         and activation.get("source_task_id") == task_id
         and activation.get("intake_sha256") == body_sha256
         and source_intake.get("sha256") == body_sha256
-        and source_intake.get("bytes") == len(body_bytes)
+        and source_intake.get("bytes") == body_size
         and isinstance(activation.get("required_next_output"), str)
-        and isinstance(activation.get("script_write_rules"), dict)
+        and isinstance(activation.get("script_write_rules"), list)
         and activation.get("expected_task_ids")
         == [str(item["task_id"]) for item in TASKS]
         and source_job.get("job_id") == task_id
         and source_job.get("agent_name") == "frontdesk"
         and source_job.get("terminal_status") == "forwarded"
         and source_job.get("reply_sha256") == body_sha256
-        and source_request.get("status") == "ok"
         and source_request.get("source_job_id") == task_id
         and source_request.get("agent_name") == "frontdesk"
         and source_request.get("project_id") == project_id
         and source_request.get("to_agent") == "planner"
         and source_request.get("from_actor") == "frontdesk"
         and source_request.get("message_type") == "ask"
-        and source_request.get("bytes") == len(body_bytes)
+        and source_request.get("bytes") == body_size
         and source_request.get("sha256") == body_sha256
         and direct_ask.get("from_actor") == "frontdesk"
         and direct_ask.get("target") == "planner"
@@ -1135,6 +1139,11 @@ def _valid_admission_transaction(
     activation_digest = _frontdesk_activation_digest(activation)
     if not isinstance(request, dict) or not isinstance(activation_record, dict) or not activation_digest:
         return False
+    request_body = request.get("body")
+    if not isinstance(request_body, str):
+        return False
+    request_bytes = request_body.encode("utf-8")
+    request_sha256 = hashlib.sha256(request_bytes).hexdigest()
     authority = {
         key: transaction.get(key)
         for key in (
@@ -1162,6 +1171,8 @@ def _valid_admission_transaction(
         and transaction.get("plan_slug") == PLAN_SLUG
         and transaction.get("body_bytes") == source_request.get("bytes")
         and transaction.get("body_sha256") == source_request.get("sha256")
+        and transaction.get("body_bytes") == len(request_bytes)
+        and transaction.get("body_sha256") == request_sha256
         and transaction.get("planner_contract") == "task_set"
         and transaction.get("source_task_id") == task_id
         and transaction.get("activation_digest") == activation_digest
@@ -1171,7 +1182,6 @@ def _valid_admission_transaction(
         and request.get("project_id") == activation.get("project_id")
         and request.get("to_agent") == "planner"
         and request.get("from_actor") == "frontdesk"
-        and request.get("body") == source_request.get("text")
         and request.get("task_id") == activation_id
         and request.get("message_type") == "ask"
     )
@@ -1353,6 +1363,18 @@ def controlled_task_set_source_parent_ids(manifest: dict[str, Any]) -> set[str]:
     )
     source_request = activation.get("source_request")
     planner_job = task_set.get("planner_job") if isinstance(task_set, dict) else None
+    normalized_source_request = (
+        {
+            "source_job_id": source_request.get("source_job_id"),
+            "sha256": source_request.get("sha256"),
+            "bytes": source_request.get("bytes"),
+        }
+        if isinstance(source_request, dict)
+        else None
+    )
+    if isinstance(source_request, dict) and isinstance(source_request.get("body_artifact"), dict):
+        assert isinstance(normalized_source_request, dict)
+        normalized_source_request["body_artifact"] = source_request["body_artifact"]
     if (
         not isinstance(task_set, dict)
         or not isinstance(source_request, dict)
@@ -1384,7 +1406,7 @@ def controlled_task_set_source_parent_ids(manifest: dict[str, Any]) -> set[str]:
         or task_set.get("project_id") != activation.get("project_id")
         or task_set.get("plan_slug") != PLAN_SLUG
         or task_set.get("source_task_id") != task_id
-        or task_set.get("source_request") != source_request
+        or task_set.get("source_request") != normalized_source_request
         or not isinstance(task_set.get("plan_revision"), dict)
         or task_set.get("state") != "running"
         or task_set.get("aggregate_result") is not None

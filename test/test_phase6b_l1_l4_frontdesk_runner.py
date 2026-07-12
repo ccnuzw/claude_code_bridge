@@ -1632,16 +1632,16 @@ def _write_frontdesk_task_set_parent_authority(
         )
         identity_children.append({'task_id': task_id, 'required': True})
     source_request = {
-        'status': 'ok',
         'source_job_id': source_task_id,
         'agent_name': 'frontdesk',
         'project_id': project_id,
         'to_agent': 'planner',
         'from_actor': 'frontdesk',
         'message_type': 'ask',
-        'text': body,
         'bytes': body_bytes,
         'sha256': body_sha256,
+        'preview': None,
+        'body_artifact': None,
     }
     activation = {
         'schema_version': 1,
@@ -1661,7 +1661,7 @@ def _write_frontdesk_task_set_parent_authority(
         },
         'planner_contract': 'task_set',
         'required_next_output': 'task-set.json',
-        'script_write_rules': {'mode': 'reply_only'},
+        'script_write_rules': ['Reply only.', 'Use exact task IDs.'],
         'expected_task_ids': required_children,
         'source_task_id': source_task_id,
         'source_job': {
@@ -1690,7 +1690,11 @@ def _write_frontdesk_task_set_parent_authority(
         'project_id': project_id,
         'plan_slug': runner.PLAN_SLUG,
         'source_task_id': source_task_id,
-        'source_request': source_request,
+        'source_request': {
+            'source_job_id': source_task_id,
+            'sha256': body_sha256,
+            'bytes': body_bytes,
+        },
         'planner_job': {'job_id': planner_job_id, 'reply_sha256': planner_reply_sha256},
         'plan_revision': {'revision': 1},
         'children': task_set_children,
@@ -1918,6 +1922,16 @@ def test_authoritative_frontdesk_task_set_source_parent_is_not_unexpected(tmp_pa
     assert runner.unexpected_plan_task_ids(manifest) == []
     runner.validate_sequence_task_set_only(manifest)
     assert source_task_id not in runner.unexpected_plan_task_ids(manifest)
+
+
+def test_root7_schema_frontdesk_task_set_source_parent_is_controlled(tmp_path: Path) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    source_task_id = _write_frontdesk_task_set_parent_authority(runner, manifest)
+
+    assert runner.controlled_task_set_source_parent_ids(manifest) == {source_task_id}
+    assert runner.unexpected_plan_task_ids(manifest) == []
+    runner.validate_sequence_task_set_only(manifest)
 
 
 @pytest.mark.parametrize(
