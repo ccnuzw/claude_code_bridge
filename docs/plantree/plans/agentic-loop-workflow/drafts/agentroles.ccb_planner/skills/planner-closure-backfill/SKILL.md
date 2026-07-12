@@ -98,11 +98,13 @@ Return exactly this one fenced section and no alternative authority shape:
   `blocked -> closure_blocked`. Never output a complete semantic result for
   non-pass; never output a complete semantic result for non-pass aggregate
   evidence.
-- Preserve `accepted_scope`, `unresolved_scope`, `blockers`, `replan_inputs`,
-  and `evidence_refs` from the validated closure envelope. `pass` requires empty
-  unresolved/blocker/replan fields. Every non-pass requires non-empty
-  `unresolved_scope`; `blocked` requires blockers and `replan_required`
-  requires replan inputs.
+- Derive `accepted_scope`, `unresolved_scope`, `blockers`, `replan_inputs`, and
+  `evidence_refs` from the validated ordered child authority. These are Planner
+  semantics and are not fields in script-owned `ccb.plan.task_set_closure.v1`.
+  Never invent accepted scope or pass from missing/nonterminal evidence. `pass`
+  requires empty unresolved/blocker/replan fields. Every non-pass requires
+  non-empty `unresolved_scope`; `blocked` requires blockers and
+  `replan_required` requires replan inputs.
 - Never omit unresolved required scope from mixed outcomes.
 - Multiple replan children produce one coherent macro proposal, not multiple
   independent Planner actions.

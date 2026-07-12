@@ -351,27 +351,19 @@ _DECISION029_RESULT_BY_AGGREGATE = {
 }
 _DECISION029_CLOSURE_REQUIRED = {
     'schema',
+    'schema_version',
     'task_set_id',
     'task_set_revision',
+    'source_request',
+    'planner_job',
     'expected_plan_revision',
     'ordered_children',
     'ordered_terminal_evidence_digest',
     'status',
     'aggregate_result',
     'reason',
-    'accepted_scope',
-    'unresolved_scope',
-    'blockers',
-    'replan_inputs',
-    'evidence_refs',
-    'frontdesk_notification_required',
-    'closure_digest',
-}
-_DECISION029_CLOSURE_OPTIONAL = {
-    'schema_version',
-    'source_request',
-    'planner_job',
     'created_at',
+    'closure_digest',
 }
 _DECISION029_FRONTDESK_FIELDS = {
     'schema',
@@ -481,6 +473,9 @@ def _decision029_frontdesk_reply(body: str) -> str:
         raise ValueError('Decision 029 Frontdesk status fields are invalid')
     if status.get('schema') != 'ccb.planner.frontdesk_status.v1':
         raise ValueError('Decision 029 Frontdesk status schema is invalid')
+    identity = _decision029_text(status.get('notification_identity'), 'notification_identity')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,119}', identity):
+        raise ValueError('Decision 029 notification_identity is invalid')
     aggregate_result = str(status.get('aggregate_result') or '')
     if aggregate_result not in _DECISION029_RESULT_BY_AGGREGATE:
         raise ValueError('Decision 029 Frontdesk aggregate result is invalid')
@@ -499,6 +494,10 @@ def _decision029_frontdesk_reply(body: str) -> str:
     milestone = status.get('next_milestone')
     if not isinstance(milestone, dict) or set(milestone) != {'kind', 'ref', 'rationale'}:
         raise ValueError('Decision 029 Frontdesk next_milestone is invalid')
+    if milestone.get('kind') not in {'selected', 'workflow_terminal', 'blocked_none'}:
+        raise ValueError('Decision 029 Frontdesk next_milestone kind is invalid')
+    _decision029_text(milestone.get('ref'), 'next_milestone.ref')
+    _decision029_text(milestone.get('rationale'), 'next_milestone.rationale')
     if 'planner_feedback_digest' in status:
         _decision029_digest(status['planner_feedback_digest'], 'planner_feedback_digest')
     report = str(status.get('user_report_body') or '')
@@ -509,19 +508,19 @@ def _decision029_frontdesk_reply(body: str) -> str:
 
 def _decision029_closure(value: dict[str, object]) -> dict[str, object]:
     missing = sorted(_DECISION029_CLOSURE_REQUIRED - set(value))
-    extra = sorted(set(value) - _DECISION029_CLOSURE_REQUIRED - _DECISION029_CLOSURE_OPTIONAL)
+    extra = sorted(set(value) - _DECISION029_CLOSURE_REQUIRED)
     if missing or extra:
         raise ValueError(f'Decision 029 closure fields are invalid: missing={missing}, extra={extra}')
-    if value.get('schema') != 'ccb.plan.task_set_closure.v1' or value.get('status') != 'closure_pending':
+    if value.get('schema') != 'ccb.plan.task_set_closure.v1' or value.get('schema_version') != 1 or value.get('status') != 'closure_pending':
         raise ValueError('Decision 029 closure schema or status is invalid')
     task_set_id = _decision029_text(value.get('task_set_id'), 'task_set_id')
     revision = value.get('task_set_revision')
     if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
         raise ValueError('Decision 029 task_set_revision is invalid')
-    plan_revision = value.get('expected_plan_revision')
-    if isinstance(plan_revision, dict):
-        plan_revision = plan_revision.get('digest')
-    plan_revision = _decision029_digest(plan_revision, 'expected_plan_revision')
+    plan_revision = _decision029_plan_revision(value.get('expected_plan_revision'))
+    _decision029_source_request(value.get('source_request'))
+    _decision029_planner_job(value.get('planner_job'))
+    _decision029_text(value.get('created_at'), 'created_at')
     terminal_digest = _decision029_digest(
         value.get('ordered_terminal_evidence_digest'),
         'ordered_terminal_evidence_digest',
@@ -531,22 +530,38 @@ def _decision029_closure(value: dict[str, object]) -> dict[str, object]:
     if not isinstance(children, list) or not children:
         raise ValueError('Decision 029 ordered_children are invalid')
     child_results: list[str] = []
+    accepted_scope: list[str] = []
+    unresolved_scope: list[str] = []
+    blockers: list[str] = []
+    replan_inputs: list[str] = []
+    evidence_refs: list[str] = []
     for child in children:
-        if not isinstance(child, dict):
-            raise ValueError('Decision 029 child evidence is invalid')
-        _decision029_text(child.get('task_id'), 'child.task_id')
-        result = str(child.get('result') or '')
-        if result not in _DECISION029_RESULT_BY_AGGREGATE:
-            raise ValueError('Decision 029 child result is invalid')
+        normalized_child = _decision029_terminal_child(child)
+        task_ref = f"task:{normalized_child['task_id']}@{normalized_child['task_revision']}"
+        result = str(normalized_child['result'])
         child_results.append(result)
+        evidence_refs.append(f"{task_ref}#{normalized_child['evidence_digest']}")
+        if result == 'pass':
+            accepted_scope.append(task_ref)
+        else:
+            unresolved_scope.append(task_ref)
+            if result == 'blocked':
+                blockers.append(task_ref)
+            if result == 'replan_required':
+                replan_inputs.append(task_ref)
     aggregate_result = str(value.get('aggregate_result') or '')
     if aggregate_result != _decision029_aggregate(child_results):
         raise ValueError('Decision 029 aggregate result mismatch')
-    accepted_scope = _decision029_text_list(value.get('accepted_scope'), 'accepted_scope')
-    unresolved_scope = _decision029_text_list(value.get('unresolved_scope'), 'unresolved_scope')
-    blockers = _decision029_text_list(value.get('blockers'), 'blockers')
-    replan_inputs = _decision029_text_list(value.get('replan_inputs'), 'replan_inputs')
-    evidence_refs = _decision029_text_list(value.get('evidence_refs'), 'evidence_refs', allow_empty=False)
+    expected_terminal_digest = _decision029_canonical_digest({
+        'task_set_revision': revision,
+        'children': children,
+    })
+    if terminal_digest != expected_terminal_digest:
+        raise ValueError('Decision 029 ordered terminal evidence digest mismatch')
+    closure_payload = dict(value)
+    closure_payload.pop('closure_digest')
+    if closure_digest != _decision029_canonical_digest(closure_payload):
+        raise ValueError('Decision 029 closure digest mismatch')
     _decision029_validate_non_success_fields(
         aggregate_result=aggregate_result,
         accepted_scope=accepted_scope,
@@ -555,9 +570,6 @@ def _decision029_closure(value: dict[str, object]) -> dict[str, object]:
         replan_inputs=replan_inputs,
         frontdesk_only=False,
     )
-    notify = value.get('frontdesk_notification_required')
-    if not isinstance(notify, bool):
-        raise ValueError('Decision 029 frontdesk_notification_required is invalid')
     return {
         'task_set_id': task_set_id,
         'task_set_revision': revision,
@@ -566,13 +578,137 @@ def _decision029_closure(value: dict[str, object]) -> dict[str, object]:
         'closure_digest': closure_digest,
         'aggregate_result': aggregate_result,
         'reason': _decision029_text(value.get('reason'), 'reason'),
-        'accepted_scope': accepted_scope,
-        'unresolved_scope': unresolved_scope,
-        'blockers': blockers,
-        'replan_inputs': replan_inputs,
-        'evidence_refs': evidence_refs,
-        'frontdesk_notification_required': notify,
+        'accepted_scope': tuple(accepted_scope),
+        'unresolved_scope': tuple(unresolved_scope),
+        'blockers': tuple(blockers),
+        'replan_inputs': tuple(replan_inputs),
+        'evidence_refs': tuple(evidence_refs),
+        'frontdesk_notification_required': True,
     }
+
+
+def _decision029_plan_revision(value: object) -> str:
+    if not isinstance(value, dict) or set(value) != {'schema', 'files', 'digest'}:
+        raise ValueError('Decision 029 expected_plan_revision is invalid')
+    if value.get('schema') != 'ccb.plan.revision.v1' or not isinstance(value.get('files'), list):
+        raise ValueError('Decision 029 expected_plan_revision is invalid')
+    for item in value['files']:
+        if not isinstance(item, dict) or set(item) != {'path', 'sha256'}:
+            raise ValueError('Decision 029 plan revision file is invalid')
+        _decision029_text(item.get('path'), 'plan_revision.path')
+        _decision029_hex_digest(item.get('sha256'), 'plan_revision.sha256')
+    expected = dict(value)
+    digest = _decision029_digest(expected.pop('digest'), 'expected_plan_revision.digest')
+    if digest != _decision029_canonical_digest(expected):
+        raise ValueError('Decision 029 expected_plan_revision digest mismatch')
+    return digest
+
+
+def _decision029_source_request(value: object) -> None:
+    required = {'source_job_id', 'sha256', 'bytes'}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {'body_artifact'}:
+        raise ValueError('Decision 029 source_request is invalid')
+    _decision029_text(value.get('source_job_id'), 'source_request.source_job_id')
+    _decision029_hex_digest(value.get('sha256'), 'source_request.sha256')
+    size = value.get('bytes')
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise ValueError('Decision 029 source_request.bytes is invalid')
+    artifact = value.get('body_artifact')
+    if artifact is not None:
+        allowed = {'kind', 'path', 'bytes', 'sha256'}
+        if not isinstance(artifact, dict) or not artifact or set(artifact) - allowed:
+            raise ValueError('Decision 029 source_request.body_artifact is invalid')
+
+
+def _decision029_planner_job(value: object) -> None:
+    if not isinstance(value, dict) or set(value) != {'job_id', 'reply_sha256'}:
+        raise ValueError('Decision 029 planner_job is invalid')
+    _decision029_text(value.get('job_id'), 'planner_job.job_id')
+    _decision029_hex_digest(value.get('reply_sha256'), 'planner_job.reply_sha256')
+
+
+def _decision029_terminal_child(value: object) -> dict[str, object]:
+    required = {
+        'task_id', 'task_revision', 'required', 'status', 'result',
+        'evidence_status', 'authority', 'evidence_digest',
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise ValueError('Decision 029 child evidence fields are invalid')
+    task_id = _decision029_text(value.get('task_id'), 'child.task_id')
+    revision = value.get('task_revision')
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
+        raise ValueError('Decision 029 child.task_revision is invalid')
+    if value.get('required') is not True or value.get('evidence_status') != 'terminal':
+        raise ValueError('Decision 029 child terminal evidence is invalid')
+    result = str(value.get('result') or '')
+    expected_status = {
+        'pass': 'done', 'partial': 'partial',
+        'replan_required': 'replan_required', 'blocked': 'blocked',
+    }.get(result)
+    if value.get('status') != expected_status:
+        raise ValueError('Decision 029 child status/result authority mismatch')
+    authority = _decision029_terminal_authority(value.get('authority'), result=result)
+    evidence_digest = _decision029_digest(value.get('evidence_digest'), 'child.evidence_digest')
+    if evidence_digest != _decision029_canonical_digest({
+        'task_id': task_id,
+        'task_revision': revision,
+        **authority,
+    }):
+        raise ValueError('Decision 029 child evidence digest mismatch')
+    return {
+        'task_id': task_id,
+        'task_revision': revision,
+        'result': result,
+        'evidence_digest': evidence_digest,
+    }
+
+
+def _decision029_terminal_authority(value: object, *, result: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError('Decision 029 child authority is invalid')
+    no_execution = {'artifact_kind', 'artifact_digest', 'release', 'cleanup'}
+    round_execution = no_execution | {'loop_id', 'round_path', 'round_digest'}
+    if set(value) == no_execution:
+        expected_kind = 'blocker_evidence' if result == 'blocked' else 'macro_adjustment_request'
+        if value.get('artifact_kind') != expected_kind:
+            raise ValueError('Decision 029 non-execution authority kind is invalid')
+        if value.get('release') != {'status': 'not_applicable_no_execution'} or value.get('cleanup') != {'status': 'not_applicable_no_execution'}:
+            raise ValueError('Decision 029 non-execution authority is invalid')
+    elif set(value) == round_execution:
+        if value.get('artifact_kind') != 'round_summary':
+            raise ValueError('Decision 029 round authority kind is invalid')
+        _decision029_text(value.get('loop_id'), 'child.authority.loop_id')
+        _decision029_text(value.get('round_path'), 'child.authority.round_path')
+        _decision029_hex_digest(value.get('round_digest'), 'child.authority.round_digest')
+        release = value.get('release')
+        release_keys = {'status', 'released_count', 'retained_count', 'release_incomplete_count'}
+        if not isinstance(release, dict) or set(release) != release_keys or release.get('status') != 'released':
+            raise ValueError('Decision 029 child release authority is invalid')
+        for field in ('released_count', 'retained_count', 'release_incomplete_count'):
+            count = release.get(field)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError('Decision 029 child release authority is invalid')
+        if release['retained_count'] != 0 or release['release_incomplete_count'] != 0:
+            raise ValueError('Decision 029 child release authority is incomplete')
+        cleanup = value.get('cleanup')
+        if cleanup not in ({'status': 'complete'}, {'status': 'not_applicable_single_round'}):
+            raise ValueError('Decision 029 child cleanup authority is invalid')
+    else:
+        raise ValueError('Decision 029 child authority fields are invalid')
+    _decision029_hex_digest(value.get('artifact_digest'), 'child.authority.artifact_digest')
+    return value
+
+
+def _decision029_hex_digest(value: object, label: str) -> str:
+    text = str(value or '')
+    if not re.fullmatch(r'[0-9a-f]{64}', text):
+        raise ValueError(f'Decision 029 {label} is not a digest')
+    return text
+
+
+def _decision029_canonical_digest(value: object) -> str:
+    data = json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    return 'sha256:' + hashlib.sha256(data).hexdigest()
 
 
 def _decision029_validate_closure_intent(intent: dict[str, object], closure: dict[str, object]) -> None:

@@ -33,6 +33,6 @@ codex = "ccb_frontdesk_ask_planner"
 id = "planner_silence_handoff"
 argv_prefix = ["ask", "--silence", "--compact", "--inline-request", "--task-id"]
 required_args = ["act-frontdesk-<request-id>", "planner"]
-stdin_schema = "ccb.frontdesk.intake.v1"
+stdin_schema = "inline:ccb.frontdesk.intake.v1"
 output_schema = "ccb.ask.submission_receipt.v1"
 idempotency_key = "frontdesk_request_id_and_intake_sha256"

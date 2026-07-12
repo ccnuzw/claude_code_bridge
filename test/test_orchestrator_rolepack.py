@@ -364,7 +364,7 @@ def test_frontdesk_rolepack_declares_one_planner_silence_handoff_surface() -> No
     assert command.argv_prefix == ('ask', '--silence', '--compact', '--inline-request', '--task-id')
     assert policy.provider_tools == (('codex', 'ccb_frontdesk_ask_planner'),)
     assert command.required_args == ('act-frontdesk-<request-id>', 'planner')
-    assert command.stdin_schema == 'ccb.frontdesk.intake.v1'
+    assert command.stdin_schema == 'inline:ccb.frontdesk.intake.v1'
     assert command.output_schema == 'ccb.ask.submission_receipt.v1'
     assert command.idempotency_key == 'frontdesk_request_id_and_intake_sha256'
 

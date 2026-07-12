@@ -131,6 +131,7 @@ the runner without rewriting the Planner body.
 - Do not run `ccb plan`, `ccb loop`, `ccb question`, `ccb_test`, wrapper
   scripts, unrestricted shell commands, `--file` handoff, sockets, or
   artifact/status import commands. The only command exception is the exact
-  silent Planner ask above, whose evidence is supplied by stdin.
+  silent Planner ask above, whose evidence is supplied as the final direct
+  inline request argument, never through stdin.
 - Do not answer blocked requests with vague prose. Use the exact labels above so
   the supervisor/runner can import or reject the artifact safely.
