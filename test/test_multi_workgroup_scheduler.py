@@ -566,12 +566,19 @@ def test_scheduler_orders_review_integration_round_release_and_cleanup(tmp_path:
     assert ('round', 'ccb_round_reviewer') in harness.submissions
     assert pending_round['controller_status'] == 'round_review_pending'
     round_message = harness.messages[('round', 'ccb_round_reviewer')]
-    assert '"reviewer_job_id": "job-node-001-reviewer-1"' in round_message
-    assert '"reviewer_job_id": "job-node-002-reviewer-1"' in round_message
-    assert '"result": "pass"' in round_message
-    assert '"controller_authored_node_reviewer_jobs": false' in round_message
-    assert '"worker_owned_review_chain_verified": true' in round_message
-    assert '"final_round_reviewer_release_required_after_reply": true' in round_message
+    assert len(round_message.encode('utf-8')) < 4 * 1024
+    assert '"schema":"ccb.loop.round_review_envelope.v1"' in round_message
+    assert '"review_input"' not in round_message
+    assert '"worktree_path"' not in round_message
+    assert '"reviewer_job_id":"job-node-001-reviewer-1"' in round_message
+    assert '"reviewer_job_id":"job-node-002-reviewer-1"' in round_message
+    assert '"review_result":"pass"' in round_message
+    assert '"controller_authored_node_reviewer_jobs":false' in round_message
+    assert '"controller_scope_validation_passed":true' in round_message
+    assert '"worker_owned_review_chain_verified":true' in round_message
+    assert '"final_round_reviewer_release_required_after_reply":true' in round_message
+    assert '"bundle_digest":"' in round_message
+    assert '"results_digest":"sha256:' in round_message
     harness.complete('round', 'ccb_round_reviewer', reply='round_result: pass')
 
     final = scheduler.run_once()
@@ -590,6 +597,24 @@ def test_scheduler_orders_review_integration_round_release_and_cleanup(tmp_path:
         ('node-002', 'worker'),
         ('round', 'ccb_round_reviewer'),
     ]
+
+
+def test_round_reviewer_envelope_stays_inline_at_four_workgroups(tmp_path: Path) -> None:
+    scheduler, harness, _integration = _scheduler(tmp_path, 4)
+    scheduler.run_once()
+    for node_id in ('node-001', 'node-002', 'node-003', 'node-004'):
+        harness.complete(node_id, 'worker')
+    scheduler.run_once()
+    for node_id in ('node-001', 'node-002', 'node-003', 'node-004'):
+        harness.complete(node_id, 'reviewer', reply='status: pass')
+
+    pending_round = scheduler.run_once()
+    round_message = harness.messages[('round', 'ccb_round_reviewer')]
+
+    assert pending_round['controller_status'] == 'round_review_pending'
+    assert len(round_message.encode('utf-8')) < 4 * 1024
+    assert '"schema":"ccb.loop.round_review_envelope.v1"' in round_message
+    assert '"node-004"' in round_message
 
 
 def test_scheduler_rejects_bare_node_reviewer_pass_without_status_contract(tmp_path: Path) -> None:
@@ -620,6 +645,11 @@ def test_scheduler_worker_prompt_injects_only_assigned_reviewer_chain_contract(t
     message = scheduler._node_message(state, node, purpose='worker')
 
     assert 'Assigned reviewer: compact-node-001-reviewer' in message
+    assert f'Project authority root: {scheduler.project_root}' in message
+    assert 'Authority refs below are read-only project-root evidence' in message
+    assert f'Work packet ref: {scheduler.project_root}/execution-contract.md' in message
+    assert f'Acceptance refs: ["{scheduler.project_root}/execution-contract.md"]' in message
+    assert f'Verification refs: ["{scheduler.project_root}/execution-contract.md"]' in message
     assert 'ask --chain --artifact-reply' in message
     assert 'first non-empty reply line' in message
     assert 'no preamble or code fence' in message

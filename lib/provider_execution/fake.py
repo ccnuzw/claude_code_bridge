@@ -489,7 +489,10 @@ def _workflow_round_checker_reply(
     normalized_agent = agent_name.replace('-', '_')
     multi_workgroup_review = (
         'Role: ccb_round_reviewer' in body
-        and 'Review script-owned multi-workgroup evidence.' in body
+        and (
+            'ccb.loop.round_review_envelope.v1' in body
+            or 'Review script-owned multi-workgroup evidence.' in body
+        )
     )
     is_round_reviewer = (
         agent_name == 'round_checker'

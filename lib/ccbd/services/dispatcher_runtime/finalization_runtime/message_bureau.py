@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ccbd.api_models import JobStatus
 from completion.models import CompletionDecision
 from message_bureau import CallbackEdgeState
 
@@ -94,7 +95,12 @@ def record_message_bureau_completion(
         )
         mark_callback_done(dispatcher, terminal, finished_at=finished_at)
         return terminal, reply_decision, False
-    dispatcher._message_bureau.record_reply(terminal, reply_decision, finished_at=finished_at)
+    dispatcher._message_bureau.record_reply(
+        terminal,
+        reply_decision,
+        finished_at=finished_at,
+        deliver_to_caller=_should_deliver_to_caller(terminal),
+    )
     mark_callback_done(dispatcher, terminal, finished_at=finished_at)
     return terminal, reply_decision, False
 
@@ -103,6 +109,13 @@ def _job_with_unsilenced_reply(job):
     if not bool(getattr(job.request, 'silence_on_success', False)):
         return job
     return replace(job, request=replace(job.request, silence_on_success=False))
+
+
+def _should_deliver_to_caller(job) -> bool:
+    return not (
+        job.status is JobStatus.COMPLETED
+        and bool(getattr(job.request, 'silence_on_success', False))
+    )
 
 
 __all__ = ['record_message_bureau_completion']

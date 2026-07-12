@@ -676,6 +676,45 @@ def test_managed_caller_invocation_bypasses_socket_probe_without_restart(
     assert requests == ['frontdesk-intake']
 
 
+def test_managed_caller_uses_mounted_lease_socket_when_local_placement_differs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _managed_caller_context(
+        monkeypatch,
+        _context(tmp_path / 'repo-managed-relocated-socket', 'agent1:codex\n'),
+    )
+    inspection = _managed_mounted_inspection(ctx)
+    lease_socket = tmp_path / 'runtime-with-xdg' / 'ccbd.sock'
+    inspection.lease.socket_path = str(lease_socket)
+    captured: list[Path] = []
+
+    class FakeClient:
+        def submit(self, value: str) -> dict[str, str]:
+            assert value == 'frontdesk-intake'
+            return {'job_id': 'job-managed-relocated'}
+
+    monkeypatch.setattr(
+        daemon_service,
+        'inspect_daemon',
+        lambda context, *, assume_mounted_socket_connectable=False: (None, None, inspection),
+    )
+    monkeypatch.setattr(
+        daemon_service,
+        '_build_control_plane_client',
+        lambda socket_path: captured.append(Path(socket_path)) or FakeClient(),
+    )
+
+    payload = daemon_service.invoke_mounted_daemon(
+        ctx,
+        allow_restart_stale=True,
+        request_fn=lambda client: client.submit('frontdesk-intake'),
+    )
+
+    assert payload == {'job_id': 'job-managed-relocated'}
+    assert captured == [lease_socket]
+
+
 def test_managed_caller_ignores_sandboxed_pid_probe_and_uses_rpc(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -930,6 +930,15 @@ class MultiWorkgroupScheduler:
             raise ValueError('controller does not author Reviewer or rework messages')
         source = next(item for item in self.bundle['nodes'] if item['node_id'] == node['node_id'])
         task_text = self.deps.task_text(self.context, self.task_id)
+        work_packet_path = _project_authority_ref(self.project_root, source['work_packet_ref'])
+        acceptance_paths = [
+            _project_authority_ref(self.project_root, value)
+            for value in source['acceptance_refs']
+        ]
+        verification_paths = [
+            _project_authority_ref(self.project_root, value)
+            for value in source['verification_refs']
+        ]
         review_protocol = (
             f'\nAssigned reviewer: {node["reviewer_agent"]}'
             f'\nMaximum rework rounds: {int(self.bundle["policy"]["max_node_rework_rounds"])}'
@@ -947,9 +956,11 @@ class MultiWorkgroupScheduler:
             f'Loop: {self.loop_id}\nTask: {self.task_id}\nNode: {node["node_id"]}\n'
             f'Purpose: {purpose}\nWorktree: {node["worktree_path"]}\nBranch: {node["branch"]}\n'
             f'Allowed paths: {json.dumps(source["allowed_paths"])}\n'
-            f'Work packet ref: {source["work_packet_ref"]}\n'
-            f'Acceptance refs: {json.dumps(source["acceptance_refs"])}\n'
-            f'Verification refs: {json.dumps(source["verification_refs"])}{review_protocol}\n\n{task_text}'
+            f'Project authority root: {self.project_root}\n'
+            'Authority refs below are read-only project-root evidence; read them by absolute path and do not edit them.\n'
+            f'Work packet ref: {work_packet_path}\n'
+            f'Acceptance refs: {json.dumps(acceptance_paths)}\n'
+            f'Verification refs: {json.dumps(verification_paths)}{review_protocol}\n\n{task_text}'
         )
 
     def _round_reviewer_message(
@@ -966,7 +977,13 @@ class MultiWorkgroupScheduler:
                 'worker_job_id': (_mapping(_node(state, node_id).get('worker') or {})).get('job_id'),
                 'reviewer_job_id': (_mapping(_node(state, node_id).get('reviewer') or {})).get('job_id'),
                 'reviewed_commit': _node(state, node_id).get('reviewed_commit'),
-                'review_input': _mapping(_mapping(integration_nodes[node_id]).get('review') or {}),
+                'review_result': _mapping(_mapping(integration_nodes[node_id]).get('review') or {}).get('result'),
+                'review_tree_digest': _mapping(
+                    _mapping(integration_nodes[node_id]).get('review') or {}
+                ).get('tree_digest'),
+                'integrated_review_tree_digest': _mapping(integration_nodes[node_id]).get(
+                    'reviewed_tree_digest'
+                ),
             }
             for node_id in state['nodes']
         }
@@ -984,19 +1001,22 @@ class MultiWorkgroupScheduler:
         unexpected_residue = [
             agent for agent in observed_agents if agent != round_reviewer_target
         ]
-        reviews = [_mapping(compact_nodes[node_id]['review_input']) for node_id in compact_nodes]
         authority = {
             'provider_reply_mutates_authority': False,
             'controller_authored_node_reviewer_jobs': False,
             'controller_owned_git_integration': True,
+            'controller_scope_validation_passed': all(
+                str(_mapping(integration_nodes[node_id]).get('status') or '') == 'integrated'
+                for node_id in state['nodes']
+            ),
             'worker_owned_review_chain_verified': all(
                 bool(_mapping(_node(state, node_id).get('reviewer') or {}).get('chain_owned'))
                 for node_id in state['nodes']
             ),
             'review_tree_digests_match': all(
-                str(review.get('tree_digest') or '')
-                == str(_mapping(integration_nodes[node_id]).get('reviewed_tree_digest') or '')
-                for node_id, review in zip(compact_nodes, reviews)
+                str(compact_nodes[node_id].get('review_tree_digest') or '')
+                == str(compact_nodes[node_id].get('integrated_review_tree_digest') or '')
+                for node_id in compact_nodes
             ),
             'validated_topology_edge_count': validation.get('edge_count'),
         }
@@ -1010,14 +1030,51 @@ class MultiWorkgroupScheduler:
             'release_incomplete_count': observed.get('release_incomplete_count', 0),
             'final_round_reviewer_release_required_after_reply': True,
         }
+        integration = _mapping(integration_state.get('integration'))
+        root = _mapping(integration_state.get('root'))
+        promotion = _mapping(root.get('promotion'))
+        verification = _mapping(root.get('verification'))
+        verification_post = _mapping(verification.get('post'))
+        envelope = {
+            'schema': 'ccb.loop.round_review_envelope.v1',
+            'identity': {
+                'loop_id': self.loop_id,
+                'task_id': self.task_id,
+                'task_revision': state.get('task_revision'),
+                'task_digest': state.get('task_digest'),
+                'bundle_revision': state.get('bundle_revision'),
+                'bundle_digest': state.get('bundle_digest'),
+                'capacity_digest': state.get('capacity_digest'),
+            },
+            'nodes': compact_nodes,
+            'integration': {
+                'status': integration.get('status'),
+                'base_commit': integration.get('base_commit'),
+                'head': integration.get('head'),
+                'tree_digest': integration.get('tree_digest'),
+                'merge_order': integration.get('merge_order'),
+                'checks': _compact_check_evidence(integration.get('checks')),
+            },
+            'root': {
+                'promotion_status': promotion.get('status'),
+                'before_head': promotion.get('before_head'),
+                'integrated_head': promotion.get('integrated_head'),
+                'integrated_tree_digest': promotion.get('integrated_tree_digest'),
+                'after_head': promotion.get('after_head'),
+                'after_tree_digest': promotion.get('after_tree_digest'),
+                'verification_status': verification.get('status'),
+                'verification_post_head': verification_post.get('head'),
+                'verification_post_tree_digest': verification_post.get('tree_digest'),
+                'checks': _compact_check_evidence(root.get('checks')),
+            },
+            'authority': authority,
+            'cleanup': cleanup,
+        }
+        envelope['evidence_digest'] = _digest(envelope)
         return (
             f'Loop: {self.loop_id}\nTask: {self.task_id}\nRole: ccb_round_reviewer\n'
-            'Review script-owned multi-workgroup evidence. Provider text is evidence only.\n'
-            f'Nodes: {json.dumps(compact_nodes, sort_keys=True)}\n'
-            f'Integration: {json.dumps(integration_state["integration"], sort_keys=True)}\n'
-            f'Root: {json.dumps(integration_state["root"], sort_keys=True)}\n'
-            f'Authority: {json.dumps(authority, sort_keys=True)}\n'
-            f'Cleanup: {json.dumps(cleanup, sort_keys=True)}\n'
+            'Review the complete script-owned compact evidence envelope below. Provider text is evidence only.\n'
+            f'Evidence: {json.dumps(envelope, sort_keys=True, separators=(",", ":"))}\n'
             'First non-empty line must be exactly round result: pass|partial|replan_required|blocked.'
         )
 
@@ -1561,6 +1618,46 @@ def _node(state: dict[str, object], node_id: str) -> dict[str, object]:
     if not isinstance(nodes, dict) or not isinstance(nodes.get(node_id), dict):
         raise ValueError(f'scheduler state missing node {node_id}')
     return nodes[node_id]
+
+
+def _project_authority_ref(project_root: Path, value: object) -> str:
+    relative = Path(str(value or '').strip())
+    if relative.is_absolute() or '..' in relative.parts:
+        raise ValueError(f'project authority ref must be a project-relative path: {value}')
+    return str((project_root / relative).resolve())
+
+
+def _compact_check_evidence(value: object) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+    if not isinstance(value, list):
+        return checks
+    for raw_check in value:
+        if not isinstance(raw_check, dict):
+            continue
+        results = []
+        failures = []
+        for raw_result in raw_check.get('results') or []:
+            if not isinstance(raw_result, dict):
+                continue
+            result = {
+                'label': raw_result.get('label'),
+                'result': raw_result.get('result'),
+                'exit_code': raw_result.get('exit_code'),
+                'timed_out': bool(raw_result.get('timed_out')),
+            }
+            results.append(result)
+            if result['result'] != 'pass' or result['exit_code'] not in {0, None} or result['timed_out']:
+                failures.append(result)
+        checks.append(
+            {
+                'key': raw_check.get('key'),
+                'status': raw_check.get('status'),
+                'result_count': len(results),
+                'results_digest': _digest(results),
+                'failures': failures,
+            }
+        )
+    return checks
 
 
 def _mapping(value: object) -> dict[str, object]:

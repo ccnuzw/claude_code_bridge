@@ -47,6 +47,7 @@ def connect_compatible_daemon(
     inspection,
     *,
     restart_on_mismatch: bool,
+    socket_path=None,
     probe_client_factory=CcbdClient,
     runtime_client_factory=None,
     daemon_matches_project_config_fn=daemon_matches_project_config,
@@ -54,26 +55,27 @@ def connect_compatible_daemon(
 ) -> DaemonHandle | None:
     if not inspection.socket_connectable:
         return None
+    effective_socket_path = socket_path or context.paths.ccbd_socket_path
     runtime_client_factory = runtime_client_factory or probe_client_factory
     if inspection_matches_project_config(context, inspection):
         return DaemonHandle(
-            client=runtime_client_factory(context.paths.ccbd_socket_path),
+            client=runtime_client_factory(effective_socket_path),
             inspection=inspection,
             started=False,
         )
-    probe_client = probe_client_factory(context.paths.ccbd_socket_path)
+    probe_client = probe_client_factory(effective_socket_path)
     try:
         matches_config = daemon_matches_project_config_fn(context, probe_client)
     except CcbdClientError:
         # A transient ping failure is not evidence of config drift.
         return DaemonHandle(
-            client=runtime_client_factory(context.paths.ccbd_socket_path),
+            client=runtime_client_factory(effective_socket_path),
             inspection=inspection,
             started=False,
         )
     if matches_config:
         return DaemonHandle(
-            client=runtime_client_factory(context.paths.ccbd_socket_path),
+            client=runtime_client_factory(effective_socket_path),
             inspection=inspection,
             started=False,
         )
@@ -83,7 +85,7 @@ def connect_compatible_daemon(
         raise ValueError('shutdown_incompatible_daemon_fn is required when restart_on_mismatch')
     shutdown_incompatible_daemon_fn(
         context,
-        runtime_client_factory(context.paths.ccbd_socket_path),
+        runtime_client_factory(effective_socket_path),
     )
     return None
 

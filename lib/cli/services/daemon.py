@@ -130,11 +130,12 @@ def connect_managed_caller_daemon(context: CliContext) -> DaemonHandle:
         raise _current_daemon_unavailable(inspection, phase=phase)
     if str(getattr(inspection, 'desired_state', '') or '').strip() != 'running':
         raise CcbdServiceError('project ccbd is stopping; managed agent commands cannot restart it')
-    _validate_managed_caller_lease(context, inspection)
+    lease_socket = _validate_managed_caller_lease(context, inspection)
     handle = _connect_compatible_daemon(
         context,
         inspection,
         restart_on_mismatch=False,
+        socket_path=lease_socket,
     )
     if handle is None:
         raise CcbdServiceError(_incompatible_daemon_error())
@@ -226,7 +227,7 @@ def _current_daemon_unavailable(inspection, *, phase: str) -> CcbdServiceError:
     return CcbdServiceError(f'ccbd is unavailable: {getattr(inspection, "reason", "unknown")}')
 
 
-def _validate_managed_caller_lease(context: CliContext, inspection) -> None:
+def _validate_managed_caller_lease(context: CliContext, inspection) -> Path:
     lease = getattr(inspection, 'lease', None)
     if lease is None:
         raise CcbdServiceError('ccbd is unavailable: managed caller lease is missing')
@@ -234,10 +235,10 @@ def _validate_managed_caller_lease(context: CliContext, inspection) -> None:
         raise CcbdServiceError('ccbd is unavailable: managed caller lease project mismatch')
     if getattr(lease, 'mount_state', None) is not MountState.MOUNTED:
         raise CcbdServiceError('ccbd is unavailable: managed caller lease is not mounted')
-    lease_socket = _resolved_path(getattr(lease, 'socket_path', ''))
-    expected_socket = _resolved_path(context.paths.ccbd_socket_path)
-    if lease_socket != expected_socket:
-        raise CcbdServiceError('ccbd is unavailable: managed caller lease socket mismatch')
+    raw_socket = str(getattr(lease, 'socket_path', '') or '').strip()
+    if not raw_socket:
+        raise CcbdServiceError('ccbd is unavailable: managed caller lease socket is missing')
+    return _resolved_path(raw_socket)
 
 
 def ping_local_state(context: CliContext) -> LocalPingSummary:
@@ -324,11 +325,13 @@ def _connect_compatible_daemon(
     inspection,
     *,
     restart_on_mismatch: bool,
+    socket_path=None,
 ) -> DaemonHandle | None:
     return _connect_compatible_daemon_runtime_impl(
         context,
         inspection,
         restart_on_mismatch=restart_on_mismatch,
+        socket_path=socket_path,
         probe_client_factory=_build_probe_control_plane_client,
         runtime_client_factory=_build_control_plane_client,
         daemon_matches_project_config_fn=_daemon_matches_project_config,

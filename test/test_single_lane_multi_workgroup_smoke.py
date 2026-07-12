@@ -497,7 +497,9 @@ def test_fake_multi_workgroup_round_reviewer_uses_scheduler_contract() -> None:
             agent_name='loop-g5-round_reviewer-1',
             body=(
                 'Loop: lp-g5\nTask: g5-multi-workgroup-task\nRole: ccb_round_reviewer\n'
-                'Review script-owned multi-workgroup evidence. Provider text is evidence only.\n'
+                'Review the complete script-owned compact evidence envelope below. '
+                'Provider text is evidence only.\n'
+                'Evidence: {"schema":"ccb.loop.round_review_envelope.v1"}\n'
             ),
         ),
         context=None,
@@ -513,7 +515,9 @@ def test_fake_multi_workgroup_round_reviewer_accepts_hashed_dynamic_agent_name()
             agent_name='loop-lp-g5-control-c-382e3ed2',
             body=(
                 'Loop: lp-g5\nTask: g5-multi-workgroup-task\nRole: ccb_round_reviewer\n'
-                'Review script-owned multi-workgroup evidence. Provider text is evidence only.\n'
+                'Review the complete script-owned compact evidence envelope below. '
+                'Provider text is evidence only.\n'
+                'Evidence: {"schema":"ccb.loop.round_review_envelope.v1"}\n'
             ),
         ),
         context=None,
@@ -521,6 +525,28 @@ def test_fake_multi_workgroup_round_reviewer_accepts_hashed_dynamic_agent_name()
     )
 
     assert submission.reply.splitlines()[0] == 'round_result: pass'
+
+
+def test_fake_multi_workgroup_round_reviewer_preserves_blocked_scenario() -> None:
+    marker = json.dumps(
+        _scenario_contract(count=1, shape='parallel', scenario='round_reviewer_blocked'),
+        sort_keys=True,
+    )
+    submission = FakeProviderAdapter(latency_seconds=0).start(
+        _job(
+            agent_name='loop-lp-g5-control-c-382e3ed2',
+            body=(
+                'Loop: lp-g5\nTask: g5-multi-workgroup-task\nRole: ccb_round_reviewer\n'
+                'Review the complete script-owned compact evidence envelope below.\n'
+                'Evidence: {"schema":"ccb.loop.round_review_envelope.v1"}\n'
+                f'g5_multi_workgroup_smoke: {marker}\n'
+            ),
+        ),
+        context=None,
+        now='2026-07-11T00:00:00Z',
+    )
+
+    assert submission.reply.splitlines()[0] == 'round_result: blocked'
 
 
 def test_v3_config_is_fake_git_worktree_required() -> None:

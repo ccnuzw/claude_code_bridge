@@ -630,6 +630,8 @@ def test_dispatcher_silence_hides_success_reply_body_for_caller_mailbox(tmp_path
         f'{job_id} task=task-silent result=hidden'
     )
     assert replies[0].diagnostics.get('silence_on_success') is True
+    assert InboundEventStore(layout).list_agent('claude') == []
+    assert MailboxStore(layout).load('claude') is None
 
 
 def test_dispatcher_silence_does_not_hide_failure_reply_body(tmp_path: Path) -> None:
@@ -679,6 +681,7 @@ def test_dispatcher_silence_does_not_hide_failure_reply_body(tmp_path: Path) -> 
     assert replies[0].reply
     assert 'result=hidden' not in replies[0].reply
     assert replies[0].diagnostics.get('silence_on_success') is True
+    assert len(InboundEventStore(layout).list_agent('claude')) == 1
 
 
 def test_dispatcher_callback_routes_child_result_as_parent_continuation(tmp_path: Path) -> None:
