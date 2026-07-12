@@ -254,9 +254,24 @@ def test_frontdesk_request_is_natural_language_with_current_intake_contract(tmp_
     assert '**Intake Evidence**' in request
     assert 'silent handoff to planner' in request.lower()
     assert 'must not directly implement' in request.lower()
+    assert 'Project capability: git_repository=not_guaranteed.' in request
+    assert 'This lab project may not be a Git repository.' in request
+    assert 'Frontdesk must preserve this exact capability in Intake Evidence Constraints.' in request
+    assert (
+        'Planner verification for this activation must be repo-independent: do not use '
+        'git diff, git status, git diff --name-only, or another Git-only scope check; '
+        'use allowed_paths plus direct file existence, content, test, or manifest checks.'
+    ) in request
+    assert 'This constraint applies only to this activation and is not a global Git prohibition.' in request
     for task in runner.TASKS:
-        assert task['task_id'] in request
-        assert task['expected_route'] in request
+        expected_terminal = (
+            f"{task['expected_final_status']}/{task['expected_round_result']}"
+            if task['expected_final_status'] == 'done'
+            else task['expected_final_status']
+        )
+        assert (
+            f"{task['task_id']} ({task['expected_route']}) -> {expected_terminal}"
+        ) in request
 
 
 def test_generated_config_mounts_required_resident_ask_targets_not_only_role_profiles(
