@@ -2864,6 +2864,35 @@ def _closed_feedback_transport(
     message = value.get("message")
     if not isinstance(message, str) or not message:
         return False
+    source_job_id = str(value.get("source_job_id") or "")
+    effective_job_id = str(value.get("effective_job_id") or "")
+    retry_lineage = value.get("retry_lineage")
+    if not source_job_id or not effective_job_id or not isinstance(retry_lineage, list):
+        return False
+    current_job_id = source_job_id
+    seen = {source_job_id}
+    for retry_index, edge in enumerate(retry_lineage, start=1):
+        required_edge = {
+            "message_id", "source_attempt_id", "successor_attempt_id",
+            "retry_source_job_id", "retry_successor_job_id", "retry_index",
+        }
+        if (
+            not isinstance(edge, dict)
+            or set(edge) != required_edge
+            or edge.get("retry_source_job_id") != current_job_id
+            or edge.get("retry_index") != retry_index
+            or not edge.get("message_id")
+            or not edge.get("source_attempt_id")
+            or not edge.get("successor_attempt_id")
+        ):
+            return False
+        successor = str(edge.get("retry_successor_job_id") or "")
+        if not successor or successor in seen:
+            return False
+        seen.add(successor)
+        current_job_id = successor
+    if current_job_id != effective_job_id:
+        return False
     return bool(
         value.get("target") == target
         and value.get("purpose") == purpose
@@ -2936,7 +2965,8 @@ def b7_task_set_evidence(manifest: dict[str, Any], task_ids: list[str]) -> dict[
         reject("task_set_authority_missing")
         return evidence
 
-    expected_children = []
+    bound_children = []
+    terminal_children = []
     child_results: list[str] = []
     terminal_result_by_status = {
         "done": "pass",
@@ -2949,23 +2979,29 @@ def b7_task_set_evidence(manifest: dict[str, Any], task_ids: list[str]) -> dict[
         binding = bindings[order]
         assert isinstance(binding, dict)
         task_id = task_ids[order]
-        task_revision = record.get("task_revision")
-        expected_child = {
+        bound_revision = binding.get("bound_task_revision")
+        bound_child = {
             "task_id": task_id,
-            "task_revision": task_revision,
+            "task_revision": bound_revision,
             "required": True,
             "order": order,
         }
-        expected_children.append(expected_child)
+        terminal_child = {
+            "task_id": task_id,
+            "task_revision": record.get("task_revision"),
+            "required": True,
+        }
+        bound_children.append(bound_child)
+        terminal_children.append(terminal_child)
         if binding != {
             "schema": "ccb.plan.task_set_binding.v1",
             "task_set_id": task_set_id,
             "task_set_revision": revision,
             "binding_role": "child",
-            "bound_task_revision": task_revision,
+            "bound_task_revision": bound_revision,
             "required": True,
             "order": order,
-        }:
+        } or isinstance(bound_revision, bool) or not isinstance(bound_revision, int) or bound_revision < 1:
             reject("task_set_child_binding_mismatch")
         result = terminal_result_by_status.get(str(record.get("status") or ""))
         if result is None:
@@ -2982,12 +3018,15 @@ def b7_task_set_evidence(manifest: dict[str, Any], task_ids: list[str]) -> dict[
         "replan_required": "replan_required",
         "blocked": "blocked",
     }.get(aggregate or "")
+    task_set_children = task_set.get("children")
+    if task_set_children != bound_children:
+        reject("task_set_child_binding_mismatch")
     if (
         task_set.get("schema") != "ccb.plan.task_set.v1"
         or task_set.get("schema_version") != 1
         or task_set.get("task_set_id") != task_set_id
         or task_set.get("task_set_revision") != revision
-        or task_set.get("children") != expected_children
+        or task_set_children != bound_children
         or task_set.get("ordered_required_children") != task_ids
         or task_set.get("state") != closed_state
         or task_set.get("aggregate_result") != aggregate
@@ -3027,11 +3066,10 @@ def b7_task_set_evidence(manifest: dict[str, Any], task_ids: list[str]) -> dict[
         )
         if closure.get("ordered_terminal_evidence_digest") != expected_evidence_digest:
             reject("task_set_closure_terminal_evidence_digest_mismatch")
-        for expected, record, child in zip(expected_children, child_records, ordered_children):
+        for expected, record, child in zip(terminal_children, child_records, ordered_children):
             if not isinstance(child, dict) or any(
                 child.get(key) != value
                 for key, value in expected.items()
-                if key != "order"
             ):
                 reject("task_set_closure_child_identity_mismatch")
                 break

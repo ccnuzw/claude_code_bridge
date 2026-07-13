@@ -2305,14 +2305,18 @@ def _write_root14_b7_authority(runner, manifest: dict[str, object]) -> dict[str,
         'status': 'detail_ready',
         'basis': 'verified_detail_ready_stop_contract',
         'task_id': runner.TASKS[2]['task_id'],
-        'task_revision': 1,
-        'state_version': 5,
+        'task_revision': 3,
+        'state_version': 13,
         'authority_digest': '3' * 64,
         'basis_digest': '4' * 64,
         'required_reason': 'detail_ready_task',
     }
 
-    for index, (case, record) in enumerate(zip(runner.TASKS, children), start=1):
+    terminal_revisions = (2, 2, 3, 2, 2)
+    for index, (case, record, terminal_revision) in enumerate(
+        zip(runner.TASKS, children, terminal_revisions),
+        start=1,
+    ):
         task_id = case['task_id']
         task_dir = plan_root / 'tasks' / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -2370,8 +2374,8 @@ def _write_root14_b7_authority(runner, manifest: dict[str, object]) -> dict[str,
                 'actor': {'source': 'loop_runner/script-owned'},
             }
         record.update(
-            task_revision=1,
-            state_version=5 if task_id == constraint['task_id'] else 1,
+            task_revision=terminal_revision,
+            state_version=constraint['state_version'] if task_id == constraint['task_id'] else 9,
             status=case['expected_final_status'],
             next_owner='terminal' if case['expected_final_status'] in {'done', 'blocked'} else 'planner',
             artifacts=artifacts,
@@ -2617,6 +2621,287 @@ def _write_root14_b7_authority(runner, manifest: dict[str, object]) -> dict[str,
     }
 
 
+def _write_production_generated_b7_authority(
+    runner,
+    manifest: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
+    from cli.services.ask_runtime import AskSummary
+    from cli.services.plan_tasks import plan_task
+    from cli.services.task_set_closure import create_task_set_authority, evaluate_task_set_closure
+    from cli.services.task_set_feedback_runtime import advance_task_set_feedback_runtime
+    from jobs.store import JobStore
+    from storage.paths import PathLayout
+    from types import SimpleNamespace
+    import cli.services.task_set_closure as task_set_closure
+
+    project = Path(str(manifest['project']))
+    plan_root = project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG
+    plan_root.mkdir(parents=True, exist_ok=True)
+    (plan_root / 'README.md').write_text('# Production-generated B7 authority\n', encoding='utf-8')
+    context = SimpleNamespace(
+        project=SimpleNamespace(project_root=project, project_id='production-generated-b7'),
+        paths=None,
+    )
+    source_task_id = 'root14-production-source'
+    task_ids = [case['task_id'] for case in runner.TASKS]
+
+    def write(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+
+    def create_task(task_id: str, *, route: str | None, ready: bool) -> None:
+        created = plan_task(
+            context,
+            SimpleNamespace(
+                action='task-create', plan_slug=runner.PLAN_SLUG,
+                title=task_id, task_id=task_id,
+            ),
+        )
+        revision = created['task']['task_revision']
+        if not ready:
+            return
+        for kind in ('task_packet', 'execution_contract'):
+            path = project / 'drafts' / task_id / f'{kind}.md'
+            write(path, f'# {kind}\nRoute: {route}\n')
+            imported = plan_task(
+                context,
+                SimpleNamespace(
+                    action='task-artifact', task_id=task_id, artifact_kind=kind,
+                    file_path=str(path), actor_source='loop_runner_role_output_import',
+                    actor='loop_runner', job_id='job-production-planner',
+                    expected_task_revision=revision,
+                ),
+            )
+            revision = imported['task']['task_revision']
+        notes = project / 'drafts' / task_id / 'orchestration_notes.md'
+        write(notes, f'route: {route}\n')
+        imported = plan_task(
+            context,
+            SimpleNamespace(
+                action='task-artifact', task_id=task_id,
+                artifact_kind='orchestration_notes', file_path=str(notes), route=route,
+                actor_source='loop_runner_role_output_import', actor='loop_runner',
+                job_id='job-production-orchestrator', expected_task_revision=revision,
+            ),
+        )
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-status', task_id=task_id, status='ready_for_orchestration',
+                next_owner='orchestrator', expected_task_revision=imported['task']['task_revision'],
+            ),
+        )
+
+    def complete_round(task_id: str, result: str) -> None:
+        shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+        loop_id = f'production-{task_id}'
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-bind-loop', task_id=task_id, loop_id=loop_id,
+                expected_task_revision=shown['task_revision'],
+            ),
+        )
+        summary = project / 'rounds' / f'{task_id}.md'
+        write(summary, f'round_result: {result}\n')
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-import-round', task_id=task_id, loop_id=loop_id,
+                result=result, file_path=str(summary),
+                actor_source='loop_runner_role_output_import', actor='loop_runner',
+                job_id='job-production-round', expected_task_revision=shown['task_revision'],
+            ),
+        )
+        runner._write_json(
+            project / '.ccb' / 'runtime' / 'loops' / loop_id / 'round.json',
+                {
+                    'task_id': task_id, 'loop_id': loop_id, 'round_result': result,
+                    'round_result_source': 'round_reviewer_reply',
+                    'release': {
+                        'loop_topology_status': 'released', 'released_count': 2,
+                        'retained_count': 0, 'release_incomplete_count': 0,
+                    },
+                'observed_topology': {'agents': []},
+            },
+        )
+
+    create_task(source_task_id, route=None, ready=False)
+    for case in runner.TASKS:
+        create_task(str(case['task_id']), route=str(case['expected_route']), ready=True)
+    created = create_task_set_authority(
+        context,
+        plan_slug=runner.PLAN_SLUG,
+        source_task_id=source_task_id,
+        source_request={
+            'source_job_id': 'job-production-frontdesk',
+            'sha256': hashlib.sha256(b'production generated request').hexdigest(),
+            'bytes': len(b'production generated request'),
+        },
+        planner_job={
+            'job_id': 'job-production-planner',
+            'reply_sha256': hashlib.sha256(b'production generated task set').hexdigest(),
+        },
+        children=[{'task_id': task_id, 'required': True} for task_id in task_ids],
+        plan_task_fn=plan_task,
+    )
+    task_set_id = str(created['task_set']['task_set_id'])
+    complete_round(task_ids[0], 'pass')
+    complete_round(task_ids[1], 'pass')
+    complete_round(task_ids[3], 'replan_required')
+    complete_round(task_ids[4], 'blocked')
+
+    l3_id = task_ids[2]
+    l3 = plan_task(context, SimpleNamespace(action='task-show', task_id=l3_id))['task']
+    for kind in ('detail_design', 'detail_summary', 'detail_packet'):
+        path = project / '.ccb' / 'runtime' / 'role-output-imports' / 'job-production-detailer' / f'{kind}.md'
+        write(path, f'# {kind}\n')
+        plan_task(
+            context,
+            SimpleNamespace(
+                action='task-artifact', task_id=l3_id, artifact_kind=kind,
+                file_path=str(path), actor_source='loop_runner_role_output_import',
+                actor='loop_runner', job_id='job-production-detailer',
+                expected_task_revision=l3['task_revision'],
+            ),
+        )
+    plan_task(
+        context,
+        SimpleNamespace(
+            action='task-status', task_id=l3_id, status='detail_ready', next_owner='planner',
+            expected_task_revision=l3['task_revision'],
+        ),
+    )
+    original_detail_authority = task_set_closure.detail_ready_stop_contract_authority
+    monkeypatch.setattr(
+        task_set_closure,
+        'detail_ready_stop_contract_authority',
+        lambda record, *, project_root: (
+            {'authority_digest': 'a' * 64, 'basis_digest': 'b' * 64}
+            if record.get('task_id') == l3_id
+            else original_detail_authority(record, project_root=project_root)
+        ),
+    )
+    closed = evaluate_task_set_closure(
+        context, task_set_id=task_set_id, plan_task_fn=plan_task,
+    )
+    assert closed['status'] == 'closure_pending'
+    closure = closed['closure']
+    intent = closed['closure_intent']
+    task_set = closed['task_set']
+    closure_path = project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG / 'task-sets' / task_set_id / 'closure.json'
+    evidence_ref = str(closure_path.relative_to(project))
+    next_milestone = {'kind': 'selected', 'ref': 'replan', 'rationale': 'Closure requires replan.'}
+    frontdesk_status = {
+        'schema': 'ccb.planner.frontdesk_status.v1',
+        'notification_identity': f'{task_set_id}-r1',
+        'aggregate_result': 'replan_required',
+        'accepted_scope': ['direct children complete'],
+        'unresolved_scope': ['macro replan required'],
+        'blockers': [],
+        'next_milestone': next_milestone,
+        'evidence_refs': [evidence_ref],
+        'user_report_body': 'Task-set replan required.',
+    }
+    planner_reply = '**planner-backfill.json**\n```json\n' + json.dumps(
+        {
+            'schema': 'ccb.planner.backfill_proposal.v1', 'mode': 'task_set_closure',
+            'expected_plan_revision': task_set['plan_revision']['digest'],
+            'task_or_task_set_id': task_set_id, 'task_or_task_set_revision': 1,
+            'closure_evidence_digest': closure['ordered_terminal_evidence_digest'],
+            'aggregate_result': 'replan_required', 'result': 'task_set_replanned',
+            'brief_summary': 'Task-set requires replan.', 'roadmap_transitions': [],
+            'todo_transitions': [], 'decision_refs': [], 'open_question_refs': [],
+            'evidence_refs': [evidence_ref], 'accepted_scope': ['direct children complete'],
+            'unresolved_scope': ['macro replan required'], 'blockers': [],
+            'replan_inputs': ['macro adjustment request'], 'next_milestone': next_milestone,
+            'frontdesk_notification_required': True, 'frontdesk_status': frontdesk_status,
+        },
+    ) + '\n```'
+    replies: dict[str, str] = {}
+
+    def submit_ask(_context, command):
+        job_id = f'job-production-{command.target}'
+        reply = planner_reply if command.target == 'planner' else 'delivered'
+        replies[job_id] = reply
+        request = MessageEnvelope(
+            project_id=context.project.project_id, to_agent=command.target,
+            from_actor='system', body=command.message, task_id=command.task_id,
+            reply_to=None, message_type='task', delivery_scope=DeliveryScope.SINGLE,
+            silence_on_success=command.silence,
+        )
+        JobStore(PathLayout(project)).append(
+            JobRecord(
+                job_id=job_id, submission_id=None, agent_name=command.target,
+                provider='fake', request=request, status=JobStatus.COMPLETED,
+                terminal_decision={'terminal': True, 'status': 'completed', 'reply': reply},
+                cancel_requested_at=None, created_at='2026-07-13T00:00:00Z',
+                updated_at='2026-07-13T00:00:01Z', provider_options={},
+            )
+        )
+        return AskSummary(context.project.project_id, None, ({'agent_name': command.target, 'job_id': job_id},))
+
+    services = SimpleNamespace(
+        discover_task_set_closures=lambda *_args, **_kwargs: {
+            'evaluated': [],
+            'pending': [{
+                **intent,
+                'task_set_path': str(closure_path.with_name('task-set.json')),
+            }],
+        },
+        plan_task=plan_task,
+        submit_ask=submit_ask,
+        persisted_terminal_watch=lambda _context, job_id: {
+            'status': 'completed', 'reply': replies[job_id],
+        },
+        find_task_set_transport_job=lambda *_args, **_kwargs: None,
+        find_task_set_retry_successor=lambda *_args, **_kwargs: None,
+    )
+    settled = advance_task_set_feedback_runtime(context, services)
+    assert settled['action'] == 'task_set_feedback_closed'
+
+    l3_record = plan_task(context, SimpleNamespace(action='task-show', task_id=l3_id))['task']
+    constraint = {
+        'schema_version': 1, 'status': 'detail_ready',
+        'basis': 'verified_detail_ready_stop_contract', 'task_id': l3_id,
+        'task_revision': l3_record['task_revision'], 'state_version': l3_record['state_version'],
+        'authority_digest': 'a' * 64, 'basis_digest': 'b' * 64,
+        'required_reason': 'detail_ready_task',
+    }
+    runner._write_json(
+        project / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-production-l3-terminal.json',
+        {
+            'schema_version': 1, 'record_type': 'ccb_loop_planner_activation',
+            'activation_id': 'act-production-l3-terminal', 'task_id': l3_id,
+            'task_revision': l3_record['task_revision'], 'task_status': 'detail_ready',
+            'terminal_status_constraint': constraint,
+            'ask': {'target': 'planner', 'job_id': 'job-production-l3-terminal'},
+        },
+    )
+    imports = project / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+    imports.parent.mkdir(parents=True, exist_ok=True)
+    imports.write_text(json.dumps({
+        'schema_version': 1, 'record_type': 'ccb_loop_role_output_import',
+        'imported_at': '2026-07-13T00:00:02Z',
+        'action': 'settled_planner_terminal_status_constraint', 'status': 'ok',
+        'task_id': l3_id, 'task_status': 'detail_ready',
+        'terminal_status_constraint': constraint,
+        'source_job': {'job_id': 'job-production-l3-terminal'},
+    }) + '\n', encoding='utf-8')
+    runner._write_json(
+        project / '.ccb' / 'runtime' / 'loops' / 'activations' / f'act-frontdesk-{source_task_id}.json',
+        {
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'request_id': source_task_id, 'source_job': {'job_id': source_task_id},
+            'ask': {'target': 'planner', 'job_id': 'job-production-planner'},
+        },
+    )
+    reply_path = project / '.ccb' / 'ccbd' / 'artifacts' / 'text' / 'completion-reply' / 'job-production-planner-art_crosscheck.txt'
+    write(reply_path, '**task-set.json**\n```json\n{}\n```\n')
+
+
 def test_b7_uses_script_owned_task_index_routes_and_status_results(
     tmp_path: Path,
 ) -> None:
@@ -2649,6 +2934,109 @@ def test_b7_uses_script_owned_task_index_routes_and_status_results(
     assert all(row['settlement_action'] == 'settled_planner_terminal_status_constraint' for row in rows)
     assert all(row['auto_runner_state']['status'] == 'absent' for row in rows)
     assert 'Status: pass' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+
+
+def test_b7_accepts_production_generated_decision029_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    _write_production_generated_b7_authority(runner, manifest, monkeypatch)
+
+    evidence = runner.b7_task_set_evidence(
+        manifest,
+        [case['task_id'] for case in runner.TASKS],
+    )
+    assert evidence['valid'] is True, evidence['errors']
+    runner.write_b7_report(manifest)
+    assert 'Status: pass' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+    assert all(row['task_set_authority_valid'] for row in _b7_rows(manifest))
+
+
+def test_b7_distinguishes_bound_child_revision_from_terminal_evidence_revision(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    paths = _write_root14_b7_authority(runner, manifest)
+    task_set = json.loads(paths['task_set'].read_text(encoding='utf-8'))
+    tasks = json.loads(paths['tasks'].read_text(encoding='utf-8'))['tasks']
+    closure = json.loads(paths['closure'].read_text(encoding='utf-8'))
+    l3_id = runner.TASKS[2]['task_id']
+    l3_task = next(record for record in tasks if record['task_id'] == l3_id)
+    l3_set_child = next(child for child in task_set['children'] if child['task_id'] == l3_id)
+    l3_closure_child = next(child for child in closure['ordered_children'] if child['task_id'] == l3_id)
+
+    assert l3_task['task_set']['bound_task_revision'] == l3_set_child['task_revision'] == 1
+    assert l3_task['task_revision'] == l3_closure_child['task_revision'] == 3
+    runner.write_b7_report(manifest)
+    assert 'Status: pass' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+
+    l3_task['task_set']['bound_task_revision'] = 3
+    runner._write_json(paths['tasks'], {'schema': 'ccb.plan.tasks.v1', 'tasks': tasks})
+    runner.write_b7_report(manifest)
+    assert 'task_set_child_binding_mismatch' in _b7_rows(manifest)[0]['evidence_errors']
+
+
+def test_b7_accepts_production_shaped_retry_lineage_with_distinct_effective_job(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    paths = _write_root14_b7_authority(runner, manifest)
+    source_job_id = 'job_root14_backfill_source'
+    effective_job_id = 'job_root14_backfill'
+    lineage = [{
+        'message_id': 'message-root14-backfill',
+        'source_attempt_id': 'attempt-root14-backfill-source',
+        'successor_attempt_id': 'attempt-root14-backfill-effective',
+        'retry_source_job_id': source_job_id,
+        'retry_successor_job_id': effective_job_id,
+        'retry_index': 1,
+    }]
+    backfill = json.loads(paths['backfill'].read_text(encoding='utf-8'))
+    backfill['authority'].update(
+        planner_source_job_id=source_job_id,
+        planner_effective_job_id=effective_job_id,
+        planner_retry_lineage=lineage,
+    )
+    backfill['backfill_digest'] = runner._authority_digest(backfill, omit='backfill_digest')
+    runner._write_json(paths['backfill'], backfill)
+    runtime = json.loads(paths['runtime'].read_text(encoding='utf-8'))
+    runtime['planner'].update(
+        job_id=source_job_id,
+        source_job_id=source_job_id,
+        effective_job_id=effective_job_id,
+        retry_lineage=lineage,
+    )
+    runtime['backfill_import'].update(
+        planner_source_job_id=source_job_id,
+        planner_effective_job_id=effective_job_id,
+        planner_retry_lineage=lineage,
+        backfill_digest=backfill['backfill_digest'],
+    )
+    runtime['runtime_digest'] = runner._authority_digest(runtime, omit='runtime_digest')
+    runner._write_json(paths['runtime'], runtime)
+    intent_path = paths['runtime'].with_name('closure-intents.json')
+    intents = json.loads(intent_path.read_text(encoding='utf-8'))
+    transport = intents['intents'][0]['transport_ref']
+    transport.update(
+        planner_source_job_id=source_job_id,
+        planner_effective_job_id=effective_job_id,
+        planner_retry_lineage=lineage,
+        backfill_digest=backfill['backfill_digest'],
+    )
+    runner._write_json(intent_path, intents)
+    settlement = json.loads(paths['settlement'].read_text(encoding='utf-8'))
+    settlement['transport_ref'] = transport
+    settlement['settlement_digest'] = runner._authority_digest(settlement, omit='settlement_digest')
+    runner._write_json(paths['settlement'], settlement)
+
+    runner.write_b7_report(manifest)
+
+    assert 'Status: pass' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+    assert _b7_rows(manifest)[0]['planner_backfill_job_id'] == effective_job_id
 
 
 def _b7_rows(manifest: dict[str, object]) -> list[dict[str, object]]:
