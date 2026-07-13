@@ -163,7 +163,8 @@ class MobileNotificationStore:
                 prior = agents.get(key)
                 if prior:
                     activity_changed = (
-                        str(prior.get('activity_state') or '') != snapshot.activity_state
+                        snapshot.activity_state not in {'', 'unknown'}
+                        and str(prior.get('activity_state') or '') != snapshot.activity_state
                         or prior.get('namespace_epoch') != snapshot.namespace_epoch
                     )
                     conversation_changed = (
@@ -183,7 +184,12 @@ class MobileNotificationStore:
                         )
                         records[_invalidation_record_key(event)] = event
                         emitted.append(event)
-                agents[key] = _invalidation_snapshot_state(snapshot)
+                next_state = _invalidation_snapshot_state(snapshot)
+                if prior and snapshot.activity_state in {'', 'unknown'}:
+                    next_state['activity_state'] = str(
+                        prior.get('activity_state') or 'unknown'
+                    )
+                agents[key] = next_state
             for snapshot in summary_changed.values():
                 event = self._next_invalidation_event(
                     state, snapshot, INVALIDATION_KIND_PROJECT_SUMMARY, 'project', agent=''

@@ -197,6 +197,31 @@ def test_invalidation_store_dedupes_redacts_and_bounds_event_journal(tmp_path: P
     assert '/srv/' not in payload
 
 
+def test_native_watch_unknown_activity_does_not_churn_known_project_state(
+    tmp_path: Path,
+) -> None:
+    store = MobileNotificationStore(tmp_path / 'mobile', recent_limit=8)
+    baseline = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'idle', 'fingerprint-one', '2026-06-30T01:00:00Z'
+    )
+    unknown_same = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'unknown', 'fingerprint-one', '2026-06-30T01:00:01Z'
+    )
+    unknown_changed = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'unknown', 'fingerprint-two', '2026-06-30T01:00:02Z'
+    )
+    observed_same = MobileInvalidationSnapshot(
+        'proj-demo', 'demo', 7, 'worker', 'idle', 'fingerprint-two', '2026-06-30T01:00:03Z'
+    )
+
+    assert store.sync_invalidations([baseline]) == []
+    assert store.sync_invalidations([unknown_same]) == []
+    assert [event.kind for event in store.sync_invalidations([unknown_changed])] == [
+        'conversation_changed'
+    ]
+    assert store.sync_invalidations([observed_same]) == []
+
+
 def test_logical_journal_shares_monotonic_sequence_and_retained_cursor_is_exactly_once(
     tmp_path: Path,
 ) -> None:
