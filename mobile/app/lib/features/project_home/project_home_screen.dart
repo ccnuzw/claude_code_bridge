@@ -221,6 +221,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   late final TaskCompletionNotificationController _taskNotifications;
   late final MobileConnectionSupervisor _connectionSupervisor;
   MobileConnectionOutcomeAdapter? _connectionOutcomeAdapter;
+  int _gatewayActivationGeneration = 0;
   late final MobilePresenceCoordinator _presenceCoordinator;
   bool _taskNotificationsSuspendedForBackground = false;
 
@@ -1281,6 +1282,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }
 
   void _activateGateway(ProjectHomeGatewayActivationData activation) {
+    _detachGatewayOutcomeReporters();
+    final activationGeneration = ++_gatewayActivationGeneration;
     _gatewayProfileActivationSucceeded = false;
     _pairingForm.applyGatewayActivation(
       gatewayUrlText: activation.gatewayUrlText,
@@ -1293,7 +1296,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     );
     final profile = session.activation.profile;
     unawaited(
-      _completeGatewayProfileActivation(profile, session.projectsFuture),
+      _completeGatewayProfileActivation(
+        profile,
+        session.projectsFuture,
+        activationGeneration: activationGeneration,
+      ),
     );
     setState(() {
       _mode = AppRuntimeMode.pairedGateway;
@@ -1319,7 +1326,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     );
     final outcomeAdapter = MobileConnectionOutcomeAdapter(
       supervisor: _connectionSupervisor,
-      isCurrent: () => _isActiveGatewayProfile(profile),
+      isCurrent:
+          () => _isActiveGatewayProfile(
+            profile,
+            activationGeneration: activationGeneration,
+          ),
     );
     _connectionOutcomeAdapter = outcomeAdapter;
     final repository = session.repository;
@@ -1345,15 +1356,25 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   Future<void> _completeGatewayProfileActivation(
     GatewayPairedHost profile,
-    Future<List<CcbProject>> projectsFuture,
-  ) async {
+    Future<List<CcbProject>> projectsFuture, {
+    int? activationGeneration,
+  }) async {
     try {
       await projectsFuture;
     } catch (error) {
+      if (!_isActiveGatewayProfile(
+        profile,
+        activationGeneration: activationGeneration,
+      )) {
+        return;
+      }
       await _gatewayRequestFailure(profile, error);
       return;
     }
-    if (!_isActiveGatewayProfile(profile)) {
+    if (!_isActiveGatewayProfile(
+      profile,
+      activationGeneration: activationGeneration,
+    )) {
       return;
     }
     _connectionSupervisor.reportSuccess();
@@ -1361,9 +1382,14 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     await widget.profileStore.markSuccessful(profile);
   }
 
-  bool _isActiveGatewayProfile(GatewayPairedHost profile) {
+  bool _isActiveGatewayProfile(
+    GatewayPairedHost profile, {
+    int? activationGeneration,
+  }) {
     return mounted &&
         _mode == AppRuntimeMode.pairedGateway &&
+        (activationGeneration == null ||
+            activationGeneration == _gatewayActivationGeneration) &&
         _selectedProfile != null &&
         projectHomeGatewayProfileKey(_selectedProfile!) ==
             projectHomeGatewayProfileKey(profile);
@@ -1405,6 +1431,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }
 
   void _returnToPairingSetup() {
+    _gatewayActivationGeneration += 1;
+    _detachGatewayOutcomeReporters();
     _stopTaskCompletionNotifications();
     _presenceCoordinator.stop();
     _connectionSupervisor.stop();
@@ -1424,6 +1452,18 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _viewFuture = _loadActiveProjectView();
     });
     _lifecycleResultNotifier.value = null;
+  }
+
+  void _detachGatewayOutcomeReporters() {
+    final repository = _activeRepository;
+    if (repository case final GatewayConnectionOutcomeReportable reportable) {
+      reportable.outcomeReporter = null;
+    }
+    final terminalTransport = _terminalTransport;
+    if (terminalTransport
+        case final GatewayConnectionOutcomeReportable reportable) {
+      reportable.outcomeReporter = null;
+    }
   }
 
   void _openPairingSettings() {

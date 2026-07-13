@@ -183,8 +183,10 @@ void main() {
   });
 
   test(
-    'uploads and downloads selected-agent files through repository',
+    'uploads and downloads report their distinct outcomes through repository',
     () async {
+      final reporter = _RecordingOutcomeReporter();
+      repository.outcomeReporter = reporter;
       final uploaded = await repository.uploadFile(
         projectId: 'proj-demo',
         agentName: 'mobile',
@@ -206,8 +208,24 @@ void main() {
         '/v1/projects/proj-demo/agents/mobile/files/file-1',
       ]);
       expect(bodies.first, String.fromCharCodes([1, 2, 3]));
+      expect(reporter.successes, [
+        GatewayConnectionOperation.mutation,
+        GatewayConnectionOperation.read,
+      ]);
     },
   );
+}
+
+class _RecordingOutcomeReporter implements GatewayConnectionOutcomeReporter {
+  final successes = <GatewayConnectionOperation>[];
+
+  @override
+  void failed(GatewayConnectionOperation operation, Object error) {}
+
+  @override
+  void succeeded(GatewayConnectionOperation operation) {
+    successes.add(operation);
+  }
 }
 
 _GatewayResponse _payloadForRequest(String method, String path, String body) {

@@ -7,6 +7,49 @@ import 'package:test/test.dart';
 
 void main() {
   test(
+    'terminal reports success only after open frame and timeout as failure',
+    () async {
+      final gateway = _FakeGatewayTransport()..emitOpenFrame = false;
+      final reporter = _RecordingOutcomeReporter();
+      final transport = GatewayTerminalTransport(transport: gateway)
+        ..outcomeReporter = reporter;
+
+      final readySession = await transport.open(_request());
+      expect(reporter.successes, isEmpty);
+      gateway.emit(GatewayTerminalFrame.open(terminalId: 'term', token: ''));
+      await pumpEventQueue();
+      expect(reporter.successes, [GatewayConnectionOperation.terminal]);
+      await readySession.close();
+
+      final timeoutGateway = _FakeGatewayTransport()..emitOpenFrame = false;
+      final timeoutReporter = _RecordingOutcomeReporter();
+      final timeoutTransport = GatewayTerminalTransport(
+        transport: timeoutGateway,
+        connectionTimeout: const Duration(milliseconds: 10),
+      )..outcomeReporter = timeoutReporter;
+      final timedOutSession = await timeoutTransport.open(_request());
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(timeoutReporter.failures, [GatewayConnectionOperation.terminal]);
+      await timedOutSession.close();
+    },
+  );
+
+  test(
+    'old terminal session reporter is detached on profile replacement',
+    () async {
+      final gateway = _FakeGatewayTransport()..emitOpenFrame = false;
+      final oldReporter = _RecordingOutcomeReporter();
+      final transport = GatewayTerminalTransport(transport: gateway)
+        ..outcomeReporter = oldReporter;
+      await transport.open(_request());
+      transport.outcomeReporter = null;
+      gateway.emit(GatewayTerminalFrame.open(terminalId: 'term', token: ''));
+      await pumpEventQueue();
+      expect(oldReporter.successes, isEmpty);
+    },
+  );
+
+  test(
     'opens gateway terminal and forwards frames as terminal session',
     () async {
       final gateway = _FakeGatewayTransport();
@@ -340,6 +383,7 @@ class _FakeGatewayTransport implements GatewayTransport {
   final rejectedResumeCursors = <int>[];
   final invalidTerminalIds = <String>{};
   final handshakeClosedTerminalIds = <String>{};
+  bool emitOpenFrame = true;
   final _frameControllers = <StreamController<GatewayTerminalFrame>>[];
   final _frameHandles = <GatewayTerminalHandle>[];
   final _lastOutputByTerminalId = <String, int>{};
@@ -516,7 +560,7 @@ class _FakeGatewayTransport implements GatewayTransport {
           controller.close();
         }
       });
-    } else {
+    } else if (emitOpenFrame) {
       scheduleMicrotask(() {
         if (!controller.isClosed) {
           controller.add(
@@ -530,6 +574,30 @@ class _FakeGatewayTransport implements GatewayTransport {
       });
     }
     return controller.stream;
+  }
+}
+
+TerminalOpenRequest _request() => TerminalOpenRequest.gateway(
+  target: CcbTerminalTarget.agent(
+    projectId: 'proj-demo',
+    namespaceEpoch: 4,
+    agent: 'mobile',
+    scopes: {CcbScope.view, CcbScope.terminalInput},
+  ),
+);
+
+class _RecordingOutcomeReporter implements GatewayConnectionOutcomeReporter {
+  final successes = <GatewayConnectionOperation>[];
+  final failures = <GatewayConnectionOperation>[];
+
+  @override
+  void failed(GatewayConnectionOperation operation, Object error) {
+    failures.add(operation);
+  }
+
+  @override
+  void succeeded(GatewayConnectionOperation operation) {
+    successes.add(operation);
   }
 }
 

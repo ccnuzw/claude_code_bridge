@@ -147,6 +147,58 @@ void main() {
     });
 
     test(
+      'message and upload mutation failures are each submitted once',
+      () async {
+        final messageRepository = _SubmitRepository(
+          responses: [StateError('gateway unavailable')],
+        );
+        final messageOutcome = await AgentRepositoryMessageSubmitter(
+          repository: messageRepository,
+        ).submit(agent: _leadAgent, message: _localMessage(), view: _view(4));
+        expect(
+          messageOutcome.replacement?.state,
+          CcbConversationDeliveryState.failed,
+        );
+        expect(messageRepository.requests, hasLength(1));
+
+        final temp = await File(
+          '${Directory.systemTemp.path}/ccb-mobile-single-upload-failure.txt',
+        ).writeAsString('once');
+        addTearDown(() => temp.delete());
+        final uploadRepository = _SubmitRepository(
+          uploadError: StateError('down'),
+        );
+        final uploadOutcome = await AgentRepositoryMessageSubmitter(
+          repository: uploadRepository,
+        ).submit(
+          agent: _leadAgent,
+          view: _view(4),
+          message: CcbConversationItem.userMessage(
+            id: 'local-upload-once',
+            agentName: 'lead',
+            body: '',
+            attachments: [
+              CcbMessageAttachment(
+                fileId: 'draft-once',
+                fileName: 'once.txt',
+                mimeType: 'text/plain',
+                sizeBytes: temp.lengthSync(),
+                localPath: temp.path,
+                state: CcbMessageAttachmentState.queued,
+              ),
+            ],
+          ),
+        );
+        expect(
+          uploadOutcome.replacement?.state,
+          CcbConversationDeliveryState.failed,
+        );
+        expect(uploadRepository.uploads, hasLength(1));
+        expect(uploadRepository.requests, isEmpty);
+      },
+    );
+
+    test(
       'uploads local attachments before submitting attachment-only message',
       () async {
         final temp = await File(

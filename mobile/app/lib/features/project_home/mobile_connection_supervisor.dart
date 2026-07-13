@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import '../../pairing/gateway_pairing.dart';
+import '../../notifications/task_completion_notifications.dart';
 import '../../repository/gateway_mobile_ccb_repository.dart';
 import '../../transport/http_gateway_transport.dart';
 import '../../transport/gateway_connection_outcome.dart';
@@ -72,6 +73,7 @@ class MobileConnectionSupervisor {
     _probe = probe;
     _nextDelay = initialDelay;
     _retryTimer?.cancel();
+    _retryTimer = null;
     _emit(const MobileConnectionSnapshot(MobileConnectionState.connecting));
     if (probeImmediately) {
       _probeNow(_generation);
@@ -81,6 +83,7 @@ class MobileConnectionSupervisor {
   void reportSuccess() {
     if (_profile == null || _disposed) return;
     _retryTimer?.cancel();
+    _retryTimer = null;
     _nextDelay = initialDelay;
     _emit(const MobileConnectionSnapshot(MobileConnectionState.online));
   }
@@ -103,6 +106,14 @@ class MobileConnectionSupervisor {
     if (kind == MobileTransportKind.mutation) {
       return;
     }
+    if (kind == MobileTransportKind.terminalRead) {
+      // Terminal availability is independent of the core HTTP authority.
+      // A terminal fault must not disable ordinary gateway reads or chat.
+      if (auth == MobileAuthDisposition.scopeDenied) {
+        _emit(const MobileConnectionSnapshot(MobileConnectionState.degraded));
+      }
+      return;
+    }
     if (auth == MobileAuthDisposition.scopeDenied) {
       _emit(const MobileConnectionSnapshot(MobileConnectionState.degraded));
       return;
@@ -113,6 +124,7 @@ class MobileConnectionSupervisor {
   void foregroundResume() {
     if (_profile == null || _disposed) return;
     _retryTimer?.cancel();
+    _retryTimer = null;
     _probeNow(_generation);
   }
 
@@ -223,7 +235,19 @@ class MobileConnectionOutcomeAdapter
 
   @override
   void succeeded(GatewayConnectionOperation operation) {
-    if (_isCurrent()) _supervisor.reportSuccess();
+    if (!_isCurrent()) return;
+    switch (operation) {
+      case GatewayConnectionOperation.read:
+        _supervisor.reportSuccess();
+      case GatewayConnectionOperation.stream:
+      case GatewayConnectionOperation.terminal:
+        // Optional live-update and terminal transports do not establish that
+        // the core HTTP routes are usable. Probe only bounded safe reads.
+        _supervisor.foregroundResume();
+      case GatewayConnectionOperation.mutation:
+        // A mutation is never retried or used as route-health authority.
+        return;
+    }
   }
 
   @override
@@ -248,11 +272,11 @@ class MobileConnectionOutcomeAdapter
       }
       if (error.statusCode == 403) return MobileAuthDisposition.scopeDenied;
     }
-    final text = error.toString().toLowerCase();
-    if (text.contains('invalid token') ||
-        text.contains('device revoked') ||
-        text.contains('token revoked')) {
-      return MobileAuthDisposition.credentialInvalid;
+    if (error is GatewayTaskCompletionNotificationStreamException) {
+      if (error.statusCode == 401) {
+        return MobileAuthDisposition.credentialInvalid;
+      }
+      if (error.statusCode == 403) return MobileAuthDisposition.scopeDenied;
     }
     return MobileAuthDisposition.none;
   }

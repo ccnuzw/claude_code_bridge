@@ -8,15 +8,23 @@ import 'terminal_transport.dart';
 
 class GatewayTerminalTransport
     implements TerminalTransport, GatewayConnectionOutcomeReportable {
-  GatewayTerminalTransport({required GatewayTransport transport})
-    : _transport = transport;
+  GatewayTerminalTransport({
+    required GatewayTransport transport,
+    Duration connectionTimeout = const Duration(seconds: 5),
+  }) : _transport = transport,
+       _connectionTimeout = connectionTimeout;
 
   final GatewayTransport _transport;
+  final Duration _connectionTimeout;
   GatewayConnectionOutcomeReporter? _outcomeReporter;
+  final _sessions = <_GatewayTerminalSession>{};
 
   @override
   set outcomeReporter(GatewayConnectionOutcomeReporter? reporter) {
     _outcomeReporter = reporter;
+    for (final session in _sessions) {
+      session.outcomeReporter = reporter;
+    }
   }
 
   @override
@@ -28,13 +36,16 @@ class GatewayTerminalTransport
           geometry: request.geometry,
         ),
       );
-      _outcomeReporter?.succeeded(GatewayConnectionOperation.terminal);
-      return _GatewayTerminalSession(
+      final session = _GatewayTerminalSession(
         transport: _transport,
         request: request,
         handle: handle,
         outcomeReporter: _outcomeReporter,
+        onClosed: _sessions.remove,
+        connectionTimeout: _connectionTimeout,
       );
+      _sessions.add(session);
+      return session;
     } catch (error) {
       _outcomeReporter?.failed(GatewayConnectionOperation.terminal, error);
       rethrow;
@@ -48,10 +59,14 @@ class _GatewayTerminalSession implements TerminalSession {
     required TerminalOpenRequest request,
     required GatewayTerminalHandle handle,
     GatewayConnectionOutcomeReporter? outcomeReporter,
+    required void Function(_GatewayTerminalSession session) onClosed,
+    required Duration connectionTimeout,
   }) : _transport = transport,
        _request = request,
        _handle = handle,
        _outcomeReporter = outcomeReporter,
+       _onClosed = onClosed,
+       _connectionTimeout = connectionTimeout,
        _geometry = request.geometry {
     unawaited(
       _connect().catchError((Object error, StackTrace stackTrace) {
@@ -73,7 +88,13 @@ class _GatewayTerminalSession implements TerminalSession {
   int _nextInputSequence = 1;
   int _resumeCursor = 0;
   bool _closed = false;
-  final GatewayConnectionOutcomeReporter? _outcomeReporter;
+  GatewayConnectionOutcomeReporter? _outcomeReporter;
+  final void Function(_GatewayTerminalSession session) _onClosed;
+  final Duration _connectionTimeout;
+
+  set outcomeReporter(GatewayConnectionOutcomeReporter? reporter) {
+    _outcomeReporter = reporter;
+  }
 
   @override
   String get launchedCommand => _request.attachCommand;
@@ -127,6 +148,7 @@ class _GatewayTerminalSession implements TerminalSession {
     await _sendMutation(GatewayTerminalFrame.closed('client_closed'));
     await _cancelSubscription();
     await _closeOutput();
+    _onClosed(this);
   }
 
   Future<void> _sendSequenced(GatewayTerminalFrame frame) async {
@@ -146,7 +168,7 @@ class _GatewayTerminalSession implements TerminalSession {
     }
   }
 
-  Future<void> _connect({int? resumeCursor}) {
+  Future<void> _connect({int? resumeCursor}) async {
     final ready = Completer<void>();
     _connectionReady = ready;
     _subscription = _transport
@@ -156,14 +178,23 @@ class _GatewayTerminalSession implements TerminalSession {
           onError: _handleTransportError,
           onDone: _handleDone,
         );
-    return ready.future.timeout(
-      const Duration(seconds: 5),
-      onTimeout:
-          () =>
-              throw const TerminalTransportException(
-                'terminal stream connect timeout',
-              ),
-    );
+    try {
+      await ready.future.timeout(
+        _connectionTimeout,
+        onTimeout:
+            () =>
+                throw const TerminalTransportException(
+                  'terminal stream connect timeout',
+                ),
+      );
+    } catch (error, stackTrace) {
+      // Frame/transport errors already completed the readiness completer and
+      // reported themselves. A timeout has not, so report it structurally.
+      if (!ready.isCompleted) {
+        _completeConnectionError(error, stackTrace);
+      }
+      rethrow;
+    }
   }
 
   void _handleFrame(GatewayTerminalFrame frame) {

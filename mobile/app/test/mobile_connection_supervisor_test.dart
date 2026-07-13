@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:ccb_mobile/features/project_home/mobile_connection_supervisor.dart';
+import 'package:ccb_mobile/notifications/task_completion_notifications.dart';
 import 'package:ccb_mobile/pairing/gateway_pairing.dart';
 import 'package:ccb_mobile/repository/gateway_mobile_ccb_repository.dart';
 import 'package:ccb_mobile/transport/http_gateway_transport.dart';
@@ -50,12 +51,12 @@ void main() {
             ..healthError = GatewayHttpException(Uri(), 401, 'revoked');
       final supervisor = MobileConnectionSupervisor(
         onChanged: (_) {},
-        initialDelay: Duration.zero,
-        maxDelay: Duration.zero,
+        initialDelay: const Duration(seconds: 1),
+        maxDelay: const Duration(seconds: 1),
       );
 
       supervisor.start(profile: _profile(), probe: repository);
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
 
       expect(
         supervisor.snapshot.state,
@@ -120,6 +121,120 @@ void main() {
     );
     adapter.failed(GatewayConnectionOperation.read, TimeoutException('stale'));
     expect(supervisor.snapshot.state, MobileConnectionState.connecting);
+    supervisor.dispose();
+  });
+
+  test(
+    'stream connected probes core HTTP and does not clear reconnect on failure',
+    () async {
+      final repository = _ProbeRepository()..fail = true;
+      final supervisor = MobileConnectionSupervisor(
+        onChanged: (_) {},
+        initialDelay: const Duration(seconds: 1),
+        maxDelay: const Duration(seconds: 1),
+      );
+      supervisor.start(
+        profile: _profile(),
+        probe: repository,
+        probeImmediately: false,
+      );
+      supervisor.reportFailure(TimeoutException('core route unavailable'));
+      final adapter = MobileConnectionOutcomeAdapter(
+        supervisor: supervisor,
+        isCurrent: () => true,
+      );
+
+      adapter.succeeded(GatewayConnectionOperation.stream);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(repository.healthCalls, 1);
+      expect(supervisor.snapshot.state, MobileConnectionState.reconnecting);
+      supervisor.dispose();
+    },
+  );
+
+  test(
+    'structured stream auth errors retain only scope-denied credentials',
+    () {
+      final supervisor = MobileConnectionSupervisor(onChanged: (_) {});
+      supervisor.start(profile: _profile(), probe: _ProbeRepository());
+      final adapter = MobileConnectionOutcomeAdapter(
+        supervisor: supervisor,
+        isCurrent: () => true,
+      );
+
+      adapter.failed(
+        GatewayConnectionOperation.stream,
+        GatewayTaskCompletionNotificationStreamException(Uri(), 403, 'scope'),
+      );
+      expect(supervisor.snapshot.state, MobileConnectionState.degraded);
+
+      adapter.failed(
+        GatewayConnectionOperation.stream,
+        Exception('invalid token'),
+      );
+      expect(
+        supervisor.snapshot.state,
+        isNot(MobileConnectionState.authenticationRequired),
+      );
+
+      adapter.failed(
+        GatewayConnectionOperation.stream,
+        GatewayTaskCompletionNotificationStreamException(Uri(), 401, 'revoked'),
+      );
+      expect(
+        supervisor.snapshot.state,
+        MobileConnectionState.authenticationRequired,
+      );
+      supervisor.dispose();
+    },
+  );
+
+  test(
+    'old same-profile activation terminal outcomes are generation fenced',
+    () {
+      final supervisor = MobileConnectionSupervisor(onChanged: (_) {});
+      supervisor.start(profile: _profile(), probe: _ProbeRepository());
+      var generation = 1;
+      final oldAdapter = MobileConnectionOutcomeAdapter(
+        supervisor: supervisor,
+        isCurrent: () => generation == 1,
+      );
+      generation = 2;
+      supervisor.reportFailure(TimeoutException('new activation route failed'));
+
+      oldAdapter.succeeded(GatewayConnectionOperation.terminal);
+      oldAdapter.failed(GatewayConnectionOperation.terminal, Exception('old'));
+
+      expect(supervisor.snapshot.state, MobileConnectionState.reconnecting);
+      supervisor.dispose();
+    },
+  );
+
+  test('terminal ready probes but cannot mask a core HTTP outage', () async {
+    final repository = _ProbeRepository()..fail = true;
+    final supervisor = MobileConnectionSupervisor(
+      onChanged: (_) {},
+      initialDelay: const Duration(seconds: 1),
+      maxDelay: const Duration(seconds: 1),
+    );
+    supervisor.start(
+      profile: _profile(),
+      probe: repository,
+      probeImmediately: false,
+    );
+    supervisor.reportFailure(TimeoutException('core route unavailable'));
+    final adapter = MobileConnectionOutcomeAdapter(
+      supervisor: supervisor,
+      isCurrent: () => true,
+    );
+
+    adapter.succeeded(GatewayConnectionOperation.terminal);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    adapter.failed(GatewayConnectionOperation.terminal, StateError('closed'));
+
+    expect(repository.healthCalls, 1);
+    expect(supervisor.snapshot.state, MobileConnectionState.reconnecting);
     supervisor.dispose();
   });
 
