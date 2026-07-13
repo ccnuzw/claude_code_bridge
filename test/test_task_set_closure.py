@@ -11,7 +11,12 @@ from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
 from jobs.store import JobStore
 from message_bureau import AttemptRecord, AttemptState, AttemptStore, MessageRecord, MessageState, MessageStore
 from storage.paths import PathLayout
-from cli.services.plan_tasks import find_first_actionable_task, plan_task, settle_task_set_parent
+from cli.services.plan_tasks import (
+    detail_ready_stop_contract_authority,
+    find_first_actionable_task,
+    plan_task,
+    settle_task_set_parent,
+)
 from cli.services.planner_feedback import (
     frontdesk_status_envelope,
     parse_planner_feedback_reply,
@@ -25,7 +30,6 @@ from cli.services.task_set_feedback_runtime import (
     _runtime_digest,
 )
 from cli.services.ask_runtime.submission import _artifact_request_body
-import cli.services.task_set_closure as task_set_closure_module
 from cli.services.task_set_closure import (
     create_task_set_authority,
     evaluate_task_set_closure,
@@ -670,7 +674,6 @@ def test_task_set_aggregate_precedence_rows(
 
 def test_task_set_closure_accepts_verified_detail_ready_terminal_evidence(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path)
     _create_task(context, 'source-intake', ready=False)
@@ -687,10 +690,27 @@ def test_task_set_closure_accepts_verified_detail_ready_terminal_evidence(
     _complete(context, 'child-pass-two', 'pass')
     _complete(context, 'child-replan', 'replan_required')
     _complete(context, 'child-blocked', 'blocked')
-    revision = plan_task(context, SimpleNamespace(action='task-show', task_id='child-detail-ready'))['task']['task_revision']
-    for kind in ('detail_design', 'detail_summary', 'detail_packet'):
-        path = Path(context.project.project_root) / 'drafts' / f'{kind}.md'
-        _write(path, f'{kind}\n')
+    root = Path(context.project.project_root)
+    revision = plan_task(
+        context,
+        SimpleNamespace(action='task-show', task_id='child-detail-ready'),
+    )['task']['task_revision']
+    for kind, text in (
+        (
+            'task_packet',
+            '# Task: child-detail-ready\nRoute: needs_detail\nExpected stop: detail_ready.\n',
+        ),
+        (
+            'execution_contract',
+            '# Execution Contract\nRoute: needs_detail\nExpected stop: detail_ready.\n',
+        ),
+        (
+            'orchestration_notes',
+            'Task: child-detail-ready\nRoute: needs_detail\nExpected stop: detail_ready.\n',
+        ),
+    ):
+        path = root / 'drafts' / f'{kind}.md'
+        _write(path, text)
         imported = plan_task(
             context,
             SimpleNamespace(
@@ -699,9 +719,69 @@ def test_task_set_closure_accepts_verified_detail_ready_terminal_evidence(
                 artifact_kind=kind,
                 file_path=str(path),
                 expected_task_revision=revision,
+                route='needs_detail' if kind == 'orchestration_notes' else None,
             ),
         )
         revision = imported['task']['task_revision']
+    detailer_job_id = 'job_child_detail_ready'
+    activation_id = 'act-child-detail-ready'
+    _write(
+        root / '.ccb/runtime/loops/activations' / f'{activation_id}.json',
+        json.dumps(
+            {
+                'activation_id': activation_id,
+                'task_id': 'child-detail-ready',
+                'task_revision': revision,
+                'ask': {'target': 'task_detailer', 'job_id': detailer_job_id},
+            },
+            sort_keys=True,
+        )
+        + '\n',
+    )
+    imported_detail: dict[str, dict[str, object]] = {}
+    role_output_root = root / '.ccb/runtime/role-output-imports' / detailer_job_id
+    for kind, filename, text in (
+        ('detail_design', 'task-detail-design.md', '# Detail Design\nResolved.\n'),
+        ('detail_summary', 'brief-update-summary.md', '# Detail Summary\nResolved.\n'),
+        (
+            'detail_packet',
+            'detail-packet.manifest.json',
+            '{"detail_readiness_recommendation":"detail_ready"}\n',
+        ),
+    ):
+        path = role_output_root / filename
+        _write(path, text)
+        imported = plan_task(
+            context,
+            SimpleNamespace(
+                action='task-artifact',
+                task_id='child-detail-ready',
+                artifact_kind=kind,
+                file_path=str(path),
+                expected_task_revision=revision,
+                actor_source='loop_runner_role_output_import',
+                actor='loop_runner',
+                job_id=detailer_job_id,
+            ),
+        )
+        revision = imported['task']['task_revision']
+        imported_detail[kind] = imported['artifact']
+    _write(
+        root / '.ccb/runtime/role-output-imports.jsonl',
+        json.dumps(
+            {
+                'action': 'imported_task_detailer_detail_authority',
+                'task_id': 'child-detail-ready',
+                'source_job': {'job_id': detailer_job_id},
+                'artifacts': {
+                    kind: {'sha256': artifact['sha256']}
+                    for kind, artifact in imported_detail.items()
+                },
+            },
+            sort_keys=True,
+        )
+        + '\n',
+    )
     plan_task(
         context,
         SimpleNamespace(
@@ -728,16 +808,20 @@ def test_task_set_closure_accepts_verified_detail_ready_terminal_evidence(
         children=[{'task_id': task_id, 'required': True} for task_id in child_ids],
         plan_task_fn=plan_task,
     )
-    monkeypatch.setattr(
-        task_set_closure_module,
-        'detail_ready_stop_contract_authority',
-        lambda task, *, project_root: (
-            {'authority_digest': 'a' * 64, 'basis_digest': 'b' * 64}
-            if task['task_id'] == 'child-detail-ready'
-            else None
-        ),
-    )
-
+    detail_task = plan_task(
+        context,
+        SimpleNamespace(action='task-show', task_id='child-detail-ready'),
+    )['task']
+    stop_authority = detail_ready_stop_contract_authority(detail_task, project_root=root)
+    assert stop_authority is not None
+    assert stop_authority['basis']['detail_provenance']['job_id'] == detailer_job_id
+    assert stop_authority['basis']['detail_provenance']['activation_id'] == activation_id
+    for kind, artifact in imported_detail.items():
+        recorded = stop_authority['basis']['artifacts'][kind]
+        assert recorded['sha256'] == artifact['sha256']
+        assert recorded['sha256'] == hashlib.sha256(
+            (root / recorded['path']).read_bytes()
+        ).hexdigest()
     closed = evaluate_task_set_closure(
         context,
         task_set_id=created['task_set']['task_set_id'],
@@ -751,6 +835,8 @@ def test_task_set_closure_accepts_verified_detail_ready_terminal_evidence(
     assert detail['status'] == 'detail_ready'
     assert detail['result'] == 'pass'
     assert detail['authority']['artifact_kind'] == 'detail_ready_stop_contract'
+    assert detail['authority']['authority_digest'] == stop_authority['authority_digest']
+    assert detail['authority']['basis_digest'] == stop_authority['basis_digest']
 
 
 def test_optional_pending_child_does_not_block_required_closure(tmp_path: Path) -> None:
