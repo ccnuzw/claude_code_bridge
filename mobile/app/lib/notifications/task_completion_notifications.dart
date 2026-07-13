@@ -504,9 +504,10 @@ class HttpGatewayTaskCompletionNotificationStreamClient
     HttpClient? httpClient,
     this.streamPath = defaultGatewayTaskCompletionNotificationStreamPath,
     this.timeout = const Duration(seconds: 10),
-  }) : _httpClient = httpClient ?? HttpClient();
+  }) : _sharedHttpClient = httpClient;
 
-  final HttpClient _httpClient;
+  final HttpClient? _sharedHttpClient;
+  final Set<HttpClient> _activeHttpClients = <HttpClient>{};
   final String streamPath;
   final Duration timeout;
 
@@ -516,43 +517,110 @@ class HttpGatewayTaskCompletionNotificationStreamClient
     String? lastEventId,
     GatewayInvalidationWatch? watch,
     void Function()? onConnected,
-  ]) async* {
-    final base = host.profile.routeProvider.gatewayUrl.resolve(streamPath);
-    final uri = base.replace(
-      queryParameters: {...base.queryParameters, ...?watch?.queryParameters},
-    );
-    final request = await _httpClient.getUrl(uri).timeout(timeout);
-    request.headers.set(
-      HttpHeaders.acceptHeader,
-      'application/x-ndjson, text/event-stream, application/json',
-    );
-    request.headers.set(
-      HttpHeaders.authorizationHeader,
-      'Bearer ${host.deviceToken}',
-    );
-    if (lastEventId != null && lastEventId.trim().isNotEmpty) {
-      request.headers.set('Last-Event-ID', lastEventId.trim());
+  ]) {
+    late final StreamController<TaskCompletionNotificationEvent> controller;
+    StreamSubscription<TaskCompletionNotificationEvent>? eventSubscription;
+    HttpClientRequest? request;
+    HttpClient? httpClient;
+    var canceled = false;
+
+    void releaseOwnedClient() {
+      final client = httpClient;
+      if (_sharedHttpClient == null &&
+          client != null &&
+          _activeHttpClients.remove(client)) {
+        client.close(force: true);
+      }
     }
-    final response = await request.close().timeout(timeout);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final body = await utf8
-          .decodeStream(response)
-          .timeout(timeout)
-          .catchError((_) => '');
-      throw GatewayTaskCompletionNotificationStreamException(
-        uri,
-        response.statusCode,
-        body,
+
+    Future<void> cancel() async {
+      canceled = true;
+      request?.abort();
+      releaseOwnedClient();
+      final subscription = eventSubscription;
+      eventSubscription = null;
+      await subscription?.cancel();
+    }
+
+    Future<void> connect() async {
+      final client = _sharedHttpClient ?? HttpClient();
+      httpClient = client;
+      if (_sharedHttpClient == null) {
+        _activeHttpClients.add(client);
+      }
+      final base = host.profile.routeProvider.gatewayUrl.resolve(streamPath);
+      final uri = base.replace(
+        queryParameters: {...base.queryParameters, ...?watch?.queryParameters},
       );
+      try {
+        request = await client.getUrl(uri).timeout(timeout);
+        if (canceled) {
+          request?.abort();
+          releaseOwnedClient();
+          return;
+        }
+        request!.headers.set(
+          HttpHeaders.acceptHeader,
+          'application/x-ndjson, text/event-stream, application/json',
+        );
+        request!.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer ${host.deviceToken}',
+        );
+        if (lastEventId != null && lastEventId.trim().isNotEmpty) {
+          request!.headers.set('Last-Event-ID', lastEventId.trim());
+        }
+        final response = await request!.close().timeout(timeout);
+        if (canceled) {
+          releaseOwnedClient();
+          return;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          final body = await utf8
+              .decodeStream(response)
+              .timeout(timeout)
+              .catchError((_) => '');
+          throw GatewayTaskCompletionNotificationStreamException(
+            uri,
+            response.statusCode,
+            body,
+          );
+        }
+        eventSubscription = _eventsFromSseLines(
+          response.transform(utf8.decoder).transform(const LineSplitter()),
+        ).listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: () {
+            releaseOwnedClient();
+            unawaited(controller.close());
+          },
+        );
+        onConnected?.call();
+      } catch (error, stackTrace) {
+        releaseOwnedClient();
+        if (!canceled) {
+          controller.addError(error, stackTrace);
+          await controller.close();
+        }
+      }
     }
-    onConnected?.call();
-    yield* _eventsFromSseLines(
-      response.transform(utf8.decoder).transform(const LineSplitter()),
+
+    controller = StreamController<TaskCompletionNotificationEvent>(
+      onListen: () => unawaited(connect()),
+      onPause: () => eventSubscription?.pause(),
+      onResume: () => eventSubscription?.resume(),
+      onCancel: cancel,
     );
+    return controller.stream;
   }
 
   void close({bool force = false}) {
-    _httpClient.close(force: force);
+    _sharedHttpClient?.close(force: force);
+    for (final client in _activeHttpClients.toList(growable: false)) {
+      client.close(force: force);
+    }
+    _activeHttpClients.clear();
   }
 }
 
@@ -646,9 +714,9 @@ class TaskCompletionNotificationController {
   Timer? _reconnectTimer;
   late Duration _nextReconnectDelay = _initialReconnectDelay;
   bool _started = false;
-  bool _terminalStreamError = false;
   int _reconnectAttempt = 0;
   int _lifecycleGeneration = 0;
+  int _connectionGeneration = 0;
   final LinkedHashSet<String> _seenEventIds = LinkedHashSet<String>();
   Future<void> _eventHandlingTail = Future<void>.value();
 
@@ -704,6 +772,7 @@ class TaskCompletionNotificationController {
   }
 
   Future<void> _stopCurrentSubscription() async {
+    _connectionGeneration += 1;
     _started = false;
     _activeHost = null;
     _watch = null;
@@ -727,11 +796,12 @@ class TaskCompletionNotificationController {
     if (!_started || host == null) {
       return;
     }
+    final connectionGeneration = ++_connectionGeneration;
+    var terminalStreamError = false;
     try {
-      _terminalStreamError = false;
       _eventSubscription = _streamClient
           .subscribe(host, _lastConfirmedEventId, _watch, () {
-            if (!_isCurrentHost(host)) {
+            if (!_isCurrentConnection(host, connectionGeneration)) {
               return;
             }
             _nextReconnectDelay = _initialReconnectDelay;
@@ -744,30 +814,36 @@ class TaskCompletionNotificationController {
           .listen(
             _enqueueEvent,
             onError: (Object error, StackTrace _) {
+              if (!_isCurrentConnection(host, connectionGeneration)) {
+                return;
+              }
               _onStreamError?.call(error);
-              _terminalStreamError =
+              terminalStreamError =
                   error is GatewayTaskCompletionNotificationStreamException &&
                   error.statusCode >= 400 &&
                   error.statusCode < 500;
-              if (!_terminalStreamError) {
-                _scheduleReconnect();
+              if (!terminalStreamError) {
+                _scheduleReconnect(host, connectionGeneration);
               }
             },
             onDone: () {
-              if (!_terminalStreamError) {
-                _scheduleReconnect();
+              if (_isCurrentConnection(host, connectionGeneration) &&
+                  !terminalStreamError) {
+                _scheduleReconnect(host, connectionGeneration);
               }
             },
           );
     } catch (_) {
-      _scheduleReconnect();
+      _scheduleReconnect(host, connectionGeneration);
     }
   }
 
-  void _scheduleReconnect() {
-    if (!_started || _reconnectTimer != null) {
+  void _scheduleReconnect(GatewayPairedHost host, int connectionGeneration) {
+    if (!_isCurrentConnection(host, connectionGeneration) ||
+        _reconnectTimer != null) {
       return;
     }
+    final reconnectGeneration = ++_connectionGeneration;
     unawaited(_eventSubscription?.cancel());
     _eventSubscription = null;
     final delay = _nextReconnectDelay;
@@ -778,6 +854,9 @@ class TaskCompletionNotificationController {
       delay,
     );
     _reconnectTimer = Timer(delay, () {
+      if (!_started || reconnectGeneration != _connectionGeneration) {
+        return;
+      }
       _reconnectTimer = null;
       _connect();
     });
@@ -804,6 +883,7 @@ class TaskCompletionNotificationController {
     if (!_started) {
       return;
     }
+    _connectionGeneration += 1;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     unawaited(_eventSubscription?.cancel());
@@ -879,6 +959,9 @@ class TaskCompletionNotificationController {
 
   bool _isCurrentHost(GatewayPairedHost host) =>
       _started && identical(_activeHost, host);
+
+  bool _isCurrentConnection(GatewayPairedHost host, int generation) =>
+      _isCurrentHost(host) && generation == _connectionGeneration;
 
   void _enqueueEvent(TaskCompletionNotificationEvent event) {
     _eventHandlingTail = _eventHandlingTail

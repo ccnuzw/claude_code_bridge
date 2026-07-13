@@ -618,6 +618,70 @@ void main() {
     });
 
     test(
+      'canceling an HTTP subscription completes without SSE deadlock',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        final requestSeen = Completer<void>();
+        final connected = Completer<void>();
+        final releaseResponse = Completer<void>();
+        addTearDown(() {
+          if (!releaseResponse.isCompleted) releaseResponse.complete();
+        });
+        unawaited(
+          server.first.then((request) async {
+            request.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType(
+                'text',
+                'event-stream',
+                charset: 'utf-8',
+              )
+              ..write(': connected\n\n');
+            await request.response.flush();
+            requestSeen.complete();
+            try {
+              await releaseResponse.future;
+              await request.response.close();
+            } on Object {
+              // The client intentionally tears down the long-lived response.
+            }
+          }),
+        );
+        final client = HttpGatewayTaskCompletionNotificationStreamClient(
+          timeout: const Duration(seconds: 2),
+        );
+        addTearDown(client.close);
+        final subscription = client
+            .subscribe(
+              GatewayPairedHost(
+                profile: GatewayHostProfile(
+                  hostId: 'host-demo',
+                  deviceId: 'device-demo',
+                  routeProvider: RouteProvider(
+                    kind: RouteProviderKind.lan,
+                    gatewayUrl: Uri.parse(
+                      'http://${server.address.address}:${server.port}',
+                    ),
+                  ),
+                  scopes: const {'notify'},
+                ),
+                deviceToken: 'device-token',
+                projectId: 'proj-demo',
+              ),
+              null,
+              null,
+              connected.complete,
+            )
+            .listen((_) {});
+
+        await requestSeen.future;
+        await connected.future;
+        await subscription.cancel().timeout(const Duration(milliseconds: 500));
+      },
+    );
+
+    test(
       'tap routing opens target agent when project view still contains it',
       () {
         final route = resolveProjectHomeTaskCompletionNotificationTap(
