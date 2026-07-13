@@ -1484,6 +1484,7 @@ def unexpected_plan_task_ids(manifest: dict[str, Any]) -> list[str]:
     allowed = {str(item["task_id"]) for item in TASKS}
     allowed.update(sequence_task_aliases(manifest).values())
     allowed.update(controlled_task_set_source_parent_ids(manifest))
+    allowed.update(settled_task_set_source_parent_ids(manifest))
     unexpected: set[str] = set()
     for record in task_index_records(manifest):
         task_id = task_record_id(record)
@@ -2800,6 +2801,553 @@ def _cleanup_evidence(
     }
 
 
+def _authority_digest(value: object, *, omit: str | None = None) -> str:
+    if isinstance(value, dict) and omit is not None:
+        value = {key: item for key, item in value.items() if key != omit}
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _read_json_lines(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for line in _read_text(path).splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
+
+
+def _authority_path(project: Path, value: object, expected: Path) -> Path | None:
+    raw = Path(str(value or ""))
+    candidate = raw.resolve(strict=False) if raw.is_absolute() else (project / raw).resolve(strict=False)
+    if candidate != expected.resolve(strict=False):
+        return None
+    return candidate
+
+
+def _decision029_aggregate(results: list[str]) -> str | None:
+    if "replan_required" in results:
+        return "replan_required"
+    if "partial" in results:
+        return "partial"
+    if "pass" in results and "blocked" in results:
+        return "partial"
+    if results and all(result == "blocked" for result in results):
+        return "blocked"
+    if results and all(result == "pass" for result in results):
+        return "pass"
+    return None
+
+
+def _closed_feedback_transport(
+    value: object,
+    *,
+    target: str,
+    purpose: str,
+    job_id: object,
+    silent: bool,
+) -> bool:
+    required = {
+        "target", "purpose", "task_id", "message", "message_sha256", "silent",
+        "job_id", "source_job_id", "effective_job_id", "retry_lineage", "status", "reply",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        return False
+    message = value.get("message")
+    if not isinstance(message, str) or not message:
+        return False
+    return bool(
+        value.get("target") == target
+        and value.get("purpose") == purpose
+        and value.get("silent") is silent
+        and value.get("status") == "completed"
+        and value.get("job_id") == value.get("source_job_id")
+        and value.get("effective_job_id") == job_id
+        and isinstance(value.get("retry_lineage"), list)
+        and isinstance(value.get("reply"), str)
+        and value.get("message_sha256") == hashlib.sha256(message.encode("utf-8")).hexdigest()
+    )
+
+
+def b7_task_set_evidence(manifest: dict[str, Any], task_ids: list[str]) -> dict[str, Any]:
+    """Validate the persisted Decision029 authority required to claim B7."""
+    project = Path(str(manifest["project"]))
+    errors: list[str] = []
+    paths: dict[str, str | None] = {}
+    evidence: dict[str, Any] = {
+        "valid": False,
+        "errors": errors,
+        "task_set_id": None,
+        "task_set_revision": None,
+        "closure_digest": None,
+        "aggregate_result": None,
+        "constraint_digest": None,
+        "constraint_revision": None,
+        "settlement_action": None,
+        "planner_backfill_job_id": None,
+        "frontdesk_completion_job_id": None,
+        "evidence_paths": paths,
+    }
+
+    def reject(reason: str) -> None:
+        if reason not in errors:
+            errors.append(reason)
+
+    records = [_task_index_record(project, task_id) for task_id in task_ids]
+    if any(not isinstance(record, dict) for record in records):
+        reject("task_set_required_child_record_missing")
+        return evidence
+    child_records = [record for record in records if isinstance(record, dict)]
+    bindings = [record.get("task_set") for record in child_records]
+    if not all(isinstance(binding, dict) for binding in bindings):
+        reject("task_set_required_child_binding_missing")
+        return evidence
+    bound_ids = {str(binding.get("task_set_id") or "") for binding in bindings if isinstance(binding, dict)}
+    bound_revisions = {binding.get("task_set_revision") for binding in bindings if isinstance(binding, dict)}
+    if len(bound_ids) != 1 or len(bound_revisions) != 1:
+        reject("task_set_required_children_not_canonical")
+        return evidence
+    task_set_id = next(iter(bound_ids))
+    revision = next(iter(bound_revisions))
+    if (
+        not LABEL_RE.fullmatch(task_set_id)
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision < 1
+    ):
+        reject("task_set_identity_invalid")
+        return evidence
+    evidence["task_set_id"] = task_set_id
+    evidence["task_set_revision"] = revision
+    task_set_path = (
+        project / "docs" / "plantree" / "plans" / PLAN_SLUG / "task-sets" / task_set_id / "task-set.json"
+    )
+    paths["task_set"] = str(task_set_path)
+    task_set = _read_json(task_set_path)
+    if not isinstance(task_set, dict):
+        reject("task_set_authority_missing")
+        return evidence
+
+    expected_children = []
+    child_results: list[str] = []
+    terminal_result_by_status = {
+        "done": "pass",
+        "detail_ready": "pass",
+        "partial": "partial",
+        "replan_required": "replan_required",
+        "blocked": "blocked",
+    }
+    for order, record in enumerate(child_records):
+        binding = bindings[order]
+        assert isinstance(binding, dict)
+        task_id = task_ids[order]
+        task_revision = record.get("task_revision")
+        expected_child = {
+            "task_id": task_id,
+            "task_revision": task_revision,
+            "required": True,
+            "order": order,
+        }
+        expected_children.append(expected_child)
+        if binding != {
+            "schema": "ccb.plan.task_set_binding.v1",
+            "task_set_id": task_set_id,
+            "task_set_revision": revision,
+            "binding_role": "child",
+            "bound_task_revision": task_revision,
+            "required": True,
+            "order": order,
+        }:
+            reject("task_set_child_binding_mismatch")
+        result = terminal_result_by_status.get(str(record.get("status") or ""))
+        if result is None:
+            reject("task_set_required_child_not_terminal")
+        else:
+            child_results.append(result)
+    aggregate = _decision029_aggregate(child_results)
+    if aggregate is None:
+        reject("task_set_aggregate_not_deterministic")
+    evidence["aggregate_result"] = aggregate
+    closed_state = {
+        "pass": "closed",
+        "partial": "partial",
+        "replan_required": "replan_required",
+        "blocked": "blocked",
+    }.get(aggregate or "")
+    if (
+        task_set.get("schema") != "ccb.plan.task_set.v1"
+        or task_set.get("schema_version") != 1
+        or task_set.get("task_set_id") != task_set_id
+        or task_set.get("task_set_revision") != revision
+        or task_set.get("children") != expected_children
+        or task_set.get("ordered_required_children") != task_ids
+        or task_set.get("state") != closed_state
+        or task_set.get("aggregate_result") != aggregate
+    ):
+        reject("task_set_closure_not_settled")
+
+    closure_path = task_set_path.with_name("closure.json")
+    paths["closure"] = str(closure_path)
+    closure = _read_json(closure_path)
+    if not isinstance(closure, dict):
+        reject("task_set_closure_authority_missing")
+        return evidence
+    closure_digest = closure.get("closure_digest")
+    evidence["closure_digest"] = closure_digest
+    expected_ref = {
+        "path": str(closure_path.relative_to(project)),
+        "closure_digest": closure_digest,
+        "ordered_terminal_evidence_digest": closure.get("ordered_terminal_evidence_digest"),
+    }
+    if (
+        closure.get("schema") != "ccb.plan.task_set_closure.v1"
+        or closure.get("schema_version") != 1
+        or closure.get("task_set_id") != task_set_id
+        or closure.get("task_set_revision") != revision
+        or closure.get("status") != "closure_pending"
+        or closure.get("aggregate_result") != aggregate
+        or closure.get("closure_digest") != _authority_digest(closure, omit="closure_digest")
+        or task_set.get("closure") != expected_ref
+    ):
+        reject("task_set_closure_digest_or_reference_mismatch")
+    ordered_children = closure.get("ordered_children")
+    if not isinstance(ordered_children, list) or len(ordered_children) != len(child_records):
+        reject("task_set_closure_children_missing")
+    else:
+        expected_evidence_digest = _authority_digest(
+            {"task_set_revision": revision, "children": ordered_children}
+        )
+        if closure.get("ordered_terminal_evidence_digest") != expected_evidence_digest:
+            reject("task_set_closure_terminal_evidence_digest_mismatch")
+        for expected, record, child in zip(expected_children, child_records, ordered_children):
+            if not isinstance(child, dict) or any(
+                child.get(key) != value
+                for key, value in expected.items()
+                if key != "order"
+            ):
+                reject("task_set_closure_child_identity_mismatch")
+                break
+            expected_result = terminal_result_by_status.get(str(record.get("status") or ""))
+            if child.get("status") != record.get("status") or child.get("result") != expected_result:
+                reject("task_set_closure_child_terminal_mismatch")
+                break
+            authority = child.get("authority") if isinstance(child.get("authority"), dict) else None
+            if (
+                authority is None
+                or child.get("evidence_digest") != _authority_digest(
+                    {
+                        "task_id": child.get("task_id"),
+                        "task_revision": child.get("task_revision"),
+                        **authority,
+                    }
+                )
+            ):
+                reject("task_set_closure_child_evidence_digest_mismatch")
+                break
+
+    runtime_root = project / ".ccb" / "runtime" / "task-sets" / task_set_id
+    intent_path = runtime_root / "closure-intents.json"
+    paths["closure_intents"] = str(intent_path)
+    intent_store = _read_json(intent_path)
+    intents = intent_store.get("intents") if isinstance(intent_store, dict) else None
+    closed_intents = [
+        item for item in intents if isinstance(item, dict)
+        and item.get("task_set_revision") == revision
+        and item.get("closure_digest") == closure_digest
+    ] if isinstance(intents, list) else []
+    if len(closed_intents) != 1:
+        reject("task_set_closure_intent_missing_or_ambiguous")
+        return evidence
+    intent = closed_intents[0]
+    transport = intent.get("transport_ref") if isinstance(intent.get("transport_ref"), dict) else {}
+    if (
+        intent.get("schema") != "ccb.plan.task_set_closure_intent.v1"
+        or intent.get("status") != "feedback_closed"
+        or intent.get("task_set_id") != task_set_id
+        or intent.get("ordered_terminal_evidence_digest") != closure.get("ordered_terminal_evidence_digest")
+        or not intent.get("feedback_closed_at")
+    ):
+        reject("task_set_closure_intent_not_closed")
+
+    settlement_path = task_set_path.with_name(f"closure-settlement-r{revision}.json")
+    paths["closure_settlement"] = str(settlement_path)
+    settlement = _read_json(settlement_path)
+    if not isinstance(settlement, dict):
+        reject("task_set_closure_settlement_missing")
+        return evidence
+    if (
+        settlement.get("schema") != "ccb.plan.task_set_closure_settlement.v2"
+        or settlement.get("schema_version") != 2
+        or settlement.get("task_set_id") != task_set_id
+        or settlement.get("task_set_revision") != revision
+        or settlement.get("intent_id") != intent.get("intent_id")
+        or settlement.get("aggregate_result") != aggregate
+        or settlement.get("closure_digest") != closure_digest
+        or settlement.get("ordered_terminal_evidence_digest")
+        != closure.get("ordered_terminal_evidence_digest")
+        or settlement.get("settlement_digest") != _authority_digest(settlement, omit="settlement_digest")
+        or settlement.get("transport_ref") != transport
+    ):
+        reject("task_set_closure_settlement_authority_mismatch")
+
+    runtime_path = _authority_path(
+        project,
+        transport.get("runtime_state_path"),
+        runtime_root / f"feedback-r{revision}.json",
+    )
+    backfill_path = _authority_path(
+        project,
+        transport.get("planner_backfill_path"),
+        task_set_path.with_name(f"planner-backfill-r{revision}.json"),
+    )
+    paths["feedback_runtime"] = str(runtime_path) if runtime_path else None
+    paths["planner_backfill"] = str(backfill_path) if backfill_path else None
+    runtime = _read_json(runtime_path) if runtime_path else None
+    if not isinstance(runtime, dict):
+        reject("task_set_feedback_runtime_missing")
+    else:
+        planner = runtime.get("planner") if isinstance(runtime.get("planner"), dict) else {}
+        frontdesk = runtime.get("frontdesk") if isinstance(runtime.get("frontdesk"), dict) else {}
+        backfill_import = runtime.get("backfill_import") if isinstance(runtime.get("backfill_import"), dict) else {}
+        notification = runtime.get("notification") if isinstance(runtime.get("notification"), dict) else {}
+        if (
+            runtime.get("schema") != "ccb.plan.task_set_feedback_runtime.v1"
+            or runtime.get("schema_version") != 1
+            or runtime.get("task_set_id") != task_set_id
+            or runtime.get("task_set_revision") != revision
+            or runtime.get("closure_intent_id") != intent.get("intent_id")
+            or runtime.get("closure_digest") != closure_digest
+            or runtime.get("terminal_evidence_digest") != closure.get("ordered_terminal_evidence_digest")
+            or runtime.get("stage") != "closed"
+            or runtime.get("runtime_digest") != _authority_digest(runtime, omit="runtime_digest")
+            or not _closed_feedback_transport(
+                planner,
+                target="planner",
+                purpose="planner_backfill",
+                job_id=transport.get("planner_job_id"),
+                silent=True,
+            )
+            or backfill_import.get("planner_job_id") != transport.get("planner_job_id")
+            or backfill_import.get("closure_digest") != closure_digest
+            or notification.get("status") != "delivered"
+            or not _closed_feedback_transport(
+                frontdesk,
+                target="frontdesk",
+                purpose="frontdesk_status",
+                job_id=transport.get("frontdesk_job_id"),
+                silent=False,
+            )
+            or notification.get("job_id") != transport.get("frontdesk_job_id")
+        ):
+            reject("task_set_feedback_runtime_or_frontdesk_handoff_mismatch")
+        evidence["planner_backfill_job_id"] = transport.get("planner_job_id")
+        evidence["frontdesk_completion_job_id"] = transport.get("frontdesk_job_id")
+
+    backfill = _read_json(backfill_path) if backfill_path else None
+    if not isinstance(backfill, dict):
+        reject("planner_backfill_authority_missing")
+    else:
+        authority = backfill.get("authority") if isinstance(backfill.get("authority"), dict) else {}
+        proposal = backfill.get("proposal") if isinstance(backfill.get("proposal"), dict) else {}
+        required_backfill_fields = {
+            "schema", "schema_version", "authority", "proposal", "transaction_digest",
+            "target_plan_revision", "transaction_path", "backfill_digest",
+        }
+        required_backfill_authority = {
+            "task_set_id", "task_set_revision", "closure_intent_id", "closure_digest",
+            "ordered_terminal_evidence_digest", "expected_plan_revision", "planner_job_id",
+            "planner_source_job_id", "planner_effective_job_id", "planner_retry_lineage",
+            "planner_feedback_digest", "plan_slug",
+        }
+        if (
+            set(backfill) != required_backfill_fields
+            or set(authority) != required_backfill_authority
+            or backfill.get("schema") != "ccb.plan.planner_backfill.v2"
+            or backfill.get("schema_version") != 2
+            or backfill.get("backfill_digest") != _authority_digest(backfill, omit="backfill_digest")
+            or authority.get("task_set_id") != task_set_id
+            or authority.get("task_set_revision") != revision
+            or authority.get("closure_digest") != closure_digest
+            or authority.get("ordered_terminal_evidence_digest")
+            != closure.get("ordered_terminal_evidence_digest")
+            or authority.get("planner_job_id") != transport.get("planner_job_id")
+            or authority.get("planner_feedback_digest") != transport.get("planner_feedback_digest")
+            or proposal.get("frontdesk_notification_required") is not True
+            or backfill.get("backfill_digest") != transport.get("backfill_digest")
+        ):
+            reject("planner_backfill_authority_mismatch")
+
+    parent_id = str(task_set.get("source_task_id") or "")
+    parent = _task_index_record(project, parent_id)
+    expected_parent_status = {"pass": "done", "partial": "partial", "replan_required": "replan_required", "blocked": "blocked"}.get(aggregate or "")
+    parent_settlement = parent.get("task_set_closure") if isinstance(parent, dict) and isinstance(parent.get("task_set_closure"), dict) else {}
+    if (
+        not isinstance(parent, dict)
+        or parent.get("status") != expected_parent_status
+        or parent.get("next_owner") != ("terminal" if aggregate in {"pass", "blocked"} else "planner")
+        or parent_settlement.get("task_set_id") != task_set_id
+        or parent_settlement.get("task_set_revision") != revision
+        or parent_settlement.get("aggregate_result") != aggregate
+        or parent_settlement.get("closure_digest") != closure_digest
+        or parent_settlement.get("planner_feedback_digest") != transport.get("planner_feedback_digest")
+    ):
+        reject("task_set_source_parent_not_settled")
+
+    l3_id = task_ids[2]
+    l3_record = child_records[2]
+    activation_dir = project / ".ccb" / "runtime" / "loops" / "activations"
+    constrained: list[tuple[Path, dict[str, Any]]] = []
+    l3_activations: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(activation_dir.glob("*.json")):
+        activation = _read_json(path)
+        if not isinstance(activation, dict) or activation.get("task_id") != l3_id:
+            continue
+        l3_activations.append((path, activation))
+        if isinstance(activation.get("terminal_status_constraint"), dict):
+            constrained.append((path, activation))
+    if len(constrained) != 1:
+        reject("l3_terminal_constraint_missing_or_ambiguous")
+    else:
+        constraint_path, activation = constrained[0]
+        constraint = activation["terminal_status_constraint"]
+        assert isinstance(constraint, dict)
+        ask = activation.get("ask") if isinstance(activation.get("ask"), dict) else {}
+        paths["l3_terminal_activation"] = str(constraint_path)
+        evidence["constraint_digest"] = constraint.get("authority_digest")
+        evidence["constraint_revision"] = constraint.get("task_revision")
+        required_constraint_keys = {
+            "schema_version", "status", "basis", "task_id", "task_revision",
+            "state_version", "authority_digest", "basis_digest", "required_reason",
+        }
+        if (
+            set(constraint) != required_constraint_keys
+            or constraint.get("schema_version") != 1
+            or constraint.get("status") != "detail_ready"
+            or constraint.get("basis") != "verified_detail_ready_stop_contract"
+            or constraint.get("task_id") != l3_id
+            or constraint.get("task_revision") != l3_record.get("task_revision")
+            or constraint.get("state_version") != l3_record.get("state_version")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(constraint.get("authority_digest") or ""))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(constraint.get("basis_digest") or ""))
+            or not LABEL_RE.fullmatch(str(constraint.get("required_reason") or ""))
+            or activation.get("record_type") != "ccb_loop_planner_activation"
+            or activation.get("task_status") != "detail_ready"
+            or ask.get("target") != "planner"
+            or not ask.get("job_id")
+        ):
+            reject("l3_terminal_constraint_invalid")
+        l3_closure = next(
+            (
+                child for child in ordered_children
+                if isinstance(child, dict) and child.get("task_id") == l3_id
+            ),
+            {},
+        )
+        l3_authority = l3_closure.get("authority") if isinstance(l3_closure, dict) and isinstance(l3_closure.get("authority"), dict) else {}
+        if (
+            l3_authority.get("artifact_kind") != "detail_ready_stop_contract"
+            or l3_authority.get("authority_digest") != constraint.get("authority_digest")
+            or l3_authority.get("basis_digest") != constraint.get("basis_digest")
+        ):
+            reject("l3_terminal_constraint_closure_authority_mismatch")
+        for path, observed in l3_activations:
+            if path == constraint_path:
+                continue
+            if (
+                observed.get("record_type") in {
+                    "ccb_loop_planner_activation", "ccb_loop_orchestrator_activation"
+                }
+                and observed.get("task_revision") == constraint.get("task_revision")
+            ):
+                reject("l3_post_settlement_reactivation")
+                break
+
+        import_path = project / ".ccb" / "runtime" / "role-output-imports.jsonl"
+        paths["role_output_import_ledger"] = str(import_path)
+        imports = _read_json_lines(import_path)
+        settlement_indexes = [
+            index for index, record in enumerate(imports)
+            if record.get("action") == "settled_planner_terminal_status_constraint"
+            and record.get("status") == "ok"
+            and record.get("task_id") == l3_id
+            and record.get("terminal_status_constraint") == constraint
+            and isinstance(record.get("source_job"), dict)
+            and record["source_job"].get("job_id") == ask.get("job_id")
+        ]
+        if len(settlement_indexes) != 1:
+            reject("l3_terminal_constraint_settlement_missing_or_mismatch")
+        else:
+            evidence["settlement_action"] = "settled_planner_terminal_status_constraint"
+            post_settlement = imports[settlement_indexes[0] + 1:]
+            if any(
+                record.get("task_id") == l3_id
+                and record.get("action") in {
+                    "imported_orchestration_notes",
+                    "imported_planner_task_authority",
+                    "settled_planner_terminal_status_constraint",
+                }
+                for record in post_settlement
+            ):
+                reject("l3_post_settlement_import_or_rerun")
+
+    evidence["valid"] = not errors
+    return evidence
+
+
+def settled_task_set_source_parent_ids(manifest: dict[str, Any]) -> set[str]:
+    aliases = sequence_task_aliases(manifest)
+    task_ids = [aliases.get(str(case["task_id"]), str(case["task_id"])) for case in TASKS]
+    evidence = b7_task_set_evidence(manifest, task_ids)
+    source_task_id = None
+    task_set_id = evidence.get("task_set_id")
+    revision = evidence.get("task_set_revision")
+    task_set: dict[str, Any] | None = None
+    if task_set_id and isinstance(revision, int):
+        candidate = _read_json(
+            Path(str(manifest["project"]))
+            / "docs" / "plantree" / "plans" / PLAN_SLUG / "task-sets" / str(task_set_id) / "task-set.json"
+        )
+        task_set = candidate if isinstance(candidate, dict) else None
+        source_task_id = task_set.get("source_task_id") if task_set else None
+    parent = _task_index_record(Path(str(manifest["project"])), str(source_task_id or ""))
+    binding = parent.get("task_set_parent") if isinstance(parent, dict) and isinstance(parent.get("task_set_parent"), dict) else {}
+    if (
+        source_task_id
+        and isinstance(parent, dict)
+        and parent.get("status") != "decomposed"
+        and binding.get("schema") == "ccb.plan.task_set_binding.v1"
+        and binding.get("binding_role") == "parent"
+        and binding.get("task_set_id") == task_set_id
+        and binding.get("task_set_revision") == revision
+        and task_set is not None
+        and task_set.get("state") in {"closed", "partial", "replan_required", "blocked"}
+        and parent.get("status") == {
+            "closed": "done",
+            "partial": "partial",
+            "replan_required": "replan_required",
+            "blocked": "blocked",
+        }.get(task_set.get("state"))
+    ):
+        return {str(source_task_id)}
+    return set()
+
+
+def _b7_cleanup_claimable(manifest: dict[str, Any]) -> bool:
+    b7_path = Path(str(manifest["b7"]))
+    if not re.search(r"(?m)^Status: pass$", _read_text(b7_path)):
+        return False
+    rows = _read_json_lines(Path(str(manifest["rows"])))
+    return bool(rows) and all(row.get("claimable_row") is True for row in rows)
+
+
 def write_b7_report(manifest: dict[str, Any]) -> None:
     assert_no_pending_authority(manifest)
     planner_evidence = planner_task_set_evidence(manifest)
@@ -2810,8 +3358,11 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
     if unexpected:
         write_unexpected_task_failure_report(manifest, unexpected)
         return
+    auto_runner = auto_runner_lock_state(manifest)
     rows = []
     aliases = sequence_task_aliases(manifest)
+    observed_task_ids = [aliases.get(str(case["task_id"]), str(case["task_id"])) for case in TASKS]
+    task_set_evidence = b7_task_set_evidence(manifest, observed_task_ids)
     for case in TASKS:
         canonical_task_id = str(case["task_id"])
         task_id = aliases.get(canonical_task_id, canonical_task_id)
@@ -2836,6 +3387,10 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
             errors.append("result import is not script-owned")
         if cleanup_evidence["runtime_residue"]:
             errors.append("runtime residue after round release")
+        if not task_set_evidence["valid"]:
+            errors.extend(str(item) for item in task_set_evidence["errors"])
+        if auto_runner.get("status") == "live":
+            errors.append("auto_runner_lock_live_before_b7")
         classification = "test_design_failure" if errors else str(case["expected_classification"])
         row = {
             "label": manifest["label"],
@@ -2870,6 +3425,18 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
             "planner_snapshot_path": planner_evidence.get("planner_snapshot_path"),
             "planner_reply_path": planner_evidence.get("planner_reply_path"),
             "fenced_task_set_present": bool(planner_evidence.get("fenced_task_set_present")),
+            "task_set_id": task_set_evidence.get("task_set_id"),
+            "task_set_revision": task_set_evidence.get("task_set_revision"),
+            "closure_digest": task_set_evidence.get("closure_digest"),
+            "aggregate_result": task_set_evidence.get("aggregate_result"),
+            "constraint_digest": task_set_evidence.get("constraint_digest"),
+            "constraint_revision": task_set_evidence.get("constraint_revision"),
+            "settlement_action": task_set_evidence.get("settlement_action"),
+            "planner_backfill_job_id": task_set_evidence.get("planner_backfill_job_id"),
+            "frontdesk_completion_job_id": task_set_evidence.get("frontdesk_completion_job_id"),
+            "task_set_evidence_paths": task_set_evidence.get("evidence_paths"),
+            "task_set_authority_valid": task_set_evidence["valid"],
+            "auto_runner_state": auto_runner,
             "classification": classification,
             "expected_classification": case["expected_classification"],
             "claimable_row": classification == case["expected_classification"],
@@ -2896,6 +3463,19 @@ def write_b7_report(manifest: dict[str, Any]) -> None:
 
 def cleanup_after_b7(manifest: dict[str, Any]) -> None:
     assert_no_pending_authority(manifest)
+    auto_runner = auto_runner_lock_state(manifest)
+    if auto_runner.get("status") == "live":
+        raise HarnessBlocker(
+            classification="not_claimable",
+            reason="auto_runner_lock_live_before_cleanup",
+            message=f"refuse cleanup while auto-runner remains live: {auto_runner}",
+        )
+    if not _b7_cleanup_claimable(manifest):
+        raise HarnessBlocker(
+            classification="not_claimable",
+            reason="b7_not_claimable_for_cleanup",
+            message="refuse cleanup until B7 has a pass status and every row is claimable",
+        )
     run_logged(manifest, "cleanup_after_b7", ccb_project_args(manifest, "kill"))
 
 

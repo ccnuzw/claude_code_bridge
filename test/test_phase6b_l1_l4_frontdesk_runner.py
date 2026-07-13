@@ -2284,24 +2284,37 @@ def test_missing_fenced_task_set_blocks_with_explicit_row(tmp_path: Path) -> Non
     assert 'fenced task-set.json block' in row['why_no_route_mix_rows_claimable']
 
 
-def test_b7_uses_script_owned_task_index_routes_and_status_results(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runner = _load_runner()
-    _root, manifest = _materialize(tmp_path)
+def _write_root14_b7_authority(runner, manifest: dict[str, object]) -> dict[str, Path]:
+    source_task_id = _write_frontdesk_task_set_parent_authority(runner, manifest)
     project = Path(str(manifest['project']))
-    tasks_root = project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG / 'tasks'
-    records = []
+    plan_root = project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG
+    tasks_path = plan_root / 'tasks' / 'index.json'
+    records = json.loads(tasks_path.read_text(encoding='utf-8'))['tasks']
+    parent = next(record for record in records if record['task_id'] == source_task_id)
+    children = [
+        next(record for record in records if record['task_id'] == case['task_id'])
+        for case in runner.TASKS
+    ]
+    task_set_id = parent['task_set_parent']['task_set_id']
+    revision = parent['task_set_parent']['task_set_revision']
+    task_set_path = plan_root / 'task-sets' / task_set_id / 'task-set.json'
+    task_set = json.loads(task_set_path.read_text(encoding='utf-8'))
+    planner_feedback_digest = 'sha256:' + '2' * 64
+    constraint = {
+        'schema_version': 1,
+        'status': 'detail_ready',
+        'basis': 'verified_detail_ready_stop_contract',
+        'task_id': runner.TASKS[2]['task_id'],
+        'task_revision': 1,
+        'state_version': 5,
+        'authority_digest': '3' * 64,
+        'basis_digest': '4' * 64,
+        'required_reason': 'detail_ready_task',
+    }
 
-    monkeypatch.setattr(runner, 'assert_no_pending_authority', lambda _manifest: None)
-    monkeypatch.setattr(runner, 'planner_task_set_evidence', lambda _manifest: {'fenced_task_set_present': True})
-    monkeypatch.setattr(runner, 'unexpected_plan_task_ids', lambda _manifest: [])
-    monkeypatch.setattr(runner, 'sequence_task_aliases', lambda _manifest: {})
-
-    for index, case in enumerate(runner.TASKS, start=1):
+    for index, (case, record) in enumerate(zip(runner.TASKS, children), start=1):
         task_id = case['task_id']
-        task_dir = tasks_root / task_id
+        task_dir = plan_root / 'tasks' / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
         notes_path = task_dir / 'orchestration_notes.md'
         notes_path.write_text(f"route: {case['expected_route']}\n", encoding='utf-8')
@@ -2313,10 +2326,9 @@ def test_b7_uses_script_owned_task_index_routes_and_status_results(
             }
         }
         if case['expected_route'] == 'direct_execution':
-            loop_id = f'lp-test-{index}'
-            round_dir = project / '.ccb' / 'runtime' / 'loops' / loop_id
+            loop_id = f'lp-root14-{index}'
             runner._write_json(
-                round_dir / 'round.json',
+                project / '.ccb' / 'runtime' / 'loops' / loop_id / 'round.json',
                 {
                     'task_id': task_id,
                     'loop_id': loop_id,
@@ -2326,23 +2338,20 @@ def test_b7_uses_script_owned_task_index_routes_and_status_results(
                     'observed_topology': {'agents': []},
                 },
             )
-            round_summary = task_dir / 'round_summary.md'
-            round_summary.write_text(
-                'round_result: pass\nround_result_source: round_reviewer_reply\n',
-                encoding='utf-8',
-            )
+            summary = task_dir / 'round_summary.md'
+            summary.write_text('round_result: pass\nround_result_source: round_reviewer_reply\n', encoding='utf-8')
             artifacts['round_summary'] = {
-                'path': str(round_summary.relative_to(project)),
+                'path': str(summary.relative_to(project)),
                 'actor': {'source': 'loop_runner'},
                 'loop_id': loop_id,
                 'round_result': 'pass',
             }
         elif case['expected_route'] == 'needs_detail':
-            detail_packet = task_dir / 'details' / 'detail-packet.manifest.json'
-            detail_packet.parent.mkdir(parents=True, exist_ok=True)
-            detail_packet.write_text('{}\n', encoding='utf-8')
+            detail = task_dir / 'details' / 'detail-packet.manifest.json'
+            detail.parent.mkdir(parents=True, exist_ok=True)
+            detail.write_text('{}\n', encoding='utf-8')
             artifacts['detail_packet'] = {
-                'path': str(detail_packet.relative_to(project)),
+                'path': str(detail.relative_to(project)),
                 'actor': {'source': 'loop_runner_role_output_import'},
             }
         elif case['expected_route'] == 'macro_adjustment_request':
@@ -2353,24 +2362,267 @@ def test_b7_uses_script_owned_task_index_routes_and_status_results(
                 'path': str(macro.relative_to(project)),
                 'actor': {'source': 'loop_runner/script-owned'},
             }
-        elif case['expected_route'] == 'blocked':
+        else:
             blocker = task_dir / 'blocker-evidence.md'
             blocker.write_text('blocked\n', encoding='utf-8')
             artifacts['blocker_evidence'] = {
                 'path': str(blocker.relative_to(project)),
                 'actor': {'source': 'loop_runner/script-owned'},
             }
-        records.append(
-            {
-                'task_id': task_id,
-                'status': case['expected_final_status'],
-                'next_owner': 'terminal' if case['expected_final_status'] in {'done', 'blocked'} else 'planner',
-                'artifacts': artifacts,
-            }
+        record.update(
+            task_revision=1,
+            state_version=5 if task_id == constraint['task_id'] else 1,
+            status=case['expected_final_status'],
+            next_owner='terminal' if case['expected_final_status'] in {'done', 'blocked'} else 'planner',
+            artifacts=artifacts,
         )
 
-    runner._write_json(tasks_root / 'index.json', {'schema': 'ccb.plan.tasks.v1', 'tasks': records})
+    ordered_children = []
+    for record in children:
+        status = record['status']
+        result = {'done': 'pass', 'detail_ready': 'pass', 'replan_required': 'replan_required', 'blocked': 'blocked'}[status]
+        authority = {'artifact_kind': 'terminal', 'release': {'status': 'not_applicable_no_execution'}, 'cleanup': {'status': 'not_applicable_no_execution'}}
+        if status == 'detail_ready':
+            authority = {
+                'artifact_kind': 'detail_ready_stop_contract',
+                'authority_digest': constraint['authority_digest'],
+                'basis_digest': constraint['basis_digest'],
+                'release': {'status': 'not_applicable_no_execution'},
+                'cleanup': {'status': 'not_applicable_no_execution'},
+            }
+        ordered_children.append(
+            {
+                'task_id': record['task_id'],
+                'task_revision': record['task_revision'],
+                'required': True,
+                'status': status,
+                'result': result,
+                'authority': authority,
+                'evidence_status': 'terminal',
+                'evidence_digest': runner._authority_digest(
+                    {
+                        'task_id': record['task_id'],
+                        'task_revision': record['task_revision'],
+                        **authority,
+                    }
+                ),
+            }
+        )
+    evidence_digest = runner._authority_digest({'task_set_revision': revision, 'children': ordered_children})
+    closure = {
+        'schema': 'ccb.plan.task_set_closure.v1',
+        'schema_version': 1,
+        'task_set_id': task_set_id,
+        'task_set_revision': revision,
+        'source_request': task_set['source_request'],
+        'planner_job': task_set['planner_job'],
+        'expected_plan_revision': task_set['plan_revision']['digest'],
+        'ordered_children': ordered_children,
+        'ordered_terminal_evidence_digest': evidence_digest,
+        'status': 'closure_pending',
+        'aggregate_result': 'replan_required',
+        'reason': 'one_or_more_required_children_require_replan',
+        'created_at': '2026-07-13T00:00:01+00:00',
+    }
+    closure['closure_digest'] = runner._authority_digest(closure)
+    closure_path = task_set_path.with_name('closure.json')
+    runner._write_json(closure_path, closure)
+    task_set.update(
+        state='replan_required',
+        aggregate_result='replan_required',
+        closure={
+            'path': str(closure_path.relative_to(project)),
+            'closure_digest': closure['closure_digest'],
+            'ordered_terminal_evidence_digest': evidence_digest,
+        },
+    )
 
+    intent = {
+        'schema': 'ccb.plan.task_set_closure_intent.v1',
+        'schema_version': 1,
+        'intent_id': 'tsi-root14-closure',
+        'task_set_id': task_set_id,
+        'task_set_revision': revision,
+        'ordered_terminal_evidence_digest': evidence_digest,
+        'closure_digest': closure['closure_digest'],
+        'status': 'feedback_closed',
+        'created_at': '2026-07-13T00:00:02+00:00',
+        'feedback_closed_at': '2026-07-13T00:00:04+00:00',
+    }
+    runtime_path = project / '.ccb' / 'runtime' / 'task-sets' / task_set_id / f'feedback-r{revision}.json'
+    backfill_path = task_set_path.with_name(f'planner-backfill-r{revision}.json')
+    transport = {
+        'runtime_state_path': str(runtime_path),
+        'planner_job_id': 'job_root14_backfill',
+        'frontdesk_job_id': 'job_root14_frontdesk_status',
+        'planner_backfill_path': str(backfill_path),
+        'planner_feedback_digest': planner_feedback_digest,
+        'notification_status': 'delivered',
+        'backfill_digest': None,
+    }
+    backfill = {
+        'schema': 'ccb.plan.planner_backfill.v2',
+        'schema_version': 2,
+        'authority': {
+            'task_set_id': task_set_id,
+            'task_set_revision': revision,
+            'closure_intent_id': intent['intent_id'],
+            'closure_digest': closure['closure_digest'],
+            'ordered_terminal_evidence_digest': evidence_digest,
+            'expected_plan_revision': task_set['plan_revision']['digest'],
+            'planner_job_id': transport['planner_job_id'],
+            'planner_source_job_id': transport['planner_job_id'],
+            'planner_effective_job_id': transport['planner_job_id'],
+            'planner_retry_lineage': [],
+            'planner_feedback_digest': planner_feedback_digest,
+            'plan_slug': runner.PLAN_SLUG,
+        },
+        'proposal': {'frontdesk_notification_required': True},
+        'transaction_digest': 'sha256:' + '5' * 64,
+        'target_plan_revision': 'sha256:' + '6' * 64,
+        'transaction_path': str(backfill_path.with_name(f'planner-backfill-r{revision}.transaction.json').relative_to(project)),
+    }
+    backfill['backfill_digest'] = runner._authority_digest(backfill)
+    transport['backfill_digest'] = backfill['backfill_digest']
+    intent['transport_ref'] = transport
+    planner_message = 'root14 planner backfill transport'
+    frontdesk_message = 'root14 frontdesk completion transport'
+    backfill_import = {
+        **backfill['authority'],
+        'status': 'imported',
+        'idempotent': False,
+        'planner_backfill_path': str(backfill_path),
+        'transaction_path': backfill['transaction_path'],
+        'target_plan_revision': backfill['target_plan_revision'],
+        'backfill_digest': backfill['backfill_digest'],
+    }
+    runner._write_json(
+        runtime_path,
+        {
+            'schema': 'ccb.plan.task_set_feedback_runtime.v1',
+            'schema_version': 1,
+            'task_set_id': task_set_id,
+            'task_set_revision': revision,
+            'closure_intent_id': intent['intent_id'],
+            'closure_digest': closure['closure_digest'],
+            'terminal_evidence_digest': evidence_digest,
+            'stage': 'closed',
+            'planner': {
+                'target': 'planner', 'purpose': 'planner_backfill',
+                'task_id': f"task-set-feedback-{intent['intent_id']}",
+                'message': planner_message,
+                'message_sha256': hashlib.sha256(planner_message.encode('utf-8')).hexdigest(),
+                'silent': True,
+                'job_id': transport['planner_job_id'],
+                'source_job_id': transport['planner_job_id'],
+                'effective_job_id': transport['planner_job_id'],
+                'retry_lineage': [],
+                'status': 'completed',
+                'reply': 'planner backfill completed',
+            },
+            'frontdesk': {
+                'target': 'frontdesk', 'purpose': 'frontdesk_status',
+                'task_id': f"task-set-status-{intent['intent_id']}",
+                'message': frontdesk_message,
+                'message_sha256': hashlib.sha256(frontdesk_message.encode('utf-8')).hexdigest(),
+                'silent': False,
+                'job_id': transport['frontdesk_job_id'],
+                'source_job_id': transport['frontdesk_job_id'],
+                'effective_job_id': transport['frontdesk_job_id'],
+                'retry_lineage': [],
+                'status': 'completed',
+                'reply': 'frontdesk completion delivered',
+            },
+            'backfill_import': backfill_import,
+            'notification': {'status': 'delivered', 'job_id': transport['frontdesk_job_id']},
+            'runtime_digest': None,
+        },
+    )
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    runtime['runtime_digest'] = runner._authority_digest(runtime, omit='runtime_digest')
+    runner._write_json(runtime_path, runtime)
+    runner._write_json(backfill_path, backfill)
+    runner._write_json(
+        task_set_path.with_name(f'closure-settlement-r{revision}.json'),
+        {
+            'schema': 'ccb.plan.task_set_closure_settlement.v2',
+            'schema_version': 2,
+            'task_set_id': task_set_id,
+            'task_set_revision': revision,
+            'intent_id': intent['intent_id'],
+            'aggregate_result': 'replan_required',
+            'closure_digest': closure['closure_digest'],
+            'ordered_terminal_evidence_digest': evidence_digest,
+            'transport_ref': transport,
+            'settlement_digest': None,
+        },
+    )
+    settlement_path = task_set_path.with_name(f'closure-settlement-r{revision}.json')
+    settlement = json.loads(settlement_path.read_text(encoding='utf-8'))
+    settlement['settlement_digest'] = runner._authority_digest(settlement, omit='settlement_digest')
+    runner._write_json(settlement_path, settlement)
+    runner._write_json(runtime_path.with_name('closure-intents.json'), {
+        'schema': 'ccb.plan.task_set_closure_intent_store.v1',
+        'schema_version': 1,
+        'task_set_id': task_set_id,
+        'intents': [intent],
+    })
+    parent.update(
+        status='replan_required',
+        next_owner='planner',
+        task_set_closure={
+            'schema': 'ccb.plan.task_set_parent_settlement.v1',
+            'task_set_id': task_set_id,
+            'task_set_revision': revision,
+            'aggregate_result': 'replan_required',
+            'closure_digest': closure['closure_digest'],
+            'planner_feedback_digest': planner_feedback_digest,
+        },
+    )
+    runner._write_json(tasks_path, {'schema': 'ccb.plan.tasks.v1', 'tasks': records})
+    runner._write_json(task_set_path, task_set)
+    activation_path = project / '.ccb' / 'runtime' / 'loops' / 'activations' / 'act-root14-l3-terminal.json'
+    runner._write_json(activation_path, {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_planner_activation',
+        'activation_id': 'act-root14-l3-terminal',
+        'task_id': constraint['task_id'],
+        'task_revision': constraint['task_revision'],
+        'task_status': 'detail_ready',
+        'terminal_status_constraint': constraint,
+        'ask': {'target': 'planner', 'job_id': 'job_root14_l3_terminal'},
+    })
+    import_path = project / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+    import_path.parent.mkdir(parents=True, exist_ok=True)
+    import_path.write_text(json.dumps({
+        'schema_version': 1,
+        'record_type': 'ccb_loop_role_output_import',
+        'imported_at': '2026-07-13T00:00:03+00:00',
+        'action': 'settled_planner_terminal_status_constraint',
+        'status': 'ok',
+        'task_id': constraint['task_id'],
+        'task_status': 'detail_ready',
+        'terminal_status_constraint': constraint,
+        'source_job': {'job_id': 'job_root14_l3_terminal'},
+    }) + '\n', encoding='utf-8')
+    return {
+        'tasks': tasks_path,
+        'task_set': task_set_path,
+        'closure': closure_path,
+        'runtime': runtime_path,
+        'backfill': backfill_path,
+        'settlement': settlement_path,
+        'activation': activation_path,
+        'imports': import_path,
+    }
+
+
+def test_b7_uses_script_owned_task_index_routes_and_status_results(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    _write_root14_b7_authority(runner, manifest)
     runner.write_b7_report(manifest)
 
     rows = [
@@ -2393,7 +2645,164 @@ def test_b7_uses_script_owned_task_index_routes_and_status_results(
     assert rows[0]['release_released_count'] == 2
     assert rows[0]['release_retained_count'] == 0
     assert rows[2]['cleanup_result'] == 'not_applicable'
+    assert all(row['task_set_authority_valid'] for row in rows)
+    assert all(row['settlement_action'] == 'settled_planner_terminal_status_constraint' for row in rows)
+    assert all(row['auto_runner_state']['status'] == 'absent' for row in rows)
     assert 'Status: pass' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+
+
+def _b7_rows(manifest: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in Path(str(manifest['rows'])).read_text(encoding='utf-8').splitlines()
+        if line.strip()
+    ]
+
+
+@pytest.mark.parametrize(
+    ('mutation', 'expected_error'),
+    (
+        ('missing_constraint', 'l3_terminal_constraint_missing_or_ambiguous'),
+        ('wrong_constraint_digest', 'l3_terminal_constraint_settlement_missing_or_mismatch'),
+        ('wrong_constraint_revision', 'l3_terminal_constraint_settlement_missing_or_mismatch'),
+        ('missing_settlement', 'l3_terminal_constraint_settlement_missing_or_mismatch'),
+        ('post_settlement_reactivation', 'l3_post_settlement_reactivation'),
+    ),
+)
+def test_b7_rejects_unsettled_or_reactivated_l3_terminal_authority(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    paths = _write_root14_b7_authority(runner, manifest)
+    activation = json.loads(paths['activation'].read_text(encoding='utf-8'))
+    if mutation == 'missing_constraint':
+        activation.pop('terminal_status_constraint')
+        runner._write_json(paths['activation'], activation)
+    elif mutation == 'wrong_constraint_digest':
+        activation['terminal_status_constraint']['authority_digest'] = '0' * 64
+        runner._write_json(paths['activation'], activation)
+    elif mutation == 'wrong_constraint_revision':
+        activation['terminal_status_constraint']['task_revision'] = 2
+        runner._write_json(paths['activation'], activation)
+    elif mutation == 'missing_settlement':
+        paths['imports'].write_text('', encoding='utf-8')
+    else:
+        repeated = dict(activation)
+        repeated.update(activation_id='act-root14-l3-repeated', record_type='ccb_loop_orchestrator_activation')
+        repeated.pop('terminal_status_constraint')
+        runner._write_json(paths['activation'].with_name('act-root14-l3-repeated.json'), repeated)
+
+    runner.write_b7_report(manifest)
+
+    rows = _b7_rows(manifest)
+    assert len(rows) == len(runner.TASKS)
+    assert not any(row['claimable_row'] for row in rows)
+    assert expected_error in rows[0]['evidence_errors']
+    assert 'Status: pass' not in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize(
+    ('mutation', 'expected_error'),
+    (
+        ('task_set_running', 'task_set_closure_not_settled'),
+        ('closure_digest_conflict', 'task_set_closure_digest_or_reference_mismatch'),
+        ('source_parent_unsettled', 'task_set_source_parent_not_settled'),
+        ('missing_backfill', 'planner_backfill_authority_missing'),
+        ('missing_frontdesk_notification', 'task_set_feedback_runtime_or_frontdesk_handoff_mismatch'),
+    ),
+)
+def test_b7_rejects_incomplete_decision029_closure_authority(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    paths = _write_root14_b7_authority(runner, manifest)
+    if mutation == 'task_set_running':
+        task_set = json.loads(paths['task_set'].read_text(encoding='utf-8'))
+        task_set['state'] = 'running'
+        runner._write_json(paths['task_set'], task_set)
+    elif mutation == 'closure_digest_conflict':
+        closure = json.loads(paths['closure'].read_text(encoding='utf-8'))
+        closure['closure_digest'] = 'sha256:' + '0' * 64
+        runner._write_json(paths['closure'], closure)
+    elif mutation == 'source_parent_unsettled':
+        tasks = json.loads(paths['tasks'].read_text(encoding='utf-8'))
+        parent = next(record for record in tasks['tasks'] if record['task_id'].startswith('job_'))
+        parent.pop('task_set_closure')
+        runner._write_json(paths['tasks'], tasks)
+    elif mutation == 'missing_backfill':
+        paths['backfill'].unlink()
+    else:
+        runtime = json.loads(paths['runtime'].read_text(encoding='utf-8'))
+        runtime['notification'] = {'status': 'notification_not_required'}
+        runtime['runtime_digest'] = runner._authority_digest(runtime, omit='runtime_digest')
+        runner._write_json(paths['runtime'], runtime)
+
+    runner.write_b7_report(manifest)
+
+    rows = _b7_rows(manifest)
+    if mutation == 'task_set_running':
+        assert len(rows) == 1
+        assert rows[0]['classification'] == 'invalid_harness'
+        assert 'Status: invalid_harness' in Path(str(manifest['b7'])).read_text(encoding='utf-8')
+        return
+    assert len(rows) == len(runner.TASKS)
+    assert not any(row['claimable_row'] for row in rows)
+    assert expected_error in rows[0]['evidence_errors']
+    assert rows[0]['task_set_authority_valid'] is False
+
+
+def test_b7_rejects_live_auto_runner_and_cleanup_requires_successful_b7(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    _write_root14_b7_authority(runner, manifest)
+    live = {'status': 'live', 'path': 'auto-runner.lock', 'reason': 'pid_alive', 'pid': 12345}
+    monkeypatch.setattr(runner, 'auto_runner_lock_state', lambda _manifest: live)
+
+    runner.write_b7_report(manifest)
+
+    rows = _b7_rows(manifest)
+    assert not any(row['claimable_row'] for row in rows)
+    assert all(row['auto_runner_state'] == live for row in rows)
+    assert 'auto_runner_lock_live_before_b7' in rows[0]['evidence_errors']
+    with pytest.raises(runner.HarnessBlocker, match='auto_runner_lock_live_before_cleanup'):
+        runner.cleanup_after_b7(manifest)
+
+
+def test_cleanup_runs_only_after_claimable_b7_and_never_launders_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    paths = _write_root14_b7_authority(runner, manifest)
+    runner.write_b7_report(manifest)
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        runner,
+        'run_logged',
+        lambda _manifest, label, argv: calls.append((label, argv)),
+    )
+
+    runner.cleanup_after_b7(manifest)
+
+    assert calls == [('cleanup_after_b7', runner.ccb_project_args(manifest, 'kill'))]
+    task_set = json.loads(paths['task_set'].read_text(encoding='utf-8'))
+    task_set['state'] = 'running'
+    runner._write_json(paths['task_set'], task_set)
+    runner.write_b7_report(manifest)
+
+    with pytest.raises(runner.HarnessBlocker, match='b7_not_claimable_for_cleanup'):
+        runner.cleanup_after_b7(manifest)
+    assert calls == [('cleanup_after_b7', runner.ccb_project_args(manifest, 'kill'))]
 
 
 def test_manifest_paths_are_inspectable_and_internally_consistent(tmp_path: Path) -> None:
