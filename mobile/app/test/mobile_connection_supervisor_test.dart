@@ -27,14 +27,29 @@ void main() {
     supervisor.dispose();
   });
 
-  test('only 401/403 is authentication required', () {
+  test('only explicit credential disposition is authentication required', () {
     final supervisor = MobileConnectionSupervisor(onChanged: (_) {});
     supervisor.start(profile: _profile(), probe: _ProbeRepository());
-    supervisor.reportFailure(GatewayHttpException(Uri(), 401, 'revoked'));
+    supervisor.reportFailure(
+      GatewayHttpException(Uri(), 401, 'revoked'),
+      auth: MobileAuthDisposition.credentialInvalid,
+    );
     expect(
       supervisor.snapshot.state,
       MobileConnectionState.authenticationRequired,
     );
+    supervisor.dispose();
+  });
+
+  test('403 scope denial and mutation failure keep the stored session', () {
+    final supervisor = MobileConnectionSupervisor(onChanged: (_) {});
+    supervisor.start(profile: _profile(), probe: _ProbeRepository());
+    supervisor.reportFailure(
+      GatewayHttpException(Uri(), 403, 'scope denied'),
+      auth: MobileAuthDisposition.scopeDenied,
+      kind: MobileTransportKind.mutation,
+    );
+    expect(supervisor.snapshot.state, isNot(MobileConnectionState.authenticationRequired));
     supervisor.dispose();
   });
 }

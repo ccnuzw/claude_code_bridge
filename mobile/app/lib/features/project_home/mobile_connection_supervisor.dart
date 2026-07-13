@@ -18,6 +18,12 @@ enum MobileConnectionState {
   stopped,
 }
 
+enum MobileTransportKind { httpRead, sse, terminalRead, mutation }
+
+/// Explicitly distinguishes a revoked device/invalid credential from a
+/// route error or a scope denial. A 403 alone never deletes a profile.
+enum MobileAuthDisposition { none, credentialInvalid, scopeDenied }
+
 class MobileConnectionSnapshot {
   const MobileConnectionSnapshot(this.state, {this.retryIn});
 
@@ -34,6 +40,7 @@ class MobileConnectionSupervisor {
     this.initialDelay = const Duration(seconds: 1),
     this.maxDelay = const Duration(seconds: 30),
     Random? random,
+    this.onRecoverReadSubscriptions,
   }) : _onChanged = onChanged,
        _random = random ?? Random();
 
@@ -41,12 +48,14 @@ class MobileConnectionSupervisor {
   final Duration initialDelay;
   final Duration maxDelay;
   final Random _random;
+  final void Function(int generation)? onRecoverReadSubscriptions;
   Timer? _retryTimer;
   GatewayPairedHost? _profile;
   MobileGatewayProfileHealthProbe? _probe;
   Duration? _nextDelay;
   var _disposed = false;
   var _probing = false;
+  var _generation = 0;
 
   MobileConnectionSnapshot _snapshot = const MobileConnectionSnapshot(
     MobileConnectionState.stopped,
@@ -57,23 +66,28 @@ class MobileConnectionSupervisor {
     required GatewayPairedHost profile,
     MobileGatewayProfileHealthProbe? probe,
   }) {
+    _generation += 1;
     _profile = profile;
     _probe = probe;
     _nextDelay = initialDelay;
     _retryTimer?.cancel();
-    _probeNow();
+    _probeNow(_generation);
   }
 
-  void reportSuccess() {
+  void reportSuccess({MobileTransportKind kind = MobileTransportKind.httpRead}) {
     if (_profile == null || _disposed) return;
     _retryTimer?.cancel();
     _nextDelay = initialDelay;
     _emit(const MobileConnectionSnapshot(MobileConnectionState.online));
   }
 
-  void reportFailure(Object error) {
+  void reportFailure(
+    Object error, {
+    MobileTransportKind kind = MobileTransportKind.httpRead,
+    MobileAuthDisposition auth = MobileAuthDisposition.none,
+  }) {
     if (_profile == null || _disposed) return;
-    if (_isAuthoritativeAuthFailure(error)) {
+    if (auth == MobileAuthDisposition.credentialInvalid) {
       _retryTimer?.cancel();
       _emit(
         const MobileConnectionSnapshot(
@@ -82,13 +96,13 @@ class MobileConnectionSupervisor {
       );
       return;
     }
-    _scheduleRetry();
+    if (kind != MobileTransportKind.mutation) _scheduleRetry();
   }
 
   void foregroundResume() {
     if (_profile == null || _disposed) return;
     _retryTimer?.cancel();
-    _probeNow();
+    _probeNow(_generation);
   }
 
   void retryNow() => foregroundResume();
@@ -98,6 +112,7 @@ class MobileConnectionSupervisor {
     _retryTimer = null;
     _profile = null;
     _probe = null;
+    _generation += 1;
     _emit(const MobileConnectionSnapshot(MobileConnectionState.stopped));
   }
 
@@ -106,7 +121,7 @@ class MobileConnectionSupervisor {
     stop();
   }
 
-  Future<void> _probeNow() async {
+  Future<void> _probeNow(int generation) async {
     if (_probing || _profile == null || _disposed) return;
     _probing = true;
     _emit(const MobileConnectionSnapshot(MobileConnectionState.connecting));
@@ -122,9 +137,11 @@ class MobileConnectionSupervisor {
           throw GatewayHttpException(Uri(), 401, 'device revoked');
         }
       }
+      if (generation != _generation) return;
       reportSuccess();
+      onRecoverReadSubscriptions?.call(generation);
     } catch (error) {
-      reportFailure(error);
+      if (generation == _generation) reportFailure(error);
     } finally {
       _probing = false;
     }
@@ -147,13 +164,9 @@ class MobileConnectionSupervisor {
     _nextDelay = doubled > maxDelay ? maxDelay : doubled;
     _retryTimer = Timer(delay, () {
       _retryTimer = null;
-      _probeNow();
+      _probeNow(_generation);
     });
   }
-
-  bool _isAuthoritativeAuthFailure(Object error) =>
-      error is GatewayHttpException &&
-      (error.statusCode == 401 || error.statusCode == 403);
 
   void _emit(MobileConnectionSnapshot value) {
     _snapshot = value;

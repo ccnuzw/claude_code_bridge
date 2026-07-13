@@ -21,6 +21,7 @@ import '../../pairing/gateway_pairing.dart';
 import '../../repository/mobile_ccb_repository.dart';
 import '../../repository/gateway_mobile_ccb_repository.dart';
 import '../../transport/gateway_route_diagnostics.dart';
+import '../../transport/http_gateway_transport.dart';
 import '../../transport/route_provider.dart';
 import '../../transport/terminal_transport.dart';
 import '../agent_chat/agent_execution_status.dart';
@@ -463,6 +464,12 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     GatewayPairedHost? profile,
     Object error,
   ) async {
+    _connectionSupervisor.reportFailure(
+      error,
+      auth: error is GatewayHttpException && error.statusCode == 401
+          ? MobileAuthDisposition.credentialInvalid
+          : MobileAuthDisposition.none,
+    );
     if (_mode != AppRuntimeMode.pairedGateway ||
         error is ProjectHomeGatewayActivationException) {
       if (error is ProjectHomeGatewayActivationException &&
@@ -1645,7 +1652,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   void _handleGatewayStreamError(Object error) {
     if (error is! GatewayTaskCompletionNotificationStreamException ||
-        (error.statusCode != 401 && error.statusCode != 403)) {
+        error.statusCode != 401) {
       return;
     }
     final profile = _selectedProfile;
