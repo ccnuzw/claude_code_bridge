@@ -12,7 +12,9 @@ import mimetypes
 from pathlib import Path
 from queue import Empty, Full, Queue
 import re
+import select
 import shutil
+import socket
 import sqlite3
 import threading
 import time
@@ -98,6 +100,17 @@ _PROJECT_ACTIVITY_REFRESH_LIMIT = 3
 _PROJECT_ACTIVITY_REFRESH_TTL_SECONDS = 10
 _PROJECT_ACTIVITY_REFRESH_BUDGET_SECONDS = 0.75
 _PROJECT_ACTIVITY_REFRESH_PER_PROJECT_SECONDS = 0.25
+
+
+def _socket_peer_is_closed(connection: socket.socket) -> bool:
+    """Return true when a streaming HTTP peer has closed its read side."""
+    try:
+        readable, _, _ = select.select((connection,), (), (), 0)
+        if not readable:
+            return False
+        return connection.recv(1, socket.MSG_PEEK) == b''
+    except (OSError, ValueError):
+        return True
 _CONVERSATION_PAGE_CACHE_MAX_ENTRIES = 64
 _CONVERSATION_PAGE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _MOBILE_PROJECT_UPLOAD_DIR = ('.ccb', 'mobile', 'uploads')
@@ -2173,6 +2186,8 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
             while True:
                 try:
                     time.sleep(_NOTIFICATION_STREAM_POLL_SECONDS)
+                    if _socket_peer_is_closed(self.connection):
+                        return
                     events = service.notification_events_since(
                         self.path,
                         self.headers,

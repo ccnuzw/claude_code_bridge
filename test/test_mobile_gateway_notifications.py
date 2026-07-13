@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -21,6 +22,7 @@ from mobile_gateway.notifications import (
     MobileNotificationStore,
     encode_sse_event,
 )
+import mobile_gateway.service as mobile_gateway_service
 
 
 class _ActivityCcbdClient:
@@ -402,6 +404,63 @@ def test_notification_http_sse_once_stream_smoke(tmp_path: Path) -> None:
     assert 'data: ' in body
     assert 'proj-demo:7:mobile:1' in body
     assert '/tmp/private.sock' not in body
+
+
+def test_notification_stream_stops_polling_after_client_disconnect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mobile_gateway_service,
+        '_NOTIFICATION_STREAM_POLL_SECONDS',
+        0.02,
+    )
+    client = _ActivityCcbdClient(
+        project_id='proj-demo',
+        project_root='/srv/demo',
+        display_name='demo',
+    )
+    service = _service(client, mobile_dir=tmp_path / 'mobile')
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': pairing['pairing_code']},
+    )
+    token = str(claim['device_token'])
+    calls = 0
+    original_events_since = service.notification_events_since
+
+    def counted_events_since(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        return original_events_since(*args, **kwargs)
+
+    service.notification_events_since = counted_events_since  # type: ignore[method-assign]
+    server = build_mobile_gateway_server(parse_listen_address('127.0.0.1:0'), service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    try:
+        thread.start()
+        host, port = server.server_address[:2]
+        request = Request(
+            f'http://{host}:{port}/v1/mobile/notifications',
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Accept': 'text/event-stream',
+            },
+        )
+        response = urlopen(request, timeout=2)
+        assert response.readline() == b': keepalive\n'
+        response.close()
+        time.sleep(0.08)
+        settled_calls = calls
+        time.sleep(0.08)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert settled_calls >= 2
+    assert calls == settled_calls
 
 
 def test_completion_survives_more_than_one_hundred_invalidation_updates(tmp_path: Path) -> None:
