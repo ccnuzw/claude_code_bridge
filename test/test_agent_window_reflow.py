@@ -122,6 +122,7 @@ def test_reflow_agent_window_fixed_preserves_target_vertical_topology_after_remo
         topology_plan=topology,
         window_name='main',
         timeout_s=0.0,
+        prefer_topology_layout=True,
     )
 
     assert applied is True
@@ -132,6 +133,43 @@ def test_reflow_agent_window_fixed_preserves_target_vertical_topology_after_remo
         '120x29,0,0{24x29,0,0,0,95x29,25,0[95x14,25,0,1,95x14,25,15,2]}'
     )
     assert not any(call[:1] == ('swap-pane',) for call in backend.tmux_calls)
+
+
+def test_reflow_agent_window_fixed_keeps_dynamic_fixed_columns_by_default() -> None:
+    backend = _FakeBackend(
+        pane_rows=(
+            '%1\t0\t0\t0\t24\t29\tsidebar\tsidebar:main\t\tmain',
+            '%2\t1\t25\t0\t47\t29\tagent\thelper1\tmain\t',
+            '%3\t2\t73\t0\t47\t29\tagent\thelper2\tmain\t',
+        )
+    )
+    topology = _Topology(
+        windows=(
+            _Window(
+                'main',
+                ('helper1', 'helper2'),
+                user_layout='helper1:claude, helper2:gemini',
+                sidebar=SimpleNamespace(position='left'),
+            ),
+        )
+    )
+
+    applied, error = reflow_agent_window_fixed(
+        backend,
+        session_name='ccb-test',
+        window_target='ccb-test:main',
+        topology_plan=topology,
+        window_name='main',
+        timeout_s=0.0,
+    )
+
+    assert applied is True
+    assert error is None
+    select_calls = [call for call in backend.tmux_calls if call[:2] == ('select-layout', '-t')]
+    assert len(select_calls) == 1
+    assert select_calls[0][3].endswith(
+        '120x29,0,0{24x29,0,0,0,95x29,25,0{47x29,25,0,1,47x29,73,0,2}}'
+    )
 
 
 def test_reflow_agent_window_fixed_honors_percent_with_right_sidebar() -> None:
@@ -160,6 +198,7 @@ def test_reflow_agent_window_fixed_honors_percent_with_right_sidebar() -> None:
         topology_plan=topology,
         window_name='main',
         timeout_s=0.0,
+        prefer_topology_layout=True,
     )
 
     assert applied is True

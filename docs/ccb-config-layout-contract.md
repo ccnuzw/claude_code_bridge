@@ -300,11 +300,12 @@ Contract:
   unrelated panes.
 - Guarded reload should reflow a window after successful append-only
   `add_agent` and idle `remove_agent` mutations, then reapply managed sidebar
-  width. When the target Window exposes a validated `user_layout`, reflow must
-  realize that target binary topology, including horizontal/vertical direction,
-  explicit `@N` hints, inline managed tools, and Sidebar position, while
-  preserving pane identity. Legacy topology records without a usable layout may
-  apply the fixed runtime order for one to six effective Agent panes:
+  width. When a removal leaves a Window owned entirely by the static project
+  config, reflow must realize its validated target binary topology, including
+  horizontal/vertical direction, explicit `@N` hints, inline managed tools,
+  and Sidebar position, while preserving pane identity. Windows containing
+  dynamic Agent overlays and legacy topology records without a usable layout
+  retain the fixed runtime order for one to six effective Agent panes:
   `p1,p3,p5` in the left column and `p2,p4,p6` in the right column. Windows
   outside either safe shape fall back to tmux even compaction.
   Reflow must preserve surviving pane identity and report

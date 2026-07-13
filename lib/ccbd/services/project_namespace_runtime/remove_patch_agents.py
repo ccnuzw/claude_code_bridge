@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agents.config_loader import load_project_config
 from ccbd.reload_additive_agents import window_agent_names, window_map
 
 from .agent_window_reflow import reflow_agent_window_fixed
@@ -61,6 +62,11 @@ def remove_agent_panes(
                 window_name=window_name,
                 result=result,
                 timeout_s=timeout_s,
+                prefer_topology_layout=_window_is_static_config_owned(
+                    controller,
+                    topology_plan=new_topology,
+                    window_name=window_name,
+                ),
             )
 
 
@@ -105,6 +111,7 @@ def reflow_window_after_agent_change(
     window_name: str,
     result,
     timeout_s: float | None,
+    prefer_topology_layout: bool = False,
 ) -> None:
     target = _reflow_target(backend, current=current, topology_plan=topology_plan, window_name=window_name, timeout_s=timeout_s)
     runner = getattr(backend, '_tmux_run', None)
@@ -118,6 +125,7 @@ def reflow_window_after_agent_change(
         topology_plan=topology_plan,
         window_name=window_name,
         timeout_s=timeout_s,
+        prefer_topology_layout=prefer_topology_layout,
     )
     if fixed_error is not None:
         result.reflow_errors[window_name] = fixed_error
@@ -189,6 +197,21 @@ def _is_entry_window(topology_plan, window_name: str) -> bool:
     windows = tuple(getattr(topology_plan, 'windows', ()) or ())
     first = str(getattr(windows[0], 'name', '') or '').strip() if windows else ''
     return bool(first and target == first)
+
+
+def _window_is_static_config_owned(controller, *, topology_plan, window_name: str) -> bool:
+    try:
+        configured = set(
+            load_project_config(
+                controller._layout.project_root,
+                include_loop_overlays=False,
+            ).config.agents
+        )
+    except Exception:
+        return False
+    window = window_map(topology_plan).get(str(window_name))
+    names = window_agent_names(window) if window is not None else ()
+    return bool(names) and all(name in configured for name in names)
 
 
 def _kill_pane(backend, pane_id: str, *, timeout_s: float | None) -> None:

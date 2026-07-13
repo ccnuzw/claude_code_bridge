@@ -54,6 +54,7 @@ def reflow_agent_window_fixed(
     topology_plan,
     window_name: str,
     timeout_s: float | None,
+    prefer_topology_layout: bool = False,
 ) -> tuple[bool, str | None]:
     runner = getattr(backend, '_tmux_run', None)
     if not callable(runner):
@@ -72,12 +73,16 @@ def reflow_agent_window_fixed(
     total_height = max(pane.pane_top + pane.pane_height for pane in panes)
     if total_width <= 0 or total_height <= 0:
         return False, None
-    topology_layout = _build_topology_layout(
-        panes,
-        topology_window=topology_window,
-        window_name=window_name,
-        total_width=total_width,
-        total_height=total_height,
+    topology_layout = (
+        _build_topology_layout(
+            panes,
+            topology_window=topology_window,
+            window_name=window_name,
+            total_width=total_width,
+            total_height=total_height,
+        )
+        if prefer_topology_layout
+        else None
     )
     if topology_layout is not None:
         layout_root, desired_order = topology_layout
