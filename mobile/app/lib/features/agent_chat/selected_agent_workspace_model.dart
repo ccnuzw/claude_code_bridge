@@ -138,17 +138,27 @@ DateTime? _latestUserSentAt(List<CcbConversationItem> items) {
 String? selectedAgentWorkingReplyItemId(List<CcbConversationItem> items) {
   CcbConversationItem? latestUser;
   CcbConversationItem? latestReply;
-  for (final item in items) {
+  var latestUserIndex = -1;
+  var latestReplyIndex = -1;
+  for (var index = 0; index < items.length; index += 1) {
+    final item = items[index];
     if (item.kind == CcbConversationItemKind.userMessage) {
       latestUser = item;
+      latestUserIndex = index;
     } else if (item.kind == CcbConversationItemKind.agentReply) {
       latestReply = item;
+      latestReplyIndex = index;
     }
   }
   if (latestReply == null) {
     return null;
   }
-  if (latestReply.completedAt != null) {
+  final completedNativeCurrentTurn =
+      latestReply.completedAt != null &&
+      _isProviderNativeReply(latestReply) &&
+      latestUserIndex >= 0 &&
+      latestReplyIndex > latestUserIndex;
+  if (latestReply.completedAt != null && !completedNativeCurrentTurn) {
     return null;
   }
   final replyStartedAt = latestReply.startedAt ?? latestReply.sentAt;
@@ -169,6 +179,9 @@ bool _isCurrentTurnReplyCandidate(CcbConversationItem item) {
   final source = item.source ?? '';
   return source.isEmpty || source.startsWith('provider_native/');
 }
+
+bool _isProviderNativeReply(CcbConversationItem item) =>
+    item.source?.startsWith('provider_native/') ?? false;
 
 bool _isDefaultChatRemoteItem(CcbConversationItem item) {
   if (item.kind == CcbConversationItemKind.commsItem) {

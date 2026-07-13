@@ -503,7 +503,7 @@ void main() {
   });
 
   test(
-    'uses a single placeholder when a current native reply is completed',
+    'uses current native reply as working target despite early completion',
     () {
       final chatController = AgentChatController();
       final view = _view();
@@ -553,18 +553,14 @@ void main() {
       );
 
       expect(model.executionStatus?.state, 'working');
-      expect(
-        model.workingReplyItemId,
-        syntheticAgentWorkingConversationItemId(agent.name),
-      );
+      expect(model.workingReplyItemId, 'reply-current');
       expect(model.timelineItems.map((item) => item.id), [
         'user-current',
         'reply-current',
-        syntheticAgentWorkingConversationItemId(agent.name),
       ]);
       expect(
         model.timelineItems.map((item) => item.id),
-        contains(syntheticAgentWorkingConversationItemId(agent.name)),
+        isNot(contains(syntheticAgentWorkingConversationItemId(agent.name))),
       );
     },
   );
