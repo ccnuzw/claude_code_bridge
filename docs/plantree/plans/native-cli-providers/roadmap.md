@@ -268,33 +268,46 @@ Date: 2026-06-13
     files passed with `54 passed`; wider provider/registry tests passed with
     `31 passed`; a real authenticated Grok ask completed from native
     `EndTurn` as `grok_run_stop`.
+- Added Grok-native CCB skills and execution context:
+  - `ask` and `ccb-clear` project independently into each managed
+    `.grok/skills` directory with inspectable ownership markers.
+  - Normal starts grant only the two exact skill command prefixes; safe starts,
+    disabled inheritance, missing sources, and unmarked conflicts grant none.
+  - Headless jobs restore exact agent/project/session caller identity before a
+    skill invokes CCB, while Grok native completion authority remains unchanged.
+  - Focused tests passed with `204 passed`; real two-instance native skill
+    discovery and session-policy inspection passed on 2026-07-13.
+  - After refreshing the user-owned xAI OAuth session, direct ask,
+    Grok-to-Grok `ask --chain` result recovery, native `EndTurn` completion,
+    named `ccb clear grok2`, and post-clear target isolation all passed in the
+    opened source-runtime project. The host required its configured local Clash
+    proxy because intercepted DNS otherwise resolved the provider endpoint
+    incorrectly.
+  - Opened-frontend testing then exposed that the per-job headless path did not
+    update either visible Grok pane. Grok asks now use pane-native prompt
+    delivery, collect replies from the matching visible session event stream,
+    require native `turn_completed/end_turn`, and dispatch CCB replies back to
+    the caller pane. Real job `job_3d7385171e82` and reply-delivery job
+    `job_6892ec58f379` passed the visible `grok2 -> grok1 -> grok2` route.
 
 ## In Progress
 
 - Provider-specific auth/doctor diagnostics decision for the next-wave CLIs.
 - Review and release readiness for the current dirty source changes.
-- Grok native ask-skill projection remains in progress; native completion
-  hardening and the authenticated routing baseline have landed in source.
+- Grok cross-agent communication acceptance is complete for direct ask,
+  chained result recovery, named clear, and post-clear isolation.
 
 ## Next
 
-1. Implement the Grok `ask` and `ccb-clear` package, projection, caller-env,
-   and narrow-permission contract defined in
-   [topics/grok-ccb-skills-design.md](topics/grok-ccb-skills-design.md), then run
-   the focused unit gate and isolated two-instance stub smoke in
-   [topics/grok-ask-skill-test-plan.md](topics/grok-ask-skill-test-plan.md).
-2. Run the real Grok single-instance discovery gate, then the two-instance
-   cross-window pressure gate; do not treat skill discovery alone as routing
-   acceptance.
-3. Decide whether any provider needs a follow-up doctor/auth diagnostic before
+1. Decide whether any provider needs a follow-up doctor/auth diagnostic before
    release.
-4. Decide whether to keep
+2. Decide whether to keep
    `/home/bfly/yunwei/test_ccb2/next_wave_provider_smoke` as a reusable smoke
    fixture.
-5. Run a real source-runtime AGY smoke in `/home/bfly/yunwei/test_ccb2` when an
+3. Run a real source-runtime AGY smoke in `/home/bfly/yunwei/test_ccb2` when an
    authenticated AGY account is available; unit coverage currently validates
    the delivery and parsing mechanics without provider login.
-6. Review the full dirty source diff, excluding unrelated managed-tool/neovim
+4. Review the full dirty source diff, excluding unrelated managed-tool/neovim
    changes already present in the worktree.
 
 ## Deferred

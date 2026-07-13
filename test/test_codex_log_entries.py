@@ -70,6 +70,43 @@ def test_extract_entry_handles_system_event_payloads() -> None:
     assert extract_entry(turn_aborted)['reason'] == 'turn_aborted'
 
 
+def test_extract_codex_task_started_preserves_parent_turn_binding() -> None:
+    entry = {
+        'type': 'event_msg',
+        'payload': {'type': 'task_started', 'turn_id': 'parent-turn'},
+    }
+
+    assert extract_entry(entry) == {
+        'entry_type': 'event_msg',
+        'payload_type': 'task_started',
+        'timestamp': None,
+        'phase': None,
+        'turn_id': 'parent-turn',
+        'task_id': None,
+        'reason': 'task_started',
+        'last_agent_message': None,
+        'entry': entry,
+        'role': 'system',
+        'text': '',
+    }
+
+
+def test_extract_codex_native_subagent_messages_are_not_reply_candidates() -> None:
+    activity = {'type': 'event_msg', 'payload': {'type': 'sub_agent_activity', 'agent_path': '/root/child'}}
+    child_reply = {
+        'type': 'response_item',
+        'payload': {
+            'type': 'agent_message',
+            'author': '/root/child',
+            'recipient': '/root',
+            'content': [{'type': 'input_text', 'text': 'child final'}],
+        },
+    }
+
+    assert extract_entry(activity) is None
+    assert extract_entry(child_reply) is None
+
+
 def test_extract_event_returns_only_user_or_assistant_messages() -> None:
     entry = {
         'type': 'event_msg',

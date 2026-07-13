@@ -9,6 +9,7 @@ from typing import Any
 
 from project.identity import compute_ccb_project_id
 
+from ..binding_runtime.log_meta import is_codex_subagent_log
 from ...session_authority import remember_bound_session_authority
 from ..binding import extract_session_id
 from ...start_cmd import persist_resume_start_cmd_fields
@@ -40,6 +41,8 @@ def update_project_session_binding(
     session_info: dict[str, Any],
     debug_enabled: bool = False,
 ) -> CodexBindingState | None:
+    if is_codex_subagent_log(log_path):
+        return None
     data = _load_project_session(project_file)
     if data is None:
         return None

@@ -265,6 +265,8 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     _write(pi_state / 'home' / '.pi' / 'agent' / 'settings.json', '{}\n')
     _write(pi_state / 'sessions' / 'session.jsonl', '{}\n')
     _write(grok_state / 'home' / '.grok' / 'sessions' / 'session.jsonl', '{}\n')
+    _write(grok_state / 'home' / '.grok' / 'skills' / 'ask' / 'SKILL.md', '# ask\n')
+    _write(grok_state / 'home' / '.grok' / 'skills' / 'help' / 'SKILL.md', '# help\n')
 
     payload = summarize_storage(PathLayout(project_root))
     records = _records_by_suffix(payload)
@@ -360,6 +362,8 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     assert records['agents/agent12/provider-state/pi/sessions/session.jsonl']['storage_class'] == 'session'
     assert records['agents/agent13/provider-state/grok/home/.grok/sessions/session.jsonl']['storage_class'] == 'session'
     assert records['agents/agent13/provider-state/grok/home/.grok/sessions/session.jsonl']['reason'] == 'native_cli_provider_state'
+    assert records['agents/agent13/provider-state/grok/home/.grok/skills/ask/SKILL.md']['storage_class'] == 'projected_config'
+    assert records['agents/agent13/provider-state/grok/home/.grok/skills/help/SKILL.md']['storage_class'] == 'session'
 
 
 def test_storage_summary_rust_inventory_path_matches_python_path(

@@ -1,5 +1,47 @@
 # Changelog
 
+## v8.1.4 (2026-07-13)
+
+### Codex Native Subagent Isolation
+
+- **Child Rollouts Cannot Capture CCB Requests**: managed Codex session
+  discovery, watchdog recovery, and persisted binding updates now reject native
+  subagent rollouts and recover the authoritative top-level session.
+- **Parent Turn Binding Stays Immutable**: once a CCB request is anchored to its
+  parent Codex turn, child task identifiers cannot replace that binding or
+  finalize the request.
+- **Child Collaboration Output Stays Private**: native subagent activity,
+  messages, and foreign-turn completion events are excluded from CCB reply
+  collection in both the Python runtime and Rust accelerator.
+- **Real Provider Path Verified**: an authenticated managed Codex test using the
+  built-in `spawn_agent` path confirmed that the caller receives only the
+  parent agent's final result.
+
+### Grok Native CCB Skills
+
+- **Ask And Clear Skills Projected Per Agent**: managed Grok homes now receive
+  independently owned native `ask` and `ccb-clear` skills when skill
+  inheritance is enabled, without replacing conflicting user-owned skills.
+- **Permissions Stay Narrow**: normal Grok starts grant only
+  `Bash(command ask *)` and `Bash(command ccb clear*)`; safe starts, disabled
+  inheritance, and incomplete projections grant neither rule.
+- **System Login Is Refreshed Into Managed Homes**: Grok startup refreshes
+  inherited auth/config state from the user-owned Grok home before the managed
+  visible session launches.
+- **Ask Uses The Visible Native Session**: incoming CCB requests are delivered
+  to the target Grok pane and complete only from that prompt's native
+  `turn_completed/end_turn` event; reply delivery returns to the caller's
+  visible Grok pane instead of disappearing into a detached headless session.
+- **Real Cross-Agent Path Verified**: a two-Grok authenticated source-runtime
+  test passed visible Grok-to-Grok ask and result recovery, native `EndTurn`
+  completion, named `ccb clear grok2`, and post-clear isolation checks.
+
+### Release Surface
+
+- **Release Metadata Synchronized**: VERSION, source CLI metadata,
+  `package.json`, Mobile app metadata and download links, workflow dispatch
+  defaults, README variants, and release notes are aligned for 8.1.4.
+
 ## v8.1.3 (2026-07-13)
 
 ### Mobile Interaction Reliability

@@ -483,6 +483,48 @@ def test_codex_comm_live_reader_uses_bound_root_and_disables_workspace_follow_wh
     assert captured["follow_workspace_sessions"] is False
 
 
+def test_codex_comm_live_reader_recovers_from_persisted_subagent_binding(tmp_path: Path) -> None:
+    work_dir = tmp_path / "repo"
+    session_root = tmp_path / ".codex" / "sessions"
+    work_dir.mkdir()
+    session_root.mkdir(parents=True)
+    child_log = session_root / "rollout-child.jsonl"
+    child_log.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "cwd": str(work_dir),
+                    "thread_source": "subagent",
+                    "source": {"subagent": {"thread_spawn": {"parent_thread_id": "parent"}}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    comm = CodexCommunicator.__new__(CodexCommunicator)
+    comm.session_info = {
+        "codex_session_path": str(child_log),
+        "codex_session_id": "child-session-id",
+        "codex_session_root": str(session_root),
+        "work_dir": str(work_dir),
+    }
+    comm._log_reader = None
+    comm._log_reader_primed = True
+    captured: dict[str, object] = {}
+
+    class FakeReader:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    ensure_log_reader(comm, log_reader_cls=FakeReader)
+
+    assert captured["log_path"] is None
+    assert captured["session_id_filter"] is None
+    assert captured["follow_workspace_sessions"] is True
+
+
 def test_codex_comm_live_reader_disables_workspace_follow_for_ambiguous_inplace_agents(tmp_path: Path) -> None:
     work_dir = tmp_path / "repo"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -648,6 +690,47 @@ def test_codex_watchdog_allows_initial_binding_within_managed_root(tmp_path: Pat
     )
 
     assert calls == [(str(first_log), "first-session")]
+
+
+def test_codex_watchdog_rejects_subagent_as_initial_binding(tmp_path: Path) -> None:
+    work_dir = tmp_path / "repo"
+    work_dir.mkdir(parents=True)
+    session_root = tmp_path / "managed" / "sessions"
+    child_log = session_root / "2026" / "07" / "13" / "rollout-child.jsonl"
+    child_log.parent.mkdir(parents=True)
+    child_log.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "cwd": str(work_dir),
+                    "thread_source": "subagent",
+                    "source": {"subagent": {"thread_spawn": {"parent_thread_id": "parent"}}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, str | None]] = []
+
+    class _Session:
+        data = {"work_dir": str(work_dir), "codex_session_root": str(session_root)}
+        codex_session_path = ""
+        codex_session_id = ""
+
+        def update_codex_log_binding(self, *, log_path: str | None, session_id: str | None) -> None:
+            calls.append((str(log_path), session_id))
+
+    handle_codex_log_event(
+        child_log,
+        cwd_extractor=lambda path: str(work_dir),
+        session_resolver=lambda cwd: (work_dir / ".ccb" / ".codex-agent1-session", "agent1"),
+        session_loader=lambda cwd, instance: _Session(),
+        session_id_extractor=lambda path: "child-session",
+    )
+
+    assert calls == []
 
 
 def test_codex_inplace_agents_and_external_logs_stay_isolated_end_to_end(

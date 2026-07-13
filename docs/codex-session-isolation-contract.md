@@ -230,6 +230,19 @@ Managed Codex session reading has exactly two modes:
   - must verify the bound path remains inside that agent's managed home
   - must not drift to a newer workspace session outside explicit rebinding logic
 
+Codex native subagent rollouts are never managed-agent session authority:
+
+- a rollout whose `session_meta.thread_source` is `subagent`, or whose
+  `session_meta.source` declares native subagent provenance, must be excluded
+  from bootstrap scans, watchdog binding, persisted binding updates, session
+  rotation, resume, and completion polling
+- this exclusion applies even when the subagent rollout is newer, has the same
+  workspace `cwd`, inherits the parent's conversation, or contains the same
+  `CCB_REQ_ID`
+- a legacy persisted binding that points at a native subagent rollout must be
+  treated as invalid evidence and recovered by scanning only top-level
+  rollouts inside the same agent-scoped managed home
+
 Binding logic must not use shared `work_dir` as the cross-agent reconciliation key.
 
 Asynchronous binding paths such as log watchdogs must also honor the managed home and must not rebind an already bound managed session to a different Codex conversation only because a newer workspace log appeared.
@@ -238,6 +251,14 @@ Managed readers must not widen their search to global `~/.codex/sessions`,
 even when they can see a request anchor there. A request anchor observed outside
 the managed home is a contract violation or legacy-leak diagnostic, not a
 completion source.
+
+For an accepted CCB job, the top-level Codex turn binding is immutable. The
+first matching top-level `task_started.turn_id` binds the turn; assistant and
+terminal events carrying another turn id must not update reply state or
+terminalize the job. Codex collaboration `agent_message` and
+`sub_agent_activity` records are internal provider evidence and must not enter
+the caller-visible reply buffer. Caller-visible completion may come only from
+the bound top-level turn's final assistant message or `task_complete`.
 
 Native in-pane Codex session switches are supported only through the managed
 session-switch boundary:

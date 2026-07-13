@@ -9,6 +9,7 @@ from .start import state_session_path
 from .state_machine import (
     apply_session_rotation,
     build_poll_state,
+    entry_matches_bound_turn,
     finalize_poll_result,
     handle_assistant_entry,
     handle_terminal_entry,
@@ -63,6 +64,8 @@ def process_entry_batch(submission, poll, entries, *, now: str) -> None:
 
 def process_entry(submission, poll, entry, *, now: str) -> None:
     update_binding_refs(poll, entry)
+    if not entry_matches_bound_turn(poll, entry):
+        return
     role = str(entry.get("role") or "").strip().lower()
     if role == "user":
         handle_user_entry(submission, poll, text=str(entry.get("text") or ""), now=now)

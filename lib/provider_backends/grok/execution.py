@@ -14,12 +14,20 @@ from provider_backends.native_cli_support import (
     observe_jsonl_output,
 )
 from provider_core.runtime_shared import provider_start_parts
+from provider_core.caller_env import caller_context_env
 from provider_profiles import load_resolved_provider_profile
 
 from .home import materialize_grok_home
+from .skills import grok_ccb_skills_ready, grok_skill_permission_args
 
 
-def build_execution_adapter() -> NativeCliSubprocessAdapter:
+def build_execution_adapter():
+    from .pane_execution import GrokPaneExecutionAdapter
+
+    return GrokPaneExecutionAdapter()
+
+
+def build_headless_execution_adapter() -> NativeCliSubprocessAdapter:
     return NativeCliSubprocessAdapter(
         NativeCliExecutionConfig(
             provider="grok",
@@ -42,9 +50,16 @@ def build_execution_adapter() -> NativeCliSubprocessAdapter:
 
 
 def _build_command(request: NativeCliExecutionRequest) -> list[str]:
+    grok_home = _materialize_request_home(request)
+    skill_permissions_enabled = bool(request.session_data.get('grok_skill_permissions_enabled'))
     cmd = [
         *provider_start_parts("grok"),
         "--no-auto-update",
+        *(
+            grok_skill_permission_args()
+            if skill_permissions_enabled and grok_ccb_skills_ready(grok_home)
+            else ()
+        ),
         "-p",
         request.prompt,
         "--cwd",
@@ -64,13 +79,34 @@ def _build_command(request: NativeCliExecutionRequest) -> list[str]:
 
 
 def _build_env(request: NativeCliExecutionRequest) -> dict[str, str]:
+    grok_home = _materialize_request_home(request)
+    env = {"HOME": str(grok_home)}
+    runtime_dir = _path_from_text(request.session_data.get("runtime_dir"))
+    actor = str(request.session_data.get('agent_name') or getattr(request.job, 'agent_name', '') or '').strip()
+    launch_session_id = str(
+        request.session_data.get('ccb_session_id')
+        or request.session_data.get('grok_session_id')
+        or ''
+    ).strip()
+    if runtime_dir is not None and actor and launch_session_id:
+        env.update(
+            caller_context_env(
+                actor=actor,
+                runtime_dir=runtime_dir,
+                launch_session_id=launch_session_id,
+            )
+        )
+    return env
+
+
+def _materialize_request_home(request: NativeCliExecutionRequest) -> Path:
     grok_home = _state_path(request, "grok_home", fallback="home")
     runtime_dir = _path_from_text(request.session_data.get("runtime_dir"))
     materialize_grok_home(
         grok_home,
         profile=load_resolved_provider_profile(runtime_dir) if runtime_dir is not None else None,
     )
-    return {"HOME": str(grok_home)}
+    return grok_home
 
 
 def _grok_session_id_for_job(job_id: str) -> str:
@@ -400,4 +436,4 @@ def _string(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-__all__ = ["build_execution_adapter", "observe_grok_output"]
+__all__ = ["build_execution_adapter", "build_headless_execution_adapter", "observe_grok_output"]

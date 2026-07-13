@@ -368,6 +368,10 @@ fn normalize_codex_entry(raw: &Value) -> Option<NormalizedCodexEntry> {
         last_agent_message: value_string(payload_value.get("last_agent_message")),
     };
 
+    if entry_type == "response_item" && payload_type == "agent_message" {
+        return None;
+    }
+
     if entry_type == "response_item" && payload_type == "message" {
         let role = value_string(payload_value.get("role")).to_ascii_lowercase();
         let text = if role == "user" {
@@ -381,6 +385,16 @@ fn normalize_codex_entry(raw: &Value) -> Option<NormalizedCodexEntry> {
     }
 
     if entry_type == "event_msg" {
+        if payload_type == "sub_agent_activity" {
+            return None;
+        }
+        if payload_type == "task_started" {
+            return Some(NormalizedCodexEntry {
+                role: "system".to_string(),
+                reason: "task_started".to_string(),
+                ..base
+            });
+        }
         if payload_type == "user_message" {
             return entry_with_text(
                 base,
@@ -445,15 +459,26 @@ fn process_codex_entry(
     items: &mut Vec<CodexCompletionItem>,
     entry: NormalizedCodexEntry,
 ) -> bool {
-    if !entry.turn_id.is_empty() {
+    let anchor_needle = format!("{REQ_ID_PREFIX} {}", job.request_anchor);
+    let pending_turn_candidate = !state.anchor_seen
+        && (entry.payload_type == "task_started"
+            || (entry.role == "user"
+                && !job.request_anchor.is_empty()
+                && entry.text.contains(&anchor_needle)));
+    if !entry.turn_id.is_empty() && (state.bound_turn_id.is_empty() || pending_turn_candidate) {
         state.bound_turn_id = entry.turn_id.clone();
     }
-    if !entry.task_id.is_empty() {
+    if !entry.task_id.is_empty() && (state.bound_task_id.is_empty() || pending_turn_candidate) {
         state.bound_task_id = entry.task_id.clone();
+    }
+    if !entry.turn_id.is_empty()
+        && !state.bound_turn_id.is_empty()
+        && entry.turn_id != state.bound_turn_id
+    {
+        return false;
     }
 
     if entry.role == "user" {
-        let anchor_needle = format!("{REQ_ID_PREFIX} {}", job.request_anchor);
         if !job.request_anchor.is_empty()
             && entry.text.contains(&anchor_needle)
             && !state.anchor_seen
@@ -907,6 +932,11 @@ mod tests {
             [
                 json!({
                     "type": "event_msg",
+                    "payload": {"type": "task_started", "turn_id": "historical-turn"}
+                })
+                .to_string(),
+                json!({
+                    "type": "event_msg",
                     "payload": {"type": "user_message", "message": "CCB_REQ_ID: req-1\nhello", "turn_id": "turn-1"}
                 })
                 .to_string(),
@@ -956,6 +986,88 @@ mod tests {
             vec!["anchor_seen", "assistant_chunk", "turn_boundary"]
         );
         assert_eq!(observation.items[2].payload["last_agent_message"], "final");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn codex_observe_ignores_native_subagent_reply_and_foreign_terminal() {
+        let path = unique_test_path("codex-observe-subagent.jsonl");
+        std::fs::write(
+            &path,
+            [
+                json!({
+                    "type": "event_msg",
+                    "payload": {"type": "task_started", "turn_id": "parent-turn"}
+                })
+                .to_string(),
+                json!({
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "CCB_REQ_ID: req-1\nhello"}
+                })
+                .to_string(),
+                json!({
+                    "type": "response_item",
+                    "payload": {
+                        "type": "agent_message",
+                        "author": "/root/child",
+                        "recipient": "/root",
+                        "content": [{"type": "input_text", "text": "child final"}],
+                        "turn_id": "child-turn"
+                    }
+                })
+                .to_string(),
+                json!({
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete", "last_agent_message": "child final", "turn_id": "child-turn"}
+                })
+                .to_string(),
+                json!({
+                    "type": "response_item",
+                    "timestamp": "2026-07-13T00:00:00Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "phase": "final_answer",
+                        "content": [{"type": "output_text", "text": "parent final"}],
+                        "turn_id": "parent-turn"
+                    }
+                })
+                .to_string(),
+                json!({
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete", "last_agent_message": "parent final", "turn_id": "parent-turn"}
+                })
+                .to_string(),
+            ]
+            .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        let response = codex_observe(&json!({
+            "jobs": [{
+                "job_id": "job-1",
+                "session_path": path,
+                "request_anchor": "req-1",
+                "state": {"offset": 0, "next_seq": 1}
+            }]
+        }))
+        .unwrap();
+
+        let observation = &response.observations[0];
+        assert!(observation.reached_terminal);
+        assert_eq!(observation.state.bound_turn_id, "parent-turn");
+        assert_eq!(observation.items.len(), 3);
+        assert_eq!(observation.items[1].payload["text"], "parent final");
+        assert_eq!(
+            observation.items[2].payload["last_agent_message"],
+            "parent final"
+        );
+        assert!(!observation
+            .items
+            .iter()
+            .any(|item| item.payload.to_string().contains("child final")));
 
         let _ = std::fs::remove_file(path);
     }

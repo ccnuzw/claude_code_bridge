@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ...binding_runtime.log_meta import is_codex_subagent_log
 from ...debug import debug_log_reader
 from ...pathing import extract_cwd_from_log
 
@@ -12,6 +13,8 @@ def candidate_logs(reader):
     try:
         for path in reader.root.glob("**/*.jsonl"):
             if not path.is_file():
+                continue
+            if is_codex_subagent_log(path):
                 continue
             if not _matches_session_filter(reader, path):
                 continue

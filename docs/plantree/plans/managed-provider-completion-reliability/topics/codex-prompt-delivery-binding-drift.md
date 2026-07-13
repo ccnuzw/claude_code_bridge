@@ -33,6 +33,27 @@ This means dispatcher `running` or mailbox `consumed` must not be treated as
 provider acceptance. Codex acceptance requires the wrapped prompt anchor to
 appear in a valid Codex protocol log.
 
+### Native Subagent Collision
+
+Codex built-in `spawn_agent` creates a separate rollout under the same managed
+Codex home and workspace. A forked child can inherit the parent's
+`CCB_REQ_ID`, but it has `session_meta.thread_source=subagent`, a separate turn,
+and its own `task_complete`. The child is provider-internal work, not a CCB
+agent or CCB callback edge.
+
+The accepted repair is provenance-based:
+
+- reject native subagent rollouts from every session-binding authority path;
+- bind the active CCB completion to the top-level parent turn once;
+- ignore native collaboration messages and foreign-turn terminal events;
+- route only the parent final reply through the existing CCB job/caller
+  lineage.
+
+Real source-runtime evidence on 2026-07-13: job `job_670426094f8e` ran a real
+Codex native subagent. The child rollout contained `CHILD_SECRET_FINAL_0713`;
+the completion snapshot, reply record, trace, and consumed caller mailbox event
+contained only `PARENT_FINAL_ONLY_0713`.
+
 ## Failure Model
 
 The concrete runtime shape is a soft-live Codex pane:

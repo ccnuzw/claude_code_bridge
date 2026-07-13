@@ -4,18 +4,16 @@ Date: 2026-06-12
 
 ## Status Summary
 
-- Current status: P0 implementation is in the working tree and folded into the
-  pending `7.5.0` release candidate; not committed or pushed.
-- Last verified: adjacent Claude/provider completion regression suite
-  (`114 passed`), `python -m compileall -q lib bin ccb`, `git diff --check`,
-  `ccb_test --diagnose`, isolated `ccb_test --version`, isolated
-  `ccb_test config validate`, npm pack dry-run, Markdown local link check, and
-  reviewer1 code review PASS (`job_1c92c6c961d1`).
-- New Codex prompt-delivery incident is shaped as a planning topic; no
-  implementation has landed for that slice yet.
-- Next target: finish release-candidate validation and review for the Claude P0
-  slice, then implement Codex binding evidence and delivery preflight before
-  any automatic retry policy.
+- Current status: Codex native subagent reply fencing is implemented on `main`
+  in the working tree; not committed or pushed.
+- Last verified: focused Codex/Python regressions (`41 passed`), complete Codex
+  plus execution/mailbox suites (`293 passed`), Rust accelerator tests
+  (`10 passed`), and a real source-runtime Codex `spawn_agent` ask
+  (`job_670426094f8e`) whose persisted/caller reply was exactly
+  `PARENT_FINAL_ONLY_0713` while the child rollout contained
+  `CHILD_SECRET_FINAL_0713`.
+- Next target: final diff/static review, then commit the Codex native subagent
+  reply-fence slice on `main` when requested.
 
 ## Done
 
@@ -56,12 +54,17 @@ Date: 2026-06-12
   `codex_prompt_delivery_failed / delivery_anchor_missing`.
 - Added the Codex repair plan:
   [topics/codex-prompt-delivery-binding-drift.md](topics/codex-prompt-delivery-binding-drift.md).
+- Implemented Codex native subagent reply fencing:
+  - subagent rollouts are excluded from scan, watchdog, persisted binding,
+    reader rotation, and recovery authority;
+  - top-level `task_started.turn_id` is immutable for the active CCB job;
+  - foreign-turn assistant/terminal events and native collaboration messages
+    cannot enter the caller-visible reply;
+  - Python and Rust accelerator paths share the same behavior.
 
 ## In Progress
 
-- Broaden P0 validation only where it exercises existing contracts: tracker
-  terminalization, reliability timeout suppression after terminal evidence,
-  silence delivery suppression, callback routing, and session rotation.
+- Final review and landing of the Codex native subagent reply-fence slice.
 
 ## Next
 

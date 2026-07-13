@@ -6,6 +6,8 @@ from .messages import extract_message, extract_user_message
 
 
 def extract_entry(entry: dict) -> dict[str, Any] | None:
+    if is_native_subagent_entry(entry):
+        return None
     base, payload = base_entry(entry)
     direct = direct_entry(base, entry, payload=payload)
     if direct is not None:
@@ -49,6 +51,15 @@ def normalized_payload(payload: object) -> dict[str, Any]:
     return {}
 
 
+def is_native_subagent_entry(entry: dict) -> bool:
+    entry_type = str(entry.get("type") or "").strip().lower()
+    payload = normalized_payload(entry.get("payload"))
+    payload_type = str(payload.get("type") or "").strip().lower()
+    if entry_type == "event_msg" and payload_type == "sub_agent_activity":
+        return True
+    return entry_type == "response_item" and payload_type == "agent_message"
+
+
 def direct_entry(base: dict[str, Any], entry: dict, *, payload: dict[str, Any]) -> dict[str, Any] | None:
     entry_type = str(base["entry_type"])
     payload_type = str(base["payload_type"])
@@ -76,6 +87,8 @@ def event_message_entry(
 ) -> dict[str, Any] | None:
     if payload_type == "user_message":
         return entry_with_text(base, role="user", text=extract_user_message(entry) or "")
+    if payload_type == "task_started":
+        return system_entry(base, text="", reason="task_started")
     if payload_type in {"agent_message", "assistant_message", "assistant", "assistant_response", "message"}:
         role = payload_role(payload)
         if role == "user":
@@ -121,4 +134,4 @@ def system_entry(base: dict[str, Any], *, text: str, reason: object) -> dict[str
     return {**base, "role": "system", "text": text, "reason": reason}
 
 
-__all__ = ["extract_entry", "extract_event"]
+__all__ = ["extract_entry", "extract_event", "is_native_subagent_entry"]

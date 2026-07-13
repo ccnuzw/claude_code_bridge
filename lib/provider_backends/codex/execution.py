@@ -6,7 +6,7 @@ from pathlib import Path
 from ccbd.system import parse_utc_timestamp
 from ccbd.api_models import JobRecord
 from completion.models import CompletionConfidence, CompletionDecision, CompletionItemKind, CompletionStatus
-from provider_backends.codex.comm_runtime.binding import extract_cwd_from_log_file, extract_session_id
+from provider_backends.codex.comm_runtime.binding import extract_cwd_from_log_file, extract_session_id, is_codex_subagent_log
 from provider_backends.codex.comm_runtime.pathing import normalize_work_dir
 from provider_core.protocol import REQ_ID_PREFIX, request_anchor_for_job, wrap_codex_turn_prompt
 from provider_execution.base import ProviderPollResult, ProviderRuntimeContext, ProviderSubmission
@@ -118,11 +118,14 @@ class CodexProviderAdapter:
 def _reader_factory(session, preferred_log: Path | None):
     work_dir = Path(session.work_dir)
     default_log = Path(session.codex_session_path).expanduser() if session.codex_session_path else None
+    selected_log = preferred_log if preferred_log is not None else default_log
+    invalid_subagent_binding = selected_log is not None and is_codex_subagent_log(selected_log)
     kwargs: dict[str, object] = {
-        "log_path": preferred_log if preferred_log is not None else default_log,
-        "session_id_filter": session.codex_session_id or None,
+        "log_path": None if invalid_subagent_binding else selected_log,
+        "session_id_filter": None if invalid_subagent_binding else (session.codex_session_id or None),
         "work_dir": work_dir,
-        "follow_workspace_sessions": should_follow_workspace_sessions(
+        "follow_workspace_sessions": invalid_subagent_binding
+        or should_follow_workspace_sessions(
             work_dir=work_dir,
             session_file=getattr(session, "session_file", None),
             session_data=getattr(session, "data", None),
@@ -162,6 +165,8 @@ def _refresh_reader_for_current_session_binding(submission: ProviderSubmission) 
         return submission
     current_log = _current_session_log(session)
     if current_log is None or not current_log.exists():
+        return submission
+    if is_codex_subagent_log(current_log):
         return submission
 
     current_log_str = _normalized_path_string(current_log)

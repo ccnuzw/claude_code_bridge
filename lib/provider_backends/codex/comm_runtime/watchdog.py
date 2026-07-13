@@ -5,6 +5,8 @@ from typing import Any, Callable
 
 from provider_backends.codex.session_runtime.follow_policy import codex_session_root_path, has_bound_codex_session
 
+from .binding_runtime.log_meta import is_codex_subagent_log
+
 
 def handle_codex_log_event(
     path: Path,
@@ -15,6 +17,8 @@ def handle_codex_log_event(
     session_id_extractor: Callable[[Path], str | None],
 ) -> None:
     if not path or not path.exists() or path.suffix != ".jsonl":
+        return
+    if is_codex_subagent_log(path):
         return
     cwd = cwd_extractor(path)
     if not cwd:

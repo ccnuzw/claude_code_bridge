@@ -1773,7 +1773,17 @@ def test_native_cli_launcher_builds_provider_state_payload(
     if provider == 'crush':
         assert visible_parts == [default_executable, '--data-dir', str(state_dir / 'data'), '--demo']
     elif provider == 'grok':
-        assert visible_parts == [default_executable, '--no-auto-update', '--cwd', str(plan.workspace_path), '--demo']
+        assert visible_parts == [
+            default_executable,
+            '--no-auto-update',
+            '--minimal',
+            '--cwd',
+            str(plan.workspace_path),
+            '--demo',
+        ]
+        assert payload['grok_skill_permissions_enabled'] is False
+        assert (state_dir / 'home' / '.grok' / 'skills' / 'ask' / 'SKILL.md').is_file()
+        assert (state_dir / 'home' / '.grok' / 'skills' / 'ccb-clear' / 'SKILL.md').is_file()
     elif provider == 'pi':
         assert f'PI_CODING_AGENT_DIR={shlex.quote(str(state_dir / "home"))}' in start_cmd
         assert f'PI_CODING_AGENT_SESSION_DIR={shlex.quote(str(state_dir / "sessions"))}' in start_cmd
@@ -1826,6 +1836,76 @@ def test_grok_launcher_projects_system_login_into_managed_home(
     assert (managed_home / '.grok' / 'auth.json').read_text(encoding='utf-8') == '{"token":"system-login"}\n'
     assert (managed_home / '.grok' / 'config.toml').read_text(encoding='utf-8') == 'model = "grok-test"\n'
     assert f'HOME={shlex.quote(str(managed_home))}' in start_cmd
+
+
+def test_grok_launcher_allows_only_ccb_skill_commands_on_normal_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / 'source-home'
+    (source_home / '.grok').mkdir(parents=True)
+    monkeypatch.setattr(grok_home, 'current_provider_source_home', lambda: source_home)
+    project_root = tmp_path / 'repo-grok-skill-permissions'
+    command = ParsedStartCommand(project=None, agent_names=('grok1',), restore=True, auto_permission=True)
+    ctx = _context(project_root, command)
+    spec = _spec('grok1', provider='grok')
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    plan.workspace_path.mkdir(parents=True, exist_ok=True)
+    runtime_dir = ctx.paths.agent_provider_runtime_dir('grok1', 'grok')
+    launcher = build_default_runtime_launcher_map(include_optional=True)['grok']
+
+    prepared = launcher.prepare_launch_context(ctx, spec, plan, runtime_dir, {})
+    start_cmd = launcher.build_start_cmd(command, spec, runtime_dir, 'sess-grok', prepared_state=prepared)
+    payload = launcher.build_session_payload(
+        ctx,
+        spec,
+        plan,
+        runtime_dir,
+        plan.workspace_path,
+        '%42',
+        'CCB-grok1',
+        start_cmd,
+        'sess-grok',
+        prepared,
+    )
+    visible_parts = shlex.split(start_cmd.rsplit('; ', 1)[-1])
+
+    assert visible_parts.count('--allow') == 2
+    assert 'Bash(command ask *)' in visible_parts
+    assert 'Bash(command ccb clear*)' in visible_parts
+    assert '--minimal' in visible_parts
+    assert '--always-approve' not in visible_parts
+    assert payload['grok_skill_permissions_enabled'] is True
+
+
+def test_grok_launcher_disables_projection_and_permissions_when_inheritance_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / 'source-home'
+    (source_home / '.grok').mkdir(parents=True)
+    monkeypatch.setattr(grok_home, 'current_provider_source_home', lambda: source_home)
+    project_root = tmp_path / 'repo-grok-skills-disabled'
+    command = ParsedStartCommand(project=None, agent_names=('grok1',), restore=True, auto_permission=True)
+    ctx = _context(project_root, command)
+    spec = _spec('grok1', provider='grok')
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    plan.workspace_path.mkdir(parents=True, exist_ok=True)
+    runtime_dir = ctx.paths.agent_provider_runtime_dir('grok1', 'grok')
+    _write_provider_profile(
+        runtime_dir,
+        ResolvedProviderProfile(provider='grok', agent_name='grok1', inherit_skills=False),
+    )
+    launcher = build_default_runtime_launcher_map(include_optional=True)['grok']
+
+    prepared = launcher.prepare_launch_context(ctx, spec, plan, runtime_dir, {})
+    start_cmd = launcher.build_start_cmd(command, spec, runtime_dir, 'sess-grok', prepared_state=prepared)
+    managed_home = ctx.paths.agent_provider_state_dir('grok1', 'grok') / 'home'
+
+    assert '--allow' not in shlex.split(start_cmd.rsplit('; ', 1)[-1])
+    assert prepared['grok_skill_permissions_enabled'] is False
+    assert not (managed_home / '.grok' / 'skills' / 'ask').exists()
+    assert not (managed_home / '.grok' / 'skills' / 'ccb-clear').exists()
 
 
 def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypatch, tmp_path: Path) -> None:

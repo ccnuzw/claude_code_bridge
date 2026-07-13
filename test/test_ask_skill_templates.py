@@ -15,6 +15,7 @@ def test_shell_ask_skill_templates_use_short_ask_command() -> None:
         'inherit_skills/droid_skills/ask/SKILL.md',
         'inherit_skills/droid_skills/ask.md',
         'inherit_skills/gemini_skills/ask/SKILL.md',
+        'inherit_skills/grok_skills/ask/SKILL.md',
         'inherit_skills/kimi_skills/ask/SKILL.md',
         'inherit_skills/mimo_skills/ask.md',
         'inherit_skills/opencode_skills/ask.md',

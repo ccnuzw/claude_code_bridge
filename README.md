@@ -6,7 +6,7 @@
 **Coordinate Codex, Claude, Gemini, and other CLI agents in visible, controllable workflows you can take over**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.1.3-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.1.4-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -180,9 +180,9 @@ This command guides installation and configuration.
 <details>
 <summary><b>Mobile App details, safety boundary, and source</b></summary>
 
-CCB 8.1.3 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
+CCB 8.1.4 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
 
-- [Download CCB Mobile v8.1.3 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.1.3/ccb-mobile-v8.1.3.apk)
+- [Download CCB Mobile v8.1.4 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.1.4/ccb-mobile-v8.1.4.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -264,6 +264,17 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 <a id="release-notes"></a>
 
 ## Release Notes
+
+<details open>
+<summary><b>v8.1.4</b> - Codex subagent isolation and Grok native skills</summary>
+
+- Prevented Codex native subagent rollouts from capturing CCB request binding or replacing the authoritative parent session and turn.
+- Kept built-in subagent activity, messages, and completion events inside the parent agent's collaboration flow instead of returning them to the CCB caller.
+- Matched the isolation behavior in the Python runtime and Rust accelerator, with an authenticated `spawn_agent` regression proving that callers receive only the parent final reply.
+- Added independently projected native `ask` and `ccb-clear` skills to each managed Grok home, with only the two required command permissions.
+- Refreshed inherited system Grok login state before startup and routed CCB requests through each agent's visible native Grok session; authenticated two-agent testing passed visible ask, result recovery, named clear, and post-clear isolation.
+
+</details>
 
 <details open>
 <summary><b>v8.1.3</b> - Mobile interaction reliability and Grok completion</summary>

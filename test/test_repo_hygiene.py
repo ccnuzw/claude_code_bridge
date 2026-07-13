@@ -65,6 +65,7 @@ def test_inherited_skills_live_under_inherit_skills_only() -> None:
         "codex_skills",
         "droid_skills",
         "gemini_skills",
+        "grok_skills",
         "kimi_skills",
         "mimo_skills",
         "opencode_skills",
@@ -78,6 +79,8 @@ def test_inherited_skills_live_under_inherit_skills_only() -> None:
     assert (inherited / "codex_skills" / "ask" / "SKILL.md").is_file()
     assert (inherited / "droid_skills" / "ask" / "SKILL.md").is_file()
     assert (inherited / "gemini_skills" / "ask" / "SKILL.md").is_file()
+    assert (inherited / "grok_skills" / "ask" / "SKILL.md").is_file()
+    assert (inherited / "grok_skills" / "ccb-clear" / "SKILL.md").is_file()
     assert (inherited / "kimi_skills" / "ask" / "SKILL.md").is_file()
     assert (inherited / "mimo_skills" / "ask.md").is_file()
     assert (inherited / "opencode_skills" / "ask.md").is_file()
@@ -102,6 +105,7 @@ def test_inherited_skill_set_is_minimal() -> None:
         "codex_skills": {"ask", "ccb-clear"},
         "droid_skills": {"ask"},
         "gemini_skills": {"ask"},
+        "grok_skills": {"ask", "ccb-clear"},
         "kimi_skills": {"ask"},
     }
     for provider_root, expected_names in expected.items():
@@ -165,7 +169,7 @@ def test_inherited_codex_skill_names_are_valid_and_match_directories() -> None:
 
 def test_full_ccb_config_skill_is_not_inherited() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    for provider_root in ("claude_skills", "codex_skills"):
+    for provider_root in ("claude_skills", "codex_skills", "grok_skills"):
         assert not (repo_root / "inherit_skills" / provider_root / "ccb-config").exists()
 
 

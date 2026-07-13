@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from completion.models import CompletionItemKind, CompletionSourceKind
 from provider_backends.codex.execution_runtime.polling import poll_submission
+from provider_backends.codex.execution_runtime.polling_runtime import process_entry
 from provider_backends.codex.execution_runtime.state_machine_runtime import (
     CodexPollState,
     handle_assistant_entry,
@@ -149,3 +150,60 @@ def test_handle_terminal_entry_emits_turn_aborted_payload() -> None:
     assert poll.items[0].payload["reason"] == "cancelled"
     assert poll.items[0].payload["status"] == "cancelled"
     assert poll.items[0].payload["error_message"] == "user cancelled"
+
+
+def test_codex_completion_ignores_subagent_content_and_foreign_terminal() -> None:
+    poll = CodexPollState(
+        request_anchor="job_1",
+        next_seq=1,
+        anchor_seen=False,
+        bound_turn_id="",
+        bound_task_id="",
+        reply_buffer="",
+        last_agent_message="",
+        last_final_answer="",
+        last_assistant_message="",
+        last_assistant_signature="",
+        session_path="/tmp/parent.jsonl",
+    )
+    submission = _submission()
+    entries = [
+        {"role": "system", "payload_type": "task_started", "turn_id": "historical-turn"},
+        {"role": "system", "payload_type": "task_started", "turn_id": "parent-turn"},
+        {"role": "user", "text": "CCB_REQ_ID: job_1\nrequest"},
+        {
+            "role": "assistant",
+            "text": "child final must stay internal",
+            "phase": "final_answer",
+            "turn_id": "child-turn",
+            "timestamp": "2026-04-06T00:00:01Z",
+        },
+        {
+            "role": "system",
+            "payload_type": "task_complete",
+            "turn_id": "child-turn",
+            "last_agent_message": "child final must stay internal",
+        },
+        {
+            "role": "assistant",
+            "text": "parent synthesized answer",
+            "phase": "final_answer",
+            "turn_id": "parent-turn",
+            "timestamp": "2026-04-06T00:00:02Z",
+        },
+        {
+            "role": "system",
+            "payload_type": "task_complete",
+            "turn_id": "parent-turn",
+            "last_agent_message": "parent synthesized answer",
+        },
+    ]
+    for entry in entries:
+        process_entry(submission, poll, entry, now="2026-04-06T00:01:00Z")
+
+    assert poll.bound_turn_id == "parent-turn"
+    assert poll.reached_terminal is True
+    assert poll.reply_buffer == "parent synthesized answer"
+    assert all("child final" not in str(item.payload) for item in poll.items)
+    assert poll.items[-1].kind is CompletionItemKind.TURN_BOUNDARY
+    assert poll.items[-1].payload["last_agent_message"] == "parent synthesized answer"

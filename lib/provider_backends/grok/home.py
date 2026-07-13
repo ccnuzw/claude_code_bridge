@@ -5,6 +5,8 @@ import shutil
 
 from provider_core.source_home import current_provider_source_home
 
+from .skills import materialize_grok_skills
+
 
 _GROK_AUTH_FILES = (
     Path('.grok') / 'auth.json',
@@ -31,6 +33,7 @@ def materialize_grok_home(
     if _inherits_config(profile):
         for relative in _GROK_CONFIG_FILES:
             _sync_file(source / relative, target / relative)
+    materialize_grok_skills(target, profile=profile)
     return target
 
 

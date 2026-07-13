@@ -555,6 +555,30 @@ Diagnostics should expose `delivery_failure_kind`, `delivery_retryable`, the
 checked log/workspace paths, and the delivery timeout so operators can choose an
 explicit retry without risking duplicate downstream side effects.
 
+#### 10.1.6 Fence Native Subagent Completion From CCB Replies
+
+Codex native subagents may create a second rollout under the managed agent's
+private session root with the same workspace `cwd`. When the native child forks
+the parent conversation it may also inherit the active `CCB_REQ_ID`, while
+emitting its own `task_started`, collaboration messages, and `task_complete`.
+That child evidence is not completion authority for the CCB job assigned to the
+parent Codex agent.
+
+The Codex adapter must enforce both boundaries:
+
+- session binding excludes rollouts identified by
+  `session_meta.thread_source = subagent` or equivalent native subagent
+  provenance from scanning, watchdog updates, persistence, rotation, and
+  recovery
+- completion binds the top-level parent `turn_id` once and ignores assistant or
+  terminal events carrying a different turn id; native collaboration
+  `agent_message` content must not enter the reply buffer
+
+The callback/mailbox layer continues routing by the original CCB job lineage.
+It must never need to infer native provider parentage from reply text. Both
+plain `ask` and `ask --chain` therefore receive only the CCB target agent's
+top-level final reply, not a native subagent result.
+
 ### 10.2 Gemini
 
 Gemini currently has the most fragile turn attribution.

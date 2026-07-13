@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from .binding import (
     SESSION_ID_PATTERN,
+    codex_session_meta_payload,
     extract_cwd_from_log_file,
     extract_session_id,
+    is_codex_subagent_log,
     parse_instance_from_codex_session_name,
     resolve_unique_codex_session_target,
 )
@@ -48,6 +50,7 @@ __all__ = [
     'ask_sync',
     'CodexBindingState',
     'SESSION_ID_PATTERN',
+    'codex_session_meta_payload',
     'capture_log_reader_state',
     'check_session_health',
     'check_tmux_runtime_health',
@@ -68,6 +71,7 @@ __all__ = [
     'get_status',
     'handle_codex_log_event',
     'initialize_state',
+    'is_codex_subagent_log',
     'iter_lines_reverse',
     'latest_conversations',
     'latest_log',

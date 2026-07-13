@@ -11,15 +11,19 @@ import pytest
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
 from completion.models import CompletionItemKind, CompletionSourceKind, CompletionStatus
 from provider_backends.grok import home as grok_home
-from provider_backends.grok.execution import _grok_session_id_for_job, observe_grok_output
+from provider_backends.grok.execution import (
+    _grok_session_id_for_job,
+    build_headless_execution_adapter,
+    observe_grok_output,
+)
 from provider_backends.zai.execution import observe_zai_output
 from provider_core.pathing import session_filename_for_agent
 from provider_core.registry import build_default_backend_registry
 from provider_execution.base import ProviderRuntimeContext, ProviderSubmission
 
 
-PROVIDERS = ("qwen", "cursor", "copilot", "crush", "grok", "kiro", "pi", "zai")
-STRUCTURED_PROVIDERS = ("qwen", "cursor", "copilot", "grok", "pi")
+PROVIDERS = ("qwen", "cursor", "copilot", "crush", "kiro", "pi", "zai")
+STRUCTURED_PROVIDERS = ("qwen", "cursor", "copilot", "pi")
 
 
 def _job(provider: str, work_dir: Path) -> JobRecord:
@@ -148,7 +152,7 @@ def test_grok_provider_adapter_projects_system_login_and_uses_uuid_session(
     _write_session("grok", work_dir)
     _install_stub(monkeypatch, "grok")
 
-    adapter = _adapter("grok")
+    adapter = build_headless_execution_adapter()
     job = _job("grok", work_dir)
     submission = adapter.start(job, context=_runtime_context("grok", work_dir), now="2026-06-13T00:00:00Z")
 
@@ -173,7 +177,7 @@ def test_grok_provider_adapter_requires_native_terminal_event(monkeypatch, tmp_p
     _write_session("grok", work_dir)
     _install_stub(monkeypatch, "grok", mode="no_terminal")
 
-    adapter = _adapter("grok")
+    adapter = build_headless_execution_adapter()
     submission = adapter.start(
         _job("grok", work_dir),
         context=_runtime_context("grok", work_dir),
@@ -195,7 +199,7 @@ def test_grok_provider_adapter_reports_native_cancelled_end(monkeypatch, tmp_pat
     _write_session("grok", work_dir)
     _install_stub(monkeypatch, "grok", mode="cancelled")
 
-    adapter = _adapter("grok")
+    adapter = build_headless_execution_adapter()
     submission = adapter.start(
         _job("grok", work_dir),
         context=_runtime_context("grok", work_dir),

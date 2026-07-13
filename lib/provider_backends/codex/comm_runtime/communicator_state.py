@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from provider_core.runtime_specs import provider_marker_prefix
+from provider_backends.codex.comm_runtime.binding_runtime.log_meta import is_codex_subagent_log
 from provider_backends.codex.session_runtime.follow_policy import codex_session_root_path, should_follow_workspace_sessions
 
 
@@ -115,11 +116,14 @@ def _terminal_name(session_info: dict) -> str:
 def _log_reader_kwargs(comm) -> dict[str, object]:
     session_info = comm.session_info
     work_dir = _work_dir_path(comm.session_info)
+    bound_log = _session_log_path(session_info)
+    invalid_subagent_binding = bound_log is not None and is_codex_subagent_log(bound_log)
     kwargs: dict[str, object] = {
-        "log_path": comm.session_info.get("codex_session_path"),
-        "session_id_filter": comm.session_info.get("codex_session_id"),
+        "log_path": None if invalid_subagent_binding else comm.session_info.get("codex_session_path"),
+        "session_id_filter": None if invalid_subagent_binding else comm.session_info.get("codex_session_id"),
         "work_dir": work_dir,
-        "follow_workspace_sessions": should_follow_workspace_sessions(
+        "follow_workspace_sessions": invalid_subagent_binding
+        or should_follow_workspace_sessions(
             work_dir=work_dir,
             session_file=_session_file_path(session_info),
             session_data=session_info,
@@ -136,6 +140,16 @@ def _work_dir_path(session_info: dict) -> Path | None:
     if not work_dir_raw:
         return None
     return Path(work_dir_raw).expanduser()
+
+
+def _session_log_path(session_info: dict) -> Path | None:
+    raw = str(session_info.get("codex_session_path") or "").strip()
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser()
+    except Exception:
+        return None
 
 
 def _session_file_path(session_info: dict) -> Path | None:

@@ -16,6 +16,9 @@ Current active incidents:
 - Codex-backed workers can consume the mailbox `task_request` while the
   pane-backed Codex session never records the active `CCB_REQ_ID`, eventually
   failing with `codex_prompt_delivery_failed / delivery_anchor_missing`.
+- Codex native subagents can fork the parent conversation, inherit the same
+  `CCB_REQ_ID`, and emit a separate `task_complete`; that child rollout and
+  child result must never become the CCB target agent's caller-visible reply.
 
 ## Authority
 
@@ -53,7 +56,8 @@ In scope:
 - Focused tests for Claude `end_turn`, subagents, tool-use turns, empty reply,
   callback/silence compatibility, and timeout fallback.
 - Focused tests for Codex stale PID/session binding, delivery preflight,
-  `delivery_anchor_missing` diagnostics, and maintenance heartbeat visibility.
+  `delivery_anchor_missing` diagnostics, native subagent session/turn fencing,
+  and maintenance heartbeat visibility.
 - Follow-up planning, deferred to later slices, for
   provider-finished-but-CCB-not-terminal suspicion evidence used by
   maintenance heartbeat and `ccb_self`.

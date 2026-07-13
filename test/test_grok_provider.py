@@ -5,9 +5,17 @@ from pathlib import Path
 from types import SimpleNamespace
 import uuid
 
-from provider_backends.grok.execution import _build_command, observe_grok_output
+from agents.models import ProviderProfileSpec
+from completion.models import CompletionItemKind, CompletionSourceKind, CompletionStatus
+from project.ids import compute_project_id
+from provider_backends.grok import home as grok_home
+from provider_backends.grok import pane_execution
+from provider_backends.grok.execution import _build_command, _build_env, observe_grok_output
+from provider_backends.grok.pane_execution import GrokPaneExecutionAdapter
+from provider_backends.grok.skills import grok_ccb_skills_ready, materialize_grok_skills
 from provider_backends.native_cli_support import NativeCliExecutionRequest
 from provider_backends.native_cli_support.prompt import wrap_native_prompt
+from provider_execution.base import ProviderRuntimeContext
 
 
 def _req(prompt: str = 'review this', work_dir: str = '/tmp/wd', session_data: dict | None = None) -> NativeCliExecutionRequest:
@@ -56,11 +64,267 @@ def test_grok_command_session_data_overrides_env(monkeypatch) -> None:
     assert cmd[cmd.index('--reasoning-effort') + 1] == 'xhigh'
 
 
+def test_grok_skills_project_per_home_and_disable_without_touching_provider_skills(tmp_path: Path) -> None:
+    home = tmp_path / 'managed-home'
+    bundled = home / '.grok' / 'skills' / 'help' / 'SKILL.md'
+    bundled.parent.mkdir(parents=True)
+    bundled.write_text('provider help\n', encoding='utf-8')
+
+    active = materialize_grok_skills(home, profile=ProviderProfileSpec(inherit_skills=True))
+    repeated = materialize_grok_skills(home, profile=ProviderProfileSpec(inherit_skills=True))
+
+    assert active == ('ask', 'ccb-clear')
+    assert repeated == active
+    assert grok_ccb_skills_ready(home) is True
+    for skill_name in active:
+        assert (home / '.grok' / 'skills' / skill_name / 'SKILL.md').is_file()
+        assert (home / '.grok' / 'skills' / f'{skill_name}.ccb-projection.json').is_file()
+    assert bundled.read_text(encoding='utf-8') == 'provider help\n'
+
+    disabled = materialize_grok_skills(home, profile=ProviderProfileSpec(inherit_skills=False))
+
+    assert disabled == ()
+    assert grok_ccb_skills_ready(home) is False
+    assert not (home / '.grok' / 'skills' / 'ask').exists()
+    assert not (home / '.grok' / 'skills' / 'ccb-clear').exists()
+    assert bundled.read_text(encoding='utf-8') == 'provider help\n'
+
+
+def test_grok_skill_projection_preserves_unmarked_conflict(tmp_path: Path) -> None:
+    home = tmp_path / 'managed-home'
+    conflict = home / '.grok' / 'skills' / 'ask' / 'SKILL.md'
+    conflict.parent.mkdir(parents=True)
+    conflict.write_text('user owned ask\n', encoding='utf-8')
+
+    active = materialize_grok_skills(home, profile=ProviderProfileSpec(inherit_skills=True))
+
+    assert active == ('ccb-clear',)
+    assert conflict.read_text(encoding='utf-8') == 'user owned ask\n'
+    assert not (home / '.grok' / 'skills' / 'ask.ccb-projection.json').exists()
+    assert grok_ccb_skills_ready(home) is False
+
+
+def test_grok_headless_command_and_env_use_managed_skills_and_exact_caller(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / 'source-home'
+    (source_home / '.grok').mkdir(parents=True)
+    monkeypatch.setattr(grok_home, 'current_provider_source_home', lambda: source_home)
+    project = tmp_path / 'repo'
+    runtime_dir = project / '.ccb' / 'agents' / 'grok1' / 'provider-runtime' / 'grok'
+    home = project / '.ccb' / 'agents' / 'grok1' / 'provider-state' / 'grok' / 'home'
+    session_data = {
+        'agent_name': 'grok1',
+        'runtime_dir': str(runtime_dir),
+        'grok_home': str(home),
+        'ccb_session_id': 'ccb-grok1-test',
+        'grok_skill_permissions_enabled': True,
+    }
+    request = _req(work_dir=str(project), session_data=session_data)
+
+    cmd = _build_command(request)
+    env = _build_env(request)
+
+    assert cmd.count('--allow') == 2
+    assert 'Bash(command ask *)' in cmd
+    assert 'Bash(command ccb clear*)' in cmd
+    assert env['HOME'] == str(home)
+    assert env['CCB_CALLER_ACTOR'] == 'grok1'
+    assert env['CCB_CALLER_RUNTIME_DIR'] == str(runtime_dir)
+    assert env['CCB_CALLER_PROJECT_ROOT'] == str(project)
+    assert env['CCB_CALLER_PROJECT_ID'] == compute_project_id(project)
+    assert env['CCB_SESSION_ID'] == 'ccb-grok1-test'
+
+
+def test_grok_headless_command_does_not_allow_skill_commands_without_session_policy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source_home = tmp_path / 'source-home'
+    (source_home / '.grok').mkdir(parents=True)
+    monkeypatch.setattr(grok_home, 'current_provider_source_home', lambda: source_home)
+    home = tmp_path / 'managed-home'
+
+    cmd = _build_command(_req(session_data={'grok_home': str(home)}))
+
+    assert '--allow' not in cmd
+
+
 def test_grok_prompt_uses_request_anchor_without_semantic_done_marker() -> None:
     prompt = wrap_native_prompt('review this', 'job_grok_native_end')
 
     assert 'CCB_REQ_ID: job_grok_native_end' in prompt
     assert 'CCB_DONE' not in prompt
+
+
+class _FakeGrokSession:
+    def __init__(self, home: Path) -> None:
+        self.data = {'grok_home': str(home)}
+
+    def ensure_pane(self) -> tuple[bool, str]:
+        return True, '%9'
+
+
+class _FakeGrokBackend:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send_text_to_pane(self, pane_id: str, text: str) -> None:
+        self.sent.append((pane_id, text))
+
+    def is_tmux_pane_alive(self, pane_id: str) -> bool:
+        return pane_id == '%9'
+
+
+def _pane_job(*, message_type: str = 'ask', no_wrap: bool = False):
+    return SimpleNamespace(
+        job_id='job_grok_pane_1',
+        agent_name='grok1',
+        provider='grok',
+        provider_instance=None,
+        provider_options={'no_wrap': True} if no_wrap else {},
+        request=SimpleNamespace(body='visible request', message_type=message_type),
+    )
+
+
+def _pane_context(tmp_path: Path) -> ProviderRuntimeContext:
+    return ProviderRuntimeContext(
+        agent_name='grok1',
+        workspace_path=str(tmp_path),
+        backend_type='pane-backed',
+        runtime_ref='%9',
+        session_ref=str(tmp_path / '.ccb' / '.grok-grok1-session'),
+    )
+
+
+def _write_pane_events(home: Path, events: list[dict]) -> None:
+    path = home / '.grok' / 'sessions' / 'repo' / 'session-visible' / 'updates.jsonl'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        ''.join(json.dumps(event, ensure_ascii=True) + '\n' for event in events),
+        encoding='utf-8',
+    )
+
+
+def test_grok_pane_adapter_sends_to_visible_pane_and_finishes_from_native_turn_event(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / 'managed-home'
+    backend = _FakeGrokBackend()
+    session = _FakeGrokSession(home)
+    monkeypatch.setattr(pane_execution, '_load_session', lambda work_dir, agent_name: session)
+    monkeypatch.setattr(pane_execution, 'get_backend_for_session', lambda data: backend)
+    adapter = GrokPaneExecutionAdapter()
+
+    submission = adapter.start(
+        _pane_job(),
+        context=_pane_context(tmp_path),
+        now='2026-07-13T00:00:00Z',
+    )
+
+    assert submission.source_kind is CompletionSourceKind.SESSION_EVENT_LOG
+    assert submission.runtime_state['mode'] == 'grok_pane'
+    assert backend.sent[0][0] == '%9'
+    assert 'CCB_REQ_ID: job_grok_pane_1' in backend.sent[0][1]
+    assert 'CCB_DONE' not in backend.sent[0][1]
+
+    _write_pane_events(
+        home,
+        [
+            {
+                'method': 'session/update',
+                'params': {
+                    'sessionId': 'session-visible',
+                    'update': {
+                        'sessionUpdate': 'user_message_chunk',
+                        'content': {'type': 'text', 'text': backend.sent[0][1]},
+                    },
+                },
+            },
+            {
+                'method': 'session/update',
+                'params': {
+                    'sessionId': 'session-visible',
+                    'update': {
+                        'sessionUpdate': 'agent_message_chunk',
+                        'content': {'type': 'text', 'text': 'visible reply'},
+                    },
+                },
+                '_meta': {'promptId': 'prompt-visible'},
+            },
+            {
+                'method': '_x.ai/session/update',
+                'params': {
+                    'sessionId': 'session-visible',
+                    'update': {
+                        'sessionUpdate': 'turn_completed',
+                        'prompt_id': 'prompt-visible',
+                        'stop_reason': 'end_turn',
+                    },
+                },
+            },
+        ],
+    )
+
+    result = adapter.poll(submission, now='2026-07-13T00:00:05Z')
+
+    assert result is not None and result.decision is not None
+    assert result.decision.status is CompletionStatus.COMPLETED
+    assert result.decision.reason == 'grok_run_stop'
+    assert result.decision.reply == 'visible reply'
+    assert [item.kind for item in result.items] == [
+        CompletionItemKind.ANCHOR_SEEN,
+        CompletionItemKind.ASSISTANT_FINAL,
+        CompletionItemKind.TURN_BOUNDARY,
+    ]
+
+
+def test_grok_reply_delivery_is_dispatched_to_visible_pane_without_headless_session(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / 'managed-home'
+    backend = _FakeGrokBackend()
+    session = _FakeGrokSession(home)
+    monkeypatch.setattr(pane_execution, '_load_session', lambda work_dir, agent_name: session)
+    monkeypatch.setattr(pane_execution, 'get_backend_for_session', lambda data: backend)
+    adapter = GrokPaneExecutionAdapter()
+
+    submission = adapter.start(
+        _pane_job(message_type='reply_delivery', no_wrap=True),
+        context=_pane_context(tmp_path),
+        now='2026-07-13T00:00:00Z',
+    )
+    result = adapter.poll(submission, now='2026-07-13T00:00:01Z')
+
+    assert backend.sent == [('%9', 'visible request')]
+    assert result is not None and result.decision is not None
+    assert result.decision.status is CompletionStatus.COMPLETED
+    assert result.decision.reason == 'reply_delivery_sent'
+    assert result.decision.diagnostics['submission_mode'] == 'grok_pane'
+
+
+def test_grok_pane_adapter_does_not_duplicate_existing_reply_guidance(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / 'managed-home'
+    backend = _FakeGrokBackend()
+    session = _FakeGrokSession(home)
+    monkeypatch.setattr(pane_execution, '_load_session', lambda work_dir, agent_name: session)
+    monkeypatch.setattr(pane_execution, 'get_backend_for_session', lambda data: backend)
+    job = _pane_job()
+    job.request.body = 'visible request\n\nCCB reply guidance:\n- Keep it short.'
+
+    GrokPaneExecutionAdapter().start(
+        job,
+        context=_pane_context(tmp_path),
+        now='2026-07-13T00:00:00Z',
+    )
+
+    assert backend.sent[0][1].count('CCB reply guidance:') == 1
 
 
 def test_grok_observer_extracts_text_from_aggregated_json(tmp_path: Path) -> None:

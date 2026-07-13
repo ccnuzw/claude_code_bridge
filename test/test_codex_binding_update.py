@@ -65,6 +65,37 @@ def test_update_project_session_binding_records_old_binding_and_resumes(tmp_path
     ]
 
 
+def test_update_project_session_binding_rejects_native_subagent_log(tmp_path: Path) -> None:
+    session_file = tmp_path / ".ccb" / ".codex-agent1-session"
+    session_file.parent.mkdir(parents=True)
+    original = {"active": True, "work_dir": str(tmp_path)}
+    session_file.write_text(json.dumps(original), encoding="utf-8")
+    child_log = tmp_path / "123e4567-e89b-12d3-a456-426614174999.jsonl"
+    child_log.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "cwd": str(tmp_path),
+                    "thread_source": "subagent",
+                    "source": {"subagent": {"thread_spawn": {"parent_thread_id": "parent"}}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    state = update_project_session_binding(
+        project_file=session_file,
+        log_path=child_log,
+        session_info={"work_dir": str(tmp_path)},
+    )
+
+    assert state is None
+    assert json.loads(session_file.read_text(encoding="utf-8")) == original
+
+
 def test_binding_tracker_defaults_to_low_idle_poll_rate(tmp_path, monkeypatch):
     from provider_backends.codex.bridge_runtime.binding_runtime import CodexBindingTracker
 
