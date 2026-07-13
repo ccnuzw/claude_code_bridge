@@ -101,3 +101,14 @@ checks include `rework_exactly_once` and, in one run, release, dynamic-agent,
 and child-worktree residue. A targeted two-case rerun passed, which is evidence
 of non-determinism rather than acceptance. The race or cross-scenario state
 leak must be reproduced, repaired, and retested before the full source gate.
+
+Persistent fresh-root evidence narrowed this to a scheduler authority error,
+not cross-scenario contamination. The first Worker-owned Reviewer chain
+returns `rework_required` and its callback continuation completes, but the
+original Worker job is already terminal. The scheduler then tries a second
+`ask --chain ... reviewer from worker`; CCB correctly rejects it because that
+sender has no active parent job. On the failing path the round records
+`rework_count=0`, no Worker-rework job, no Reviewer recheck, and
+`review_chain_final_rework_required`. The runtime must create a fresh
+Worker-rework parent job before the second Reviewer chain; the smoke harness
+must not manufacture or bypass that authority.

@@ -4,7 +4,7 @@ Date: 2026-07-13
 Status: In progress — G6C root14 repairs landed, rework smoke stability blocker active
 Branch: `workflow/g6c-integration`
 Worktree: `/home/bfly/yunwei/ccb_worktrees/g6c-integration`
-Current HEAD before this status update: `3a4b41da`
+Current HEAD before this status update: `81d8d060`
 
 ## Current Phase
 
@@ -85,11 +85,13 @@ Earlier accepted R1 authority/runtime evidence remains indexed at
 
 ## Blocked By
 
-Blocked from root15 by a source/fake rework exact-once and cleanup stability
-failure: complete smoke runs passed only `37/39` and `38/39`, while a targeted
-two-case rerun passed. Production readiness also remains gated by fresh real
-root15 acceptance, the remaining G6 matrix, and G7 package/install/update/
-rollback acceptance.
+Blocked from root15 by a source/fake rework authority failure. After the first
+Worker-owned Reviewer chain returns `rework_required`, the original Worker job
+is terminal; the scheduler attempts a second `ask --chain ... reviewer from
+worker` without creating a fresh Worker-rework parent job, and CCB correctly
+rejects it because the sender has no active parent job. Production readiness
+also remains gated by fresh real root15 acceptance, the remaining G6 matrix,
+and G7 package/install/update/rollback acceptance.
 
 ## Acceptance Ownership
 
@@ -148,6 +150,15 @@ independent work whose successful result is not needed upstream.
   `rework_exactly_once` and on the second run release/dynamic/worktree residue.
   A targeted two-case rerun passed, so the instability remains unclosed rather
   than waived as flaky.
+- Direct persistent-root reproduction confirmed the authority race. In
+  `/home/bfly/yunwei/test_ccb2/g5-rework-exhausted-talk2-20260713-01`, the
+  Reviewer and callback continuation completed, but the round terminated with
+  `review_chain_final_rework_required`, `rework_count=0`, no Worker-rework job,
+  and no Reviewer recheck. A separate pass root at
+  `/home/bfly/yunwei/test_ccb2/g5-rework-pass-talk2-20260713-01` completed with
+  `rework_count=1`. Worker3 independently preserved the exact second-chain
+  rejection at
+  `/home/bfly/yunwei/test_ccb2/single-lane-isolation-job-9b36df922204/solo-pass/test_real_cli_fake_runtime_sce0/g5-real-cli-reviewer_rework_pass`.
 
 ## Non-Claims
 

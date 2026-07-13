@@ -1341,7 +1341,10 @@ repairs and rerun the full source gate before a fresh root15. Those repairs
 landed through `3a4b41da` and their focused gates pass, but two complete
 single-lane smoke runs exposed non-deterministic reviewer-rework exact-once
 and cleanup failures (`37/39` and `38/39`). Root15 remains forbidden until
-that source stability blocker and the full source gate close. See
+that source stability blocker and the full source gate close. Persistent-root
+evidence now shows the exact authority gap: after the first review chain, the
+original Worker is terminal and the scheduler attempts the second Reviewer
+chain without first creating a fresh Worker-rework parent job. See
 [history/g6c-root13-planner-terminal-constraint-diagnostic-20260713.md](history/g6c-root13-planner-terminal-constraint-diagnostic-20260713.md).
 See also
 [history/g6c-root14-orchestrator-fence-diagnostic-20260713.md](history/g6c-root14-orchestrator-fence-diagnostic-20260713.md).
