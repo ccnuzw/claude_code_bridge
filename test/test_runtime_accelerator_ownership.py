@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from project.ids import compute_project_id
 from runtime_accelerator.ownership import (
     ProcessIdentity,
     RuntimeAcceleratorOwnershipError,
+    inspect_process_identity,
     legacy_runtime_accelerator_pids,
     load_runtime_accelerator_owner,
     owner_manifest_path,
@@ -79,6 +81,61 @@ def test_recorded_owner_binds_project_socket_process_and_start_token(monkeypatch
     assert owner.project_root == project_root.resolve()
     assert owner.socket_path == socket_path.resolve()
     assert owner.start_token == "proc:100"
+
+
+def test_inspect_process_identity_uses_lsof_executable_without_procfs(monkeypatch, tmp_path: Path) -> None:
+    project_root = (tmp_path / "project").resolve()
+    project_root.mkdir()
+    executable = (tmp_path / "bin" / "ccb-runtime-accelerator").resolve()
+    socket_path = (tmp_path / "accelerator.sock").resolve()
+    monkeypatch.setattr("runtime_accelerator.ownership.is_pid_alive", lambda pid: True)
+    monkeypatch.setattr(
+        "runtime_accelerator.ownership._read_proc_argv",
+        lambda pid: ("ccb-runtime-accelerator", "serve", "--socket", str(socket_path)),
+    )
+    monkeypatch.setattr("runtime_accelerator.ownership.read_proc_path", lambda pid, entry: None)
+    monkeypatch.setattr(
+        "runtime_accelerator.ownership._read_process_cwd_via_lsof",
+        lambda pid: project_root,
+    )
+    monkeypatch.setattr(
+        "runtime_accelerator.ownership._read_process_executable_via_lsof",
+        lambda pid: executable,
+    )
+    monkeypatch.setattr(
+        "runtime_accelerator.ownership._read_process_start_token",
+        lambda pid: "ps:Tue Jul 14 16:00:00 2026",
+    )
+
+    assert inspect_process_identity(321) == ProcessIdentity(
+        pid=321,
+        argv=("ccb-runtime-accelerator", "serve", "--socket", str(socket_path)),
+        cwd=project_root,
+        executable=executable,
+        start_token="ps:Tue Jul 14 16:00:00 2026",
+    )
+
+
+def test_lsof_executable_reader_ignores_non_accelerator_text_mappings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "runtime_accelerator.ownership.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "p321\n"
+                "ftxt\n"
+                "n/usr/lib/dyld\n"
+                "ftxt\n"
+                "n/opt/ccb/bin/ccb-runtime-accelerator\n"
+            ),
+        ),
+    )
+
+    from runtime_accelerator import ownership
+
+    assert ownership._read_process_executable_via_lsof(321) == Path(
+        "/opt/ccb/bin/ccb-runtime-accelerator"
+    )
 
 
 def test_recorded_owner_waits_through_pre_exec_identity(monkeypatch, tmp_path: Path) -> None:

@@ -321,7 +321,7 @@ def inspect_process_identity(pid: int) -> ProcessIdentity | None:
     if not argv:
         argv = _split_cmdline(read_proc_cmdline(pid))
     cwd = read_proc_path(pid, "cwd") or _read_process_cwd_via_lsof(pid)
-    executable = read_proc_path(pid, "exe")
+    executable = read_proc_path(pid, "exe") or _read_process_executable_via_lsof(pid)
     if executable is None and argv:
         executable = _resolve_executable(argv[0], cwd=cwd)
     start_token = _read_process_start_token(pid)
@@ -482,6 +482,27 @@ def _read_process_cwd_via_lsof(pid: int) -> Path | None:
     for line in str(result.stdout or "").splitlines():
         if line.startswith("n") and len(line) > 1:
             return Path(line[1:])
+    return None
+
+
+def _read_process_executable_via_lsof(pid: int) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-p", str(int(pid)), "-d", "txt", "-Fn"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    for line in str(result.stdout or "").splitlines():
+        if not line.startswith("n") or len(line) <= 1:
+            continue
+        candidate = Path(line[1:])
+        if _is_accelerator_executable(candidate):
+            return candidate
     return None
 
 

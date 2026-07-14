@@ -10,6 +10,9 @@
 - **Lifecycle Jobs Build Their Accelerator**: Tests, Cross-Platform, and CCBD
   Real Platform jobs now build the repository's `ccb-runtime-accelerator`
   before asserting accelerator ownership and shutdown behavior.
+- **macOS Sidecar Identity Is Observable**: ccbd obtains the launched
+  accelerator's executable mapping through `lsof` when `/proc` is unavailable,
+  while preserving exact argv, cwd, socket, and start-token validation.
 - **WSL Uses A Current Rust Toolchain**: mounted-drive jobs install a minimal
   stable rustup toolchain instead of depending on an older distribution Cargo
   that may not support the repository lockfile.
