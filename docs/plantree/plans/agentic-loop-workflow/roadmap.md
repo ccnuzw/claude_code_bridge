@@ -40,9 +40,11 @@ Date: 2026-06-24
   [decisions/029-planner-feedback-and-task-set-closure.md](decisions/029-planner-feedback-and-task-set-closure.md)
   and
   [topics/planner-feedback-and-task-set-closure-plan.md](topics/planner-feedback-and-task-set-closure-plan.md).
-- Current work closes Decision 029 P5 from a fresh root9, then completes the
-  remaining G6 three/four-group, restart, busy-retain, and provider-profile
-  matrix from fresh opened projects under `/home/bfly/yunwei/test_ccb2`.
+- Current-main source acceptance is complete at `2c936a48`. Current work now
+  diagnoses zero-byte false-failed delegated callbacks, then completes the G6
+  visible Codex/Claude three/four-group, restart, busy-retain, and exact
+  provider/model matrix from fresh opened projects under
+  `/home/bfly/yunwei/test_ccb2`, followed by G7 installed-candidate gates.
 
 ## Done
 
@@ -1356,6 +1358,17 @@ root15 full five-route run. Remaining G6 three/four-workgroup, restart,
 busy-retain/sidebar, and exact provider/model weak-model repeat rows remain
 separate acceptance work. See
 [history/g6c-source-gate-and-root15-readiness-20260714.md](history/g6c-source-gate-and-root15-readiness-20260714.md).
+
+2026-07-14 current-main source checkpoint: the candidate integrates current
+main `ccac2034` through accepted code head `2c936a48`. Focused and historical
+failure gates passed `222` and `26` tests. A five-failure full run was rejected
+because its unexpanded `{RANDOM}` basetemp changed `shlex.quote` formatting;
+the exact five nodes then passed under a safe path. The final clean serial run
+passed `4992` tests with `2` skipped, and fourteen test-owned runtime projects
+were force-unmounted with zero post-cleanup process/listener/socket residue.
+Visible current-candidate provider qualification and G7 installed-candidate
+acceptance remain active. See
+[history/g6c-current-main-source-acceptance-20260714.md](history/g6c-current-main-source-acceptance-20260714.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from

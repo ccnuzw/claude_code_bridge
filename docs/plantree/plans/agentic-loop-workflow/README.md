@@ -92,6 +92,10 @@ recoverable workflow loops.
   accepted source/fake closure through `b14c66ef`, corrected full-suite
   environment contract, post-run live-residue audit, and fresh root15
   admission boundary.
+- [history/g6c-current-main-source-acceptance-20260714.md](history/g6c-current-main-source-acceptance-20260714.md):
+  accepted current-main source/fake candidate at `2c936a48`, including the
+  focused and historical-failure gates, rejected harness-path diagnosis,
+  clean full-suite proof, G7 safeguards, and zero-residue cleanup audit.
 - [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
   P2 post-acceptance deployment-readiness evidence for real-project
   frontdesk macro-intake pressure across direct, detail, macro-adjustment, and
