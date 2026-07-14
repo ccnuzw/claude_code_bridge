@@ -375,6 +375,13 @@ def test_push_delivery_is_device_bound_deduped_and_visible_target_scoped(tmp_pat
     assert sent[0][1]['dedupe_key'] == completion['dedupe_key']
     assert service.dispatch_delete('/v1/devices/me/push-token', second_headers)[0] == 200
     assert service._require_pairing_store().push_tokens_for_delivery() == [(str(first['device']['device_id']), 'token-first')]
+    status, audit_payload = service.dispatch_get('/v1/mobile/push/audit', second_headers)
+    assert status == 200
+    audit = audit_payload['audit']
+    assert audit['enabled'] is True
+    assert audit['attempted'] == 1
+    assert audit['suppressed_visible'] == 1
+    assert 'token-second' not in json.dumps(audit)
 
 
 def test_push_invalid_token_cleanup_revoke_and_scope_compatibility(tmp_path: Path) -> None:
@@ -436,6 +443,7 @@ def test_push_sender_timeout_does_not_block_completion_observation(tmp_path: Pat
 
     assert time.monotonic() - started < 0.2
     assert any(event['kind'] == 'task_completed' for event in service.notification_events_since('/v1/mobile/notifications?once=1', headers))
+    assert service.dispatch_get('/v1/mobile/push/audit', headers)[1]['audit']['timed_out'] == 1
 
 
 def test_notification_service_observes_only_explicit_project_views(tmp_path: Path) -> None:

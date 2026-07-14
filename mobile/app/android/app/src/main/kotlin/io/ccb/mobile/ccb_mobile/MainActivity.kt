@@ -23,6 +23,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        createDefaultNotificationChannel()
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "io.ccb.mobile/external_url"
@@ -134,6 +135,20 @@ class MainActivity : FlutterActivity() {
         requestPermissions(
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             postNotificationsRequestCode
+        )
+    }
+
+    private fun createDefaultNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(
+            NotificationChannel(
+                defaultNotificationChannelId,
+                "CCB task completion",
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
         )
     }
 
@@ -281,6 +296,7 @@ class MainActivity : FlutterActivity() {
             "ccb_task_completion_summary"
         private const val taskCompletionNotificationGroupKey =
             "io.ccb.mobile.ccb_mobile.TASK_COMPLETION_NOTIFICATIONS"
+        private const val defaultNotificationChannelId = "ccb_task_completion"
         private const val notificationTapAction =
             "io.ccb.mobile.ccb_mobile.TASK_COMPLETION_NOTIFICATION_TAP"
         private const val notificationPayloadExtra =

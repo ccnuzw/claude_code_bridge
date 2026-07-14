@@ -18,6 +18,7 @@ from mobile_gateway import (
     mobile_host_state_dir,
     parse_listen_address,
 )
+from mobile_gateway.fcm import build_fcm_sender_from_env, fcm_sender_runtime_options
 from mobile_gateway.relay import LocalRelayServerHarness, MobileGatewayRelayOutboundClient
 
 
@@ -25,21 +26,30 @@ from mobile_gateway.relay import LocalRelayServerHarness, MobileGatewayRelayOutb
 class MobileGatewayServeHandle:
     summary: dict[str, object]
     server: object
+    service: object | None = None
 
     def serve_forever(self) -> None:
         self.server.serve_forever()
 
     def close(self) -> None:
+        close_service = getattr(self.service, 'close', None)
+        if callable(close_service):
+            close_service()
         self.server.server_close()
 
 
 def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
     listen = parse_listen_address(command.listen)
+    push_sender, push_diagnostic, push_options = _push_sender_setup()
     service = MobileGatewayService(
         project_id=context.project.project_id,
         project_root=context.project.project_root,
         ccbd_client_factory=lambda: CcbdClient(context.paths.ccbd_socket_path),
         mobile_dir=context.paths.ccbd_mobile_dir,
+        push_sender=push_sender,
+        push_sender_timeout_seconds=float(push_options['timeout_seconds']),
+        push_sender_max_workers=int(push_options['max_workers']),
+        push_diagnostic=push_diagnostic,
     )
     server = build_mobile_gateway_server(listen, service)
     host, port = server.server_address[:2]
@@ -65,10 +75,12 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
             '/v1/health',
             '/v1/projects',
             '/v1/mobile/notifications',
+            '/v1/mobile/push/audit',
             '/v1/projects/{project_id}/view',
             '/v1/pairing/claim',
             '/v1/devices/me',
             '/v1/devices/me/presence',
+            '/v1/devices/me/push-token',
             '/v1/devices/{device_id}/revoke',
             '/v1/projects/{project_id}/lifecycle',
             '/v1/projects/{project_id}/focus-agent',
@@ -76,12 +88,14 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
             '/v1/projects/{project_id}/terminals',
             '/v1/terminals/{terminal_id}',
         ],
+        'push_sender': {**push_diagnostic, **push_options},
     }
     if relay_outbound is not None:
         summary['relay_outbound'] = relay_outbound
     return MobileGatewayServeHandle(
         summary=summary,
         server=server,
+        service=service,
     )
 
 
@@ -97,6 +111,7 @@ def prepare_server_mobile_gateway(
     resolved_host_id = str(host_id or '').strip() or _server_host_id()
     state_dir = mobile_host_state_dir()
     default_project = registry.default_project
+    push_sender, push_diagnostic, push_options = _push_sender_setup()
     service = MobileGatewayService(
         project_id=resolved_host_id,
         project_root=state_dir,
@@ -105,6 +120,10 @@ def prepare_server_mobile_gateway(
         project_registry=registry,
         project_registry_provider=_running_server_project_registry,
         mode='loopback_server_registry',
+        push_sender=push_sender,
+        push_sender_timeout_seconds=float(push_options['timeout_seconds']),
+        push_sender_max_workers=int(push_options['max_workers']),
+        push_diagnostic=push_diagnostic,
     )
     # Startup must not synchronously ping every registered project.  The
     # running gateway will fill its bounded health cache in the background.
@@ -157,9 +176,12 @@ def prepare_server_mobile_gateway(
             '/v1/health',
             '/v1/projects',
             '/v1/mobile/notifications',
+            '/v1/mobile/push/audit',
             '/v1/projects/{project_id}/view',
             '/v1/pairing/claim',
             '/v1/devices/me',
+            '/v1/devices/me/presence',
+            '/v1/devices/me/push-token',
             '/v1/devices/{device_id}/revoke',
             '/v1/projects/{project_id}/lifecycle',
             '/v1/projects/{project_id}/focus-agent',
@@ -167,13 +189,20 @@ def prepare_server_mobile_gateway(
             '/v1/projects/{project_id}/terminals',
             '/v1/terminals/{terminal_id}',
         ],
+        'push_sender': {**push_diagnostic, **push_options},
     }
     if relay_outbound is not None:
         summary['relay_outbound'] = relay_outbound
     return MobileGatewayServeHandle(
         summary=summary,
         server=server,
+        service=service,
     )
+
+
+def _push_sender_setup() -> tuple[object | None, dict[str, object], dict[str, object]]:
+    sender, diagnostic = build_fcm_sender_from_env()
+    return sender, diagnostic, fcm_sender_runtime_options()
 
 
 def _running_server_project_registry() -> MobileGatewayProjectRegistry:

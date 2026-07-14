@@ -802,6 +802,23 @@ def render_mobile_serve(summary) -> tuple[str, ...]:
     endpoints = payload.get('endpoints')
     if isinstance(endpoints, (list, tuple)):
         lines.append(f'endpoints: {", ".join(str(item) for item in endpoints)}')
+    push_sender = payload.get('push_sender')
+    if isinstance(push_sender, Mapping):
+        details = [
+            f'provider={push_sender.get("provider", "")}',
+            f'configured={str(bool(push_sender.get("configured"))).lower()}',
+        ]
+        if 'ready' in push_sender:
+            details.append(f'ready={str(bool(push_sender.get("ready"))).lower()}')
+        if push_sender.get('credential_source'):
+            details.append(f'credential_source={push_sender.get("credential_source", "")}')
+        if push_sender.get('reason'):
+            details.append(f'reason={push_sender.get("reason", "")}')
+        if push_sender.get('timeout_seconds') is not None:
+            details.append(f'timeout_seconds={push_sender.get("timeout_seconds")}')
+        if push_sender.get('max_workers') is not None:
+            details.append(f'max_workers={push_sender.get("max_workers")}')
+        lines.append('push_sender: ' + ' '.join(details))
     pairing = payload.get('pairing')
     if isinstance(pairing, Mapping):
         lines.extend(

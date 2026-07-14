@@ -78,12 +78,71 @@ project's compile gate because `firebase_messaging` could not resolve
 latest build-passing official FlutterFire pins above until the upstream package
 pair is buildable with this Flutter SDK.
 
-The remaining external requirements are: a private Firebase Android app
-configuration matching `io.ccb.mobile.ccb_mobile`, a server-side FCM v1 sender
-credential, gateway support for the route-only registration endpoint, and a
-physical Android device or Google Play emulator test. Until those are supplied,
-real delivery is blocked; local tests cover the app protocol and fail-closed
-paths only.
+## Deployment configuration
+
+Android Firebase configuration is injected at build time:
+
+```bash
+CCB_MOBILE_FIREBASE_ANDROID_CONFIG=/secure/operator/google-services.json \
+  flutter build apk --debug --dart-define=CCB_MOBILE_PUSH_ENABLED=true
+```
+
+The source file must be deployment-owned and must match
+`io.ccb.mobile.ccb_mobile`. Gradle copies it to the ignored
+`android/app/google-services.json` only for the local build. If the variable is
+absent and no ignored local file exists, the Google Services plugin is not
+applied and Push remains fail-closed. Do not commit `google-services.json`,
+`firebase_options.dart`, service-account JSON, OAuth tokens, signing secrets,
+or release credentials.
+
+The gateway FCM sender is enabled only from operator-owned credentials:
+
+```bash
+export CCB_MOBILE_FCM_PROJECT_ID=firebase-project-id
+export CCB_MOBILE_FCM_CREDENTIALS_FILE=/secure/operator/fcm-service-account.json
+# Or use Application Default Credentials:
+# export GOOGLE_APPLICATION_CREDENTIALS=/secure/operator/application-default.json
+
+ccb install mobile
+```
+
+Supported sender tuning is optional:
+
+```bash
+export CCB_MOBILE_FCM_TIMEOUT_SECONDS=2
+export CCB_MOBILE_FCM_MAX_RETRIES=2
+export CCB_MOBILE_FCM_MAX_WORKERS=4
+export CCB_MOBILE_FCM_RETRY_BACKOFF_SECONDS=0.25
+```
+
+The sender uses Google's OAuth client libraries with the
+`https://www.googleapis.com/auth/firebase.messaging` scope and sends FCM HTTP
+v1 notification+data messages. It does not parse service-account JWTs itself.
+If credentials, project id, or the optional `google-auth` runtime dependency
+are missing, `ccb mobile serve` and `ccb install mobile` still start with
+`push_sender.configured/ready` diagnostics set to false; ordinary pairing,
+terminal, files, project view, and foreground SSE continue to work.
+
+Diagnostics are intentionally low sensitivity. CLI output and
+`GET /v1/mobile/push/audit` report provider, configured/ready state, worker
+limits, counters, and broad failure reasons. They do not include FCM tokens,
+credential paths, service-account contents, request bodies beyond the approved
+route payload, or bearer tokens.
+
+## Real-device acceptance
+
+Production evidence requires the same APK SHA/signing certificate/version,
+server-wide gateway audit, app logcat, and a dedicated real CCB test project.
+With legal Firebase configuration and sender credentials present, validate:
+foreground notification handling, Android HOME/background, lock screen,
+process kill/relaunch, notification tap route selection, Push+SSE dedupe,
+permission denial, invalid-token cleanup, multi-device isolation, and visible
+target suppression.
+
+If a legal Firebase Android app config, FCM sender credential, Google Play
+emulator, or physical Android device is unavailable, real delivery remains an
+external blocker. Fake senders and local notifications may cover code paths,
+but they must not be reported as real FCM background or terminated delivery.
 
 ## Foreground service decision
 

@@ -167,6 +167,37 @@ def test_render_mobile_serve_includes_pairing_summary_when_present() -> None:
     )
 
 
+def test_render_mobile_serve_includes_redacted_push_sender_summary() -> None:
+    lines = render_mobile_serve(
+        {
+            'mobile_status': 'serving',
+            'listen': '127.0.0.1:8787',
+            'gateway_url': 'http://127.0.0.1:8787',
+            'route_provider': 'lan',
+            'project_id': 'proj-1',
+            'project_root': '/tmp/project',
+            'mode': 'loopback_current_project',
+            'endpoints': ['/v1/mobile/push/audit'],
+            'push_sender': {
+                'provider': 'fcm_http_v1',
+                'configured': True,
+                'ready': False,
+                'credential_source': 'service_account_file',
+                'reason': 'credential_file_unreadable',
+                'timeout_seconds': 1.25,
+                'max_workers': 2,
+            },
+        }
+    )
+
+    assert (
+        'push_sender: provider=fcm_http_v1 configured=true ready=false '
+        'credential_source=service_account_file reason=credential_file_unreadable '
+        'timeout_seconds=1.25 max_workers=2'
+    ) in lines
+    assert '/secret/service-account.json' not in '\n'.join(lines)
+
+
 def test_render_mobile_serve_includes_relay_outbound_summary() -> None:
     assert render_mobile_serve(
         {

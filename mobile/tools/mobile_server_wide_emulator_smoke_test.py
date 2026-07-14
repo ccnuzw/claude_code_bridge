@@ -202,6 +202,36 @@ class MobileServerWideEmulatorSmokeTest(unittest.TestCase):
             [19229, 19228],
         )
 
+    def test_wait_for_server_projects_polls_during_health_warming(self) -> None:
+        original_get = SMOKE.http_get_json
+        original_sleep = SMOKE.time.sleep
+        calls: list[str] = []
+
+        def fake_get(url: str) -> dict[str, object]:
+            calls.append(url)
+            if len(calls) == 1:
+                return {
+                    'health_warming': True,
+                    'projects': [],
+                    'registry_project_count': 2,
+                }
+            return {'projects': [{'id': 'one'}, {'id': 'two'}]}
+
+        try:
+            SMOKE.http_get_json = fake_get
+            SMOKE.time.sleep = lambda _seconds: None
+            payload = SMOKE.wait_for_server_projects(
+                'http://127.0.0.1:18891/v1/projects',
+                minimum=2,
+                timeout_s=1,
+            )
+        finally:
+            SMOKE.http_get_json = original_get
+            SMOKE.time.sleep = original_sleep
+
+        self.assertEqual(payload['projects'], [{'id': 'one'}, {'id': 'two'}])
+        self.assertEqual(calls, ['http://127.0.0.1:18891/v1/projects'] * 2)
+
     def test_parse_args_accepts_release_reverse_recovery_smoke(self) -> None:
         args = SMOKE.parse_args(['--release-reverse-recovery-smoke'])
 

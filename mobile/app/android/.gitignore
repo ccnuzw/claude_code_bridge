@@ -10,3 +10,8 @@ key.properties
 release-signing.properties
 **/*.keystore
 **/*.jks
+
+# Deployment-owned Firebase config. Inject with
+# CCB_MOBILE_FIREBASE_ANDROID_CONFIG=/secure/path/google-services.json.
+app/google-services.json
+app/src/**/google-services.json

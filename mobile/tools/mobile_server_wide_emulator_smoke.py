@@ -95,7 +95,11 @@ def main(argv: list[str] | None = None) -> int:
             listen=args.gateway_listen,
             timeout_s=args.gateway_timeout,
         )
-        projects = http_get_json(f'{gateway["gateway_url"].rstrip("/")}/v1/projects')
+        projects = wait_for_server_projects(
+            f'{gateway["gateway_url"].rstrip("/")}/v1/projects',
+            minimum=2,
+            timeout_s=args.gateway_timeout,
+        )
         project_list = list(projects.get('projects') or [])
         if len(project_list) < 2:
             raise RuntimeError(f'server-wide gateway listed too few projects: {projects!r}')
@@ -1073,6 +1077,24 @@ def gateway_reverse_host_ports(
     if proxy_port == gateway_port:
         return [proxy_port]
     return [proxy_port, gateway_port]
+
+
+def wait_for_server_projects(
+    url: str,
+    *,
+    minimum: int,
+    timeout_s: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + max(0.1, float(timeout_s))
+    last_payload: dict[str, Any] = {}
+    while True:
+        last_payload = http_get_json(url)
+        projects = list(last_payload.get('projects') or [])
+        if len(projects) >= minimum:
+            return last_payload
+        if time.monotonic() >= deadline:
+            return last_payload
+        time.sleep(0.5)
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

@@ -6,6 +6,26 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val firebaseAndroidConfig = providers.environmentVariable(
+    "CCB_MOBILE_FIREBASE_ANDROID_CONFIG",
+).orNull?.trim()
+val googleServicesFile = layout.projectDirectory.file("google-services.json").asFile
+if (!firebaseAndroidConfig.isNullOrEmpty()) {
+    val source = file(firebaseAndroidConfig)
+    if (!source.isFile) {
+        throw GradleException(
+            "CCB_MOBILE_FIREBASE_ANDROID_CONFIG must point to a readable " +
+                "deployment-owned google-services.json file."
+        )
+    }
+    if (source.canonicalFile != googleServicesFile.canonicalFile) {
+        googleServicesFile.writeBytes(source.readBytes())
+    }
+    apply(plugin = "com.google.gms.google-services")
+} else if (googleServicesFile.isFile) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 val releaseSigningPropertiesFile = rootProject.file("release-signing.properties")
 val releaseSigningProperties = Properties().apply {
     if (releaseSigningPropertiesFile.isFile) {

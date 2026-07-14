@@ -449,6 +449,8 @@ class MobileGatewayService:
         terminal_message_sender: Callable[[PaneMessageTarget, str], dict[str, object]] | None = None,
         push_sender: PushSender | None = None,
         push_sender_timeout_seconds: float = 2.0,
+        push_sender_max_workers: int = 4,
+        push_diagnostic: Mapping[str, object] | None = None,
     ) -> None:
         self._project_id = str(project_id)
         self._project_root = Path(project_root)
@@ -468,6 +470,7 @@ class MobileGatewayService:
         self._terminal_session_factory = terminal_session_factory or create_tmux_terminal_session
         self._terminal_history_factory = terminal_history_factory or create_tmux_terminal_history
         self._terminal_message_sender = terminal_message_sender or send_tmux_pane_message
+        self._push_diagnostic = dict(push_diagnostic or {})
         self._mobile_dir = Path(mobile_dir) if mobile_dir is not None else None
         self._pairing_store = pairing_store
         if self._pairing_store is None and mobile_dir is not None:
@@ -477,6 +480,7 @@ class MobileGatewayService:
                 pairing_store=self._pairing_store,
                 sender=push_sender,
                 timeout_seconds=push_sender_timeout_seconds,
+                max_workers=push_sender_max_workers,
             )
             if self._pairing_store is not None else None
         )
@@ -640,6 +644,13 @@ class MobileGatewayService:
         with self._invalidation_watch_lock:
             return {key: int(value) for key, value in self._invalidation_audit.items()}
 
+    def push_audit_payload(self) -> dict[str, object]:
+        dispatcher = self._push_dispatcher
+        audit = dispatcher.audit_payload() if dispatcher is not None else {'enabled': False}
+        if self._push_diagnostic:
+            audit['sender'] = dict(self._push_diagnostic)
+        return audit
+
     def create_pairing_payload(
         self,
         *,
@@ -723,6 +734,13 @@ class MobileGatewayService:
                 'schema_version': _SCHEMA_VERSION,
                 'status': 'ok',
                 'audit': self.invalidation_audit_payload(),
+            }
+        if route == '/v1/mobile/push/audit':
+            self._authenticate(headers, required_scopes=('notify',))
+            return 200, {
+                'schema_version': _SCHEMA_VERSION,
+                'status': 'ok',
+                'audit': self.push_audit_payload(),
             }
         prefix = '/v1/projects/'
         suffix = '/view'
@@ -1680,6 +1698,8 @@ class MobileGatewayService:
         self._closed = True
         if self._project_health_cache is not None:
             self._project_health_cache.close()
+        if self._push_dispatcher is not None:
+            self._push_dispatcher.close()
         if self._owns_background_executor and self._background_executor is not None:
             close = getattr(self._background_executor, 'close', None)
             if callable(close):

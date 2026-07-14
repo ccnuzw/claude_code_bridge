@@ -148,6 +148,117 @@ void main() {
     await runtime.dispose();
   });
 
+  test('already seen push route is not opened again', () async {
+    final messaging = _FakePushMessagingClient(token: 'token');
+    final order = <String>[];
+    final runtime = PushNotificationRuntime(
+      messaging: messaging,
+      registration: _AlwaysRegisteredPushRegistrationClient(),
+      markSeenIfNew: (dedupeKey) async {
+        order.add('seen:$dedupeKey');
+        return false;
+      },
+      onRouteOpened: (route) async {
+        order.add('open:${route.dedupeKey}');
+      },
+      isEnabled: () => true,
+    );
+
+    expect(await runtime.start(_host()), isTrue);
+    messaging.open(
+      const PushNotificationRoute(
+        projectId: 'proj-demo',
+        agent: 'mobile',
+        dedupeKey: 'duplicate',
+      ),
+    );
+    await _drain();
+
+    expect(order, ['seen:duplicate']);
+
+    await runtime.dispose();
+  });
+
+  test('foreground push message is validated and deduped without opening', () async {
+    final messaging = _FakePushMessagingClient(token: 'token');
+    final opened = <PushNotificationRoute>[];
+    final seen = <String>[];
+    final runtime = PushNotificationRuntime(
+      messaging: messaging,
+      registration: _AlwaysRegisteredPushRegistrationClient(),
+      markSeenIfNew: (dedupeKey) async {
+        seen.add(dedupeKey);
+        return true;
+      },
+      onRouteOpened: (route) async => opened.add(route),
+      isEnabled: () => true,
+    );
+
+    expect(await runtime.start(_host()), isTrue);
+    messaging.foreground(
+      const PushNotificationRoute(
+        projectId: 'proj-demo',
+        agent: 'mobile',
+        dedupeKey: 'foreground',
+      ),
+    );
+    messaging.foreground(
+      const PushNotificationRoute(
+        projectId: 'proj-demo',
+        agent: 'mobile',
+        dedupeKey: 'wrong-device',
+        deviceId: 'other-device',
+      ),
+    );
+    await _drain();
+
+    expect(seen, ['foreground']);
+    expect(opened, isEmpty);
+
+    await runtime.dispose();
+  });
+
+  test('foreground push reconciles only when dedupe is new', () async {
+    final messaging = _FakePushMessagingClient(token: 'token');
+    var isNew = true;
+    final order = <String>[];
+    final runtime = PushNotificationRuntime(
+      messaging: messaging,
+      registration: _AlwaysRegisteredPushRegistrationClient(),
+      markSeenIfNew: (dedupeKey) async {
+        order.add('seen:$dedupeKey');
+        final result = isNew;
+        isNew = false;
+        return result;
+      },
+      onForegroundRoute: (route) async {
+        order.add('reconcile:${route.dedupeKey}');
+      },
+      onRouteOpened: (route) async {
+        order.add('open:${route.dedupeKey}');
+      },
+      isEnabled: () => true,
+    );
+
+    expect(await runtime.start(_host()), isTrue);
+    const route = PushNotificationRoute(
+      projectId: 'proj-demo',
+      agent: 'mobile',
+      dedupeKey: 'foreground',
+    );
+    messaging.foreground(route);
+    messaging.foreground(route);
+    await _drain();
+
+    expect(order, [
+      'seen:foreground',
+      'reconcile:foreground',
+      'seen:foreground',
+    ]);
+
+    await runtime.dispose();
+  });
+
   test(
     'identity-free route is rejected when stored profiles are ambiguous',
     () async {
@@ -281,6 +392,7 @@ class _FakePushMessagingClient implements PushMessagingClient {
   final String? token;
   final _refreshes = StreamController<String>.broadcast();
   final _routes = StreamController<PushNotificationRoute>.broadcast();
+  final _foregroundRoutes = StreamController<PushNotificationRoute>.broadcast();
   int tokenReads = 0;
 
   @override
@@ -299,11 +411,16 @@ class _FakePushMessagingClient implements PushMessagingClient {
   Stream<PushNotificationRoute> get onRouteOpened => _routes.stream;
 
   @override
+  Stream<PushNotificationRoute> get onForegroundRoute => _foregroundRoutes.stream;
+
+  @override
   Stream<String> get onTokenRefresh => _refreshes.stream;
 
   void refresh(String token) => _refreshes.add(token);
 
   void open(PushNotificationRoute route) => _routes.add(route);
+
+  void foreground(PushNotificationRoute route) => _foregroundRoutes.add(route);
 }
 
 class _AlwaysRegisteredPushRegistrationClient

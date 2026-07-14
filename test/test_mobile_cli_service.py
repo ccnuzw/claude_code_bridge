@@ -232,6 +232,58 @@ def test_prepare_server_mobile_gateway_uses_running_projects(tmp_path: Path, mon
         handle.close()
 
 
+def test_prepare_server_mobile_gateway_reports_redacted_push_sender_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'mobile-state'
+    monkeypatch.setattr('cli.services.mobile.mobile_host_state_dir', lambda: state_dir)
+    monkeypatch.setattr(
+        'cli.services.mobile.build_fcm_sender_from_env',
+        lambda: (
+            None,
+            {
+                'configured': True,
+                'provider': 'fcm_http_v1',
+                'ready': False,
+                'credential_source': 'service_account_file',
+                'reason': 'credential_file_unreadable',
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        'cli.services.mobile.fcm_sender_runtime_options',
+        lambda: {'timeout_seconds': 1.25, 'max_workers': 2},
+    )
+    client = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    registry = MobileGatewayProjectRegistry([
+        MobileGatewayProject('proj-one', Path('/srv/one'), lambda: client, display_name='one'),
+    ])
+
+    handle = prepare_server_mobile_gateway(
+        SimpleNamespace(listen='127.0.0.1:0', public_url=None, route_provider='lan'),
+        project_registry=registry,
+        host_id='host-test',
+    )
+    try:
+        summary = handle.summary
+    finally:
+        handle.close()
+
+    assert summary['push_sender'] == {
+        'configured': True,
+        'provider': 'fcm_http_v1',
+        'ready': False,
+        'credential_source': 'service_account_file',
+        'reason': 'credential_file_unreadable',
+        'timeout_seconds': 1.25,
+        'max_workers': 2,
+    }
+    assert '/v1/mobile/push/audit' in summary['endpoints']
+    assert '/v1/devices/me/push-token' in summary['endpoints']
+    assert '/srv/one' not in json.dumps(summary['push_sender'])
+
+
 def test_server_cli_reuses_handoff_and_update_rotation_preserves_claimed_device(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

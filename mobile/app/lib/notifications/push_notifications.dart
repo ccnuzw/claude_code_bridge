@@ -67,6 +67,8 @@ abstract interface class PushMessagingClient {
   Future<PushNotificationRoute?> getInitialRoute();
 
   Stream<PushNotificationRoute> get onRouteOpened;
+
+  Stream<PushNotificationRoute> get onForegroundRoute;
 }
 
 class FirebasePushMessagingClient implements PushMessagingClient {
@@ -132,6 +134,14 @@ class FirebasePushMessagingClient implements PushMessagingClient {
   Stream<PushNotificationRoute> get onRouteOpened => (_messaging == null
           ? const Stream<RemoteMessage>.empty()
           : FirebaseMessaging.onMessageOpenedApp)
+      .map((message) => _routeOrNull(message.data))
+      .where((route) => route != null)
+      .map((route) => route!);
+
+  @override
+  Stream<PushNotificationRoute> get onForegroundRoute => (_messaging == null
+          ? const Stream<RemoteMessage>.empty()
+          : FirebaseMessaging.onMessage)
       .map((message) => _routeOrNull(message.data))
       .where((route) => route != null)
       .map((route) => route!);
@@ -216,12 +226,14 @@ class PushNotificationRuntime {
     required PushMessagingClient messaging,
     required GatewayPushRegistrationClient registration,
     required Future<void> Function(PushNotificationRoute route) onRouteOpened,
+    Future<void> Function(PushNotificationRoute route)? onForegroundRoute,
     Future<bool> Function(String dedupeKey)? markSeenIfNew,
     bool Function(PushNotificationRoute route)? isRouteProfileAmbiguous,
     bool Function()? isEnabled,
   }) : _messaging = messaging,
        _registration = registration,
        _onRouteOpened = onRouteOpened,
+       _onForegroundRoute = onForegroundRoute,
        _markSeenIfNew = markSeenIfNew,
        _isRouteProfileAmbiguous = isRouteProfileAmbiguous ?? ((_) => false),
        _isEnabled = isEnabled ?? (() => pushNotificationsFeatureEnabled);
@@ -229,11 +241,13 @@ class PushNotificationRuntime {
   final PushMessagingClient _messaging;
   final GatewayPushRegistrationClient _registration;
   final Future<void> Function(PushNotificationRoute route) _onRouteOpened;
+  final Future<void> Function(PushNotificationRoute route)? _onForegroundRoute;
   final Future<bool> Function(String dedupeKey)? _markSeenIfNew;
   final bool Function(PushNotificationRoute route) _isRouteProfileAmbiguous;
   final bool Function() _isEnabled;
   StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<PushNotificationRoute>? _routeSubscription;
+  StreamSubscription<PushNotificationRoute>? _foregroundRouteSubscription;
   GatewayPairedHost? _host;
   GatewayPairedHost? _registeredHost;
   bool _started = false;
@@ -252,6 +266,9 @@ class PushNotificationRuntime {
       _registerToken,
     );
     _routeSubscription = _messaging.onRouteOpened.listen(_openRoute);
+    _foregroundRouteSubscription = _messaging.onForegroundRoute.listen(
+      _recordForegroundRoute,
+    );
     final token = await _messaging.getToken();
     if (token == null || !await _registerToken(token)) {
       await stop();
@@ -271,8 +288,10 @@ class PushNotificationRuntime {
     _host = null;
     await _tokenRefreshSubscription?.cancel();
     await _routeSubscription?.cancel();
+    await _foregroundRouteSubscription?.cancel();
     _tokenRefreshSubscription = null;
     _routeSubscription = null;
+    _foregroundRouteSubscription = null;
     if (registeredHost != null) {
       await _registration.delete(host: registeredHost);
     }
@@ -294,19 +313,38 @@ class PushNotificationRuntime {
   }
 
   Future<void> _openRoute(PushNotificationRoute route) async {
-    final host = _host;
-    if (!_started ||
-        host == null ||
-        !_isCurrentHost(host) ||
-        !_isRegisteredHost(host) ||
-        !route.matches(host) ||
-        (!route.hasProfileIdentity && _isRouteProfileAmbiguous(route))) {
+    if (!_acceptsRoute(route)) {
       return;
     }
-    try {
-      await _markSeenIfNew?.call(route.dedupeKey);
-    } catch (_) {}
+    if (!await _markRouteSeenIfNew(route)) return;
     await _onRouteOpened(route);
+  }
+
+  Future<void> _recordForegroundRoute(PushNotificationRoute route) async {
+    if (!_acceptsRoute(route)) {
+      return;
+    }
+    if (!await _markRouteSeenIfNew(route)) return;
+    await _onForegroundRoute?.call(route);
+  }
+
+  bool _acceptsRoute(PushNotificationRoute route) {
+    final host = _host;
+    return _started &&
+        host != null &&
+        _isCurrentHost(host) &&
+        _isRegisteredHost(host) &&
+        route.matches(host) &&
+        (route.hasProfileIdentity || !_isRouteProfileAmbiguous(route));
+  }
+
+  Future<bool> _markRouteSeenIfNew(PushNotificationRoute route) async {
+    final markSeenIfNew = _markSeenIfNew;
+    if (markSeenIfNew == null) return true;
+    try {
+      return await markSeenIfNew(route.dedupeKey);
+    } catch (_) {}
+    return false;
   }
 
   bool _isCurrentHost(GatewayPairedHost host) =>
@@ -318,4 +356,24 @@ class PushNotificationRuntime {
   bool _sameGatewayHost(GatewayPairedHost left, GatewayPairedHost right) =>
       left.profile.hostId == right.profile.hostId &&
       left.profile.deviceId == right.profile.deviceId;
+}
+
+@pragma('vm:entry-point')
+Future<void> ccbMobileFirebaseMessagingBackgroundHandler(
+  RemoteMessage message,
+) async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+  } catch (_) {
+    // Missing deployment-owned Firebase config disables push in this isolate.
+  }
+}
+
+void registerPushNotificationBackgroundHandler() {
+  if (!pushNotificationsFeatureEnabled) return;
+  FirebaseMessaging.onBackgroundMessage(
+    ccbMobileFirebaseMessagingBackgroundHandler,
+  );
 }

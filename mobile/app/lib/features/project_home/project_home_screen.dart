@@ -280,6 +280,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           widget.pushRegistrationClient ?? GatewayPushRegistrationClient(),
       markSeenIfNew: _taskCompletionSeenStore.markSeenIfNew,
       isRouteProfileAmbiguous: (_) => _profiles.length > 1,
+      onForegroundRoute: _handleForegroundPushNotificationRoute,
       onRouteOpened: _handlePushNotificationRoute,
     );
     _activeRepository = widget.repository;
@@ -2297,6 +2298,15 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         agent: route.agent,
       ),
     );
+  }
+
+  Future<void> _handleForegroundPushNotificationRoute(
+    PushNotificationRoute route,
+  ) async {
+    if (_mode != AppRuntimeMode.pairedGateway) {
+      return;
+    }
+    await _taskNotifications.catchUpNow();
   }
 
   void _showSnack(String message) {
