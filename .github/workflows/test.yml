@@ -654,4 +654,5 @@ jobs:
         shell: wsl-bash {0}
         run: |
           export TERM=xterm-256color
-          /tmp/ccb-ci-py311/bin/python -m pytest test/ -v --tb=short -m "not provider_blackbox"
+          export PATH="/tmp/ccb-ci-py311/bin:$PATH"
+          python -m pytest test/ -v --tb=short -m "not provider_blackbox"

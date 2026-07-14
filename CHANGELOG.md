@@ -52,6 +52,9 @@
 - **Restart Replay Isolates Its Recovery Target**: the restart smoke waits for
   parallel reviewer children to finish before killing ccbd, leaving exactly
   one persisted in-flight child as the intended resume assertion.
+- **WSL Tests Activate Their Python Environment**: mounted-drive validation
+  exposes the Python 3.11 venv on `PATH`, and source G5 smokes install draft
+  RolePacks from explicit checkout paths instead of host discovery.
 - **Workflow Cleanup Gates Use Current Public Evidence**: CI runs the
   bundle-first G5 CLI smoke and validates its release, agent, worktree,
   process, and socket cleanup checks instead of the retired one-shot path.

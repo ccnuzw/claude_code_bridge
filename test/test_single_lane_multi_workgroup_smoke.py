@@ -53,6 +53,25 @@ def _load_script():
     return module
 
 
+def test_source_smoke_installs_rolepacks_from_explicit_checkout_paths() -> None:
+    module = _load_script()
+    ccb_test = Path('/source/ccb_test')
+
+    for role_id in module.ROLE_IDS:
+        command = module._role_install_command(ccb_test, role_id)
+        source_path = module.ROLE_SOURCE_ROOT / role_id
+        assert command == [
+            str(ccb_test),
+            'roles',
+            'install',
+            role_id,
+            '--path',
+            str(source_path),
+            '--skip-tools',
+        ]
+        assert (source_path / 'role.toml').is_file()
+
+
 def _job(
     *,
     agent_name: str,

@@ -399,6 +399,14 @@ def test_tests_workflow_runs_workflow_closure_layout_cleanup_smoke() -> None:
         assert f'"{key}",' in text
 
 
+def test_wsl_test_job_activates_python_311_venv() -> None:
+    text = Path(".github/workflows/test.yml").read_text(encoding="utf-8")
+    step = text.split("- name: Run tests in WSL with tmux", 1)[1].split("\n      - name:", 1)[0]
+
+    assert 'export PATH="/tmp/ccb-ci-py311/bin:$PATH"' in step
+    assert 'python -m pytest test/' in step
+
+
 def _json(payload: dict[str, object]) -> str:
     return json.dumps(payload, ensure_ascii=False) + "\n"
 def test_smoke_env_propagates_explicit_source_wrapper_allowed_root(tmp_path: Path) -> None:

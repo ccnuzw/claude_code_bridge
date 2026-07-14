@@ -16,6 +16,9 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ROLE_SOURCE_ROOT = (
+    REPO_ROOT / 'docs' / 'plantree' / 'plans' / 'agentic-loop-workflow' / 'drafts'
+)
 ROLE_IDS = (
     'agentroles.ccb_frontdesk',
     'agentroles.ccb_planner',
@@ -203,7 +206,7 @@ def run_smoke(
             _run_logged(
                 command_log,
                 f'role_install_{role_id.rsplit(".", 1)[-1]}',
-                [str(ccb_test), 'roles', 'install', role_id, '--skip-tools'],
+                _role_install_command(ccb_test, role_id),
                 cwd=test_root,
                 env=env,
                 logs_dir=logs_dir,
@@ -388,6 +391,21 @@ def run_smoke(
             except Exception:
                 pass
         raise
+
+
+def _role_install_command(ccb_test: Path, role_id: str) -> list[str]:
+    source_path = ROLE_SOURCE_ROOT / role_id
+    if not (source_path / 'role.toml').is_file():
+        raise SmokeFailure(f'G5 role source is unavailable: {source_path}')
+    return [
+        str(ccb_test),
+        'roles',
+        'install',
+        role_id,
+        '--path',
+        str(source_path),
+        '--skip-tools',
+    ]
 
 
 def _build_report(
