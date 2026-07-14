@@ -370,10 +370,15 @@ def test_additive_reload_apply_writes_bounded_handoff_during_apply_and_clears_af
 
 
 def test_additive_reload_apply_clears_handoff_after_failed_apply(tmp_path: Path) -> None:
-    app = _started_app(tmp_path / 'repo-handoff-blocked', BASE_CONFIG)
-    new_config = _load_config(app.project_root, REMOVE_AGENT_CONFIG)
+    app = _started_app(tmp_path / 'repo-handoff-failed', BASE_CONFIG)
+    new_config = _load_config(app.project_root, ADD_WINDOW_CONFIG)
 
-    result = run_additive_reload_apply(app, new_config, current_namespace=_namespace(app))
+    result = run_additive_reload_apply(
+        app,
+        new_config,
+        current_namespace=_namespace(app),
+        apply_namespace_patch_fn=_fail_with('injected namespace patch failure'),
+    )
 
     assert result.status == 'failed'
     assert result.stage == 'namespace_patch'

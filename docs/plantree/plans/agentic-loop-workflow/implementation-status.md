@@ -24,10 +24,16 @@ orchestration bundle, and one to four independently reviewed
 `Coder + Code Reviewer` workgroups. Codex is primary and Claude secondary;
 providers without authenticated local state are outside the real gate.
 
+The active release target is single-lane production closure.
+The branch is not production-ready for that workflow target; the accepted R1 foundation remains
+bounded by [single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md)
+and does not waive the current provider and installed-candidate gates.
+
 ## Authority
 
 - Release goal: [single-lane-multi-workgroup-release-goal.md](goals/single-lane-multi-workgroup-release-goal.md)
 - Decision 029: [029-planner-feedback-and-task-set-closure.md](decisions/029-planner-feedback-and-task-set-closure.md)
+- Historical Phase 1-6 bounded acceptance: [phase1-6-acceptance-report-20260705.md](history/phase1-6-acceptance-report-20260705.md)
 - Source acceptance: [g6c-current-main-source-acceptance-20260714.md](history/g6c-current-main-source-acceptance-20260714.md)
 - Wiring/provider diagnostic: [g6d-phase2-wiring-real-provider-diagnostic-20260714.md](history/g6d-phase2-wiring-real-provider-diagnostic-20260714.md)
 - Planner permission diagnostic: [g6e-planner-readless-provider-projection-diagnostic-20260714.md](history/g6e-planner-readless-provider-projection-diagnostic-20260714.md)
