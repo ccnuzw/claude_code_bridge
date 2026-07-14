@@ -719,6 +719,52 @@ def test_ordinary_blocked_job_keeps_import_audit_record(tmp_path: Path, monkeypa
     assert 'role_output_import' in result
 
 
+@pytest.mark.parametrize('mutation', ('valid', 'missing_activation', 'tampered_activation'))
+def test_detailer_replan_empty_reply_fails_closed_without_import_log(
+    tmp_path: Path, monkeypatch, mutation: str,
+) -> None:
+    project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    job_id = dispatcher.submit(_envelope(dispatcher, source_job_id)).jobs[0].job_id
+    activation_path = next((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-detailer-replan-*.json'))
+    if mutation == 'missing_activation':
+        activation_path.unlink()
+    elif mutation == 'tampered_activation':
+        activation = json.loads(activation_path.read_text(encoding='utf-8'))
+        activation['target'] = 'other'
+        activation_path.write_text(json.dumps(activation), encoding='utf-8')
+    snapshot = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{job_id}.json'
+    snapshot.write_text(json.dumps({'job_id': job_id, 'agent_name': 'planner', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'completed', 'reply': ''}}), encoding='utf-8')
+    log = project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+    before = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    blocked = consume_explicit_role_output(_context(project_root), SimpleNamespace(role_job_id=job_id), services=SimpleNamespace(plan_task=plan_task))
+    assert blocked['action'] == 'role_output_import_blocked'
+    assert blocked['reason'].startswith('detailer_replan_')
+    assert plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task'] == before
+    assert not log.exists()
+
+
+def test_ordinary_empty_reply_keeps_import_audit_record(tmp_path: Path, monkeypatch) -> None:
+    project_root, _dispatcher, _source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    result = _blocked_for_detailer_replan_claim(
+        _context(project_root), deps=SimpleNamespace(plan_task=plan_task), job_id='ordinary-empty',
+        agent_name='planner', reason='missing_reply', evidence={},
+    )
+    assert result['reason'] == 'missing_reply'
+    assert 'role_output_import' in result
+
+
+def test_detailer_replan_provider_retry_successor_is_rejected_before_reply_parse(tmp_path: Path, monkeypatch) -> None:
+    project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    origin = dispatcher.submit(_envelope(dispatcher, source_job_id)).jobs[0].job_id
+    snapshot = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{origin}.json'
+    snapshot.write_text(json.dumps({'job_id': origin, 'agent_name': 'planner', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'failed', 'reply': 'ignored'}}), encoding='utf-8')
+    successor = {'job_id': 'planner-retry', 'agent_name': 'planner', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'completed', 'reply': 'old task-packet'}}
+    monkeypatch.setattr(role_output_import_module, '_retry_successor_for_job', lambda *_args, **_kwargs: {'status': 'completed', 'job_id': 'planner-retry', 'agent_name': 'planner', 'snapshot': successor})
+    blocked = consume_explicit_role_output(_context(project_root), SimpleNamespace(role_job_id=origin), services=SimpleNamespace(plan_task=plan_task))
+    assert blocked['reason'] == 'detailer_replan_retry_successor_unsupported'
+    assert not (project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl').exists()
+
+
 def test_detailer_replan_post_submit_append_crash_recovers_persisted_job(tmp_path: Path, monkeypatch) -> None:
     _project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
     original_finalize = replan_handoff_module._finalize

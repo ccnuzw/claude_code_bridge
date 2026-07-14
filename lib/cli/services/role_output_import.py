@@ -140,6 +140,7 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
     if not terminal:
         return _pending_payload(context, job_id=job_id, agent_name=agent_name, reason='job_not_terminal')
     status = str(decision.get('status') or '').strip().lower()
+    retry_successor_used = False
     if status != 'completed':
         retry = _retry_successor_for_job(context, job_id, agent_name=agent_name)
         if retry is not None:
@@ -157,6 +158,7 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
             if isinstance(retry_snapshot, dict):
                 snapshot = retry_snapshot
                 job_id = str(snapshot.get('job_id') or retry_job_id or job_id)
+                retry_successor_used = job_id != original_job_id
                 decision = snapshot.get('latest_decision') if isinstance(snapshot.get('latest_decision'), dict) else {}
                 terminal = bool(decision.get('terminal') or (snapshot.get('state') or {}).get('terminal'))
                 agent_name = str(snapshot.get('agent_name') or agent_name or '').strip()
@@ -164,6 +166,16 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
                     return _pending_payload(context, job_id=job_id, agent_name=agent_name, reason='retry_successor_not_terminal')
                 status = str(decision.get('status') or '').strip().lower()
     reply = str(decision.get('reply') or '')
+    # Provider retry successors are not part of the Detailer handoff authority:
+    # activation/intent/task bind the original job and no durable successor edge
+    # is persisted there.  Reject before parsing rather than falling back.
+    origin_detailer_replan = _resolve_detailer_replan_authority(context, deps, job_id=original_job_id)
+    if retry_successor_used and origin_detailer_replan['claimed']:
+        return _detailer_replan_blocked_payload(
+            context, job_id=original_job_id, agent_name=agent_name,
+            reason='detailer_replan_retry_successor_unsupported',
+            evidence={'origin_job_id': original_job_id, 'effective_job_id': job_id},
+        )
     if status != 'completed':
         return _blocked_for_detailer_replan_claim(
             context,
@@ -184,16 +196,20 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
             evidence=resolved_reply,
         )
     reply = str(resolved_reply.get('reply') or reply)
-    if not reply.strip():
-        return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='missing_reply')
-    normalized_agent = _base_agent_name(agent_name)
     detailer_replan = _resolve_detailer_replan_authority(context, deps, job_id=job_id)
     if detailer_replan['claimed'] and detailer_replan['error']:
         return _detailer_replan_blocked_payload(
             context, job_id=job_id, agent_name=agent_name,
-            reason='detailer_replan_authority_invalid',
-            evidence={'error': detailer_replan['error']},
+            reason='detailer_replan_authority_invalid', evidence={'error': detailer_replan['error']},
         )
+    if not reply.strip():
+        if detailer_replan['claimed']:
+            return _detailer_replan_blocked_payload(
+                context, job_id=job_id, agent_name=agent_name,
+                reason='detailer_replan_missing_reply', evidence={},
+            )
+        return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='missing_reply')
+    normalized_agent = _base_agent_name(agent_name)
     if detailer_replan['claimed']:
         activation = detailer_replan['activation']
     stale_activation = _stale_activation_revision(context, deps, activation=activation)
