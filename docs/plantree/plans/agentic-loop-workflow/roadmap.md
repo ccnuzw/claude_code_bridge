@@ -40,11 +40,13 @@ Date: 2026-06-24
   [decisions/029-planner-feedback-and-task-set-closure.md](decisions/029-planner-feedback-and-task-set-closure.md)
   and
   [topics/planner-feedback-and-task-set-closure-plan.md](topics/planner-feedback-and-task-set-closure-plan.md).
-- Current-main source acceptance is complete at `2c936a48`. Current work now
-  diagnoses zero-byte false-failed delegated callbacks, then completes the G6
-  visible Codex/Claude three/four-group, restart, busy-retain, and exact
-  provider/model matrix from fresh opened projects under
-  `/home/bfly/yunwei/test_ccb2`, followed by G7 installed-candidate gates.
+- Current-main source acceptance is complete at `2c936a48`. The first fresh
+  Codex/Claude lanes then exposed a production Phase2 service-wiring defect;
+  the minimal repair landed as `62753d63`, and its broadened short-path
+  regression rerun is active. Evidence is in
+  [history/g6d-phase2-wiring-real-provider-diagnostic-20260714.md](history/g6d-phase2-wiring-real-provider-diagnostic-20260714.md).
+  Next are fresh C1/C2/C3 visible lanes, exact weaker-model repetition, and G7
+  installed-candidate gates.
 
 ## Done
 
