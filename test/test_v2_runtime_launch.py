@@ -24,6 +24,7 @@ from cli.context import CliContext
 from cli.models import ParsedStartCommand
 from cli.services.provider_binding import AgentBinding
 import cli.services.runtime_launch as runtime_launch
+from cli.services.runtime_launch_runtime import tmux_panes
 from cli.services.runtime_launch import ensure_agent_runtime
 from provider_backends.claude import launcher as claude_launcher
 from provider_backends.claude.launcher_runtime.home import (
@@ -47,6 +48,13 @@ from project.resolver import ProjectContext
 from storage.paths import PathLayout
 from terminal_runtime.tmux_identity import pane_visual
 from workspace.planner import WorkspacePlanner
+
+
+@pytest.fixture(autouse=True)
+def _reset_detached_tmux_server_cache() -> None:
+    tmux_panes._PREPARED_DETACHED_TMUX_SERVER_KEYS.clear()
+    yield
+    tmux_panes._PREPARED_DETACHED_TMUX_SERVER_KEYS.clear()
 
 
 def _spec(
