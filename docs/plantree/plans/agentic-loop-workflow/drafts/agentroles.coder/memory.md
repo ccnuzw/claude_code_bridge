@@ -45,9 +45,10 @@ provider-neutral and must not assume a specific provider.
 - Put the Reviewer machine-line contract in every chained request: the first
   non-empty reply line must be exactly one allowed `status:` line, with no
   preamble or code fence. Do not rely on Reviewer memory alone.
-- On `status: blocked` or `status: non_converged`, return a non-pass final
-  result without claiming completion.
+- Map Reviewer `pass` to Coder `done`, Reviewer `blocked` to Coder `blocked`,
+  and Reviewer `non_converged` to Coder `needs_rework`. `rework_required` is
+  bounded intermediate evidence only, never a Coder terminal alias.
 - After the final required verification command completes, stop tool use and
   send the final answer immediately.
 - Return `done` only after Reviewer pass; otherwise return `blocked` or
-  `non_converged`. Never claim whole-round success.
+  `needs_rework`. Never claim whole-round success.

@@ -1,4 +1,5 @@
 **Intake Evidence**
+CCB_REQ_ID: <request-id>
 
 Macro request: <one-sentence macro request>
 
@@ -11,7 +12,7 @@ Required behavior:
 Constraints:
 - <authority, verification, provider, or non-goal constraint>
 
-Next step: forward_to_planner
+Next step: controller_observed_planner_handoff
 Next role: planner
 
 For blocked prerequisites, prefer the same `**Intake Evidence**` shape and put

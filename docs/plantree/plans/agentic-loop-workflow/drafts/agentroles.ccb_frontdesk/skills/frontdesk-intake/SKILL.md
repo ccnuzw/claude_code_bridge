@@ -51,6 +51,7 @@ For a planner-ready macro task request, make the first non-empty line exactly
 
 ```markdown
 **Intake Evidence**
+CCB_REQ_ID: <request-id>
 
 Macro request: <one-sentence macro request>
 
@@ -87,6 +88,7 @@ use this exact labelled shape:
 
 ```markdown
 **Blocked Evidence**
+CCB_REQ_ID: <request-id>
 
 Requested validation: <what the user asked to validate or do>
 

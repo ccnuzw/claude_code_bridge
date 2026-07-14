@@ -343,6 +343,17 @@ def test_frontdesk_rolepack_is_read_only_intake_not_implementation() -> None:
         assert forbidden not in combined
 
 
+def test_frontdesk_final_examples_put_request_id_immediately_after_evidence_heading() -> None:
+    root = role_root('agentroles.ccb_frontdesk')
+    skill = (root / 'skills' / 'frontdesk-intake' / 'SKILL.md').read_text(encoding='utf-8')
+    template = (root / 'templates' / 'macro-task-request.md').read_text(encoding='utf-8')
+
+    for text, heading in ((skill, '**Intake Evidence**'), (skill, '**Blocked Evidence**'), (template, '**Intake Evidence**')):
+        assert f'{heading}\nCCB_REQ_ID: <request-id>' in text
+    assert 'Next step: controller_observed_planner_handoff' in template
+    assert 'forward_to_planner' not in template
+
+
 def test_frontdesk_rolepack_declares_one_planner_silence_handoff_surface() -> None:
     manifest = load_role_manifest(role_root('agentroles.ccb_frontdesk'))
     policy = load_role_command_policy(manifest)
