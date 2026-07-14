@@ -714,6 +714,19 @@ def test_p1_node_rolepacks_bind_canonical_packet_and_exact_review_tree() -> None
     assert 'first non-empty reply line' in coder_contract
     assert 'Do not put a preamble or code fence' in coder_contract
     assert 'do not rely on' in coder_contract.lower()
+    coder_root = role_root('agentroles.coder')
+    coder_skill = (coder_root / 'skills' / 'assigned-review-chain' / 'SKILL.md').read_text(encoding='utf-8')
+    coder_adapter = (coder_root / 'adapters' / 'ccb' / 'memory.md').read_text(encoding='utf-8')
+    coder_readme = (coder_root / 'README.md').read_text(encoding='utf-8')
+    for required in ('Node:', 'Workgroup:', 'Visible workspace identity:', 'Canonical node work packet ref:', 'Allowed paths:', 'Acceptance refs:', 'Verification refs:', 'Verification results:', 'Changed paths:', 'Blockers:'):
+        assert required in coder_skill
+    assert 'once per bounded review hop' in coder_skill
+    assert 'pass`: return Coder terminal `done`' in coder_skill
+    assert 'non_converged`: return Coder terminal `needs_rework`' in coder_skill
+    assert 'command ask --chain --artifact-reply <assigned-reviewer>' in coder_adapter
+    assert 'unauthorized downstream asks submitted: no' in coder_template
+    assert '\n- downstream asks submitted: no' not in coder_template
+    assert 'unauthorized downstream asks' in coder_readme
     for required in (
         'canonical node work packet',
         'declared refs',

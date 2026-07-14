@@ -9,12 +9,22 @@ Use this skill only when the node task names one assigned Reviewer.
 
 ## Submit
 
-After implementation and verification, run exactly:
+After implementation and verification, run exactly once per bounded review hop:
 
 ```bash
 command ask --chain --artifact-reply <assigned-reviewer> <<'EOF'
 Node: <node id>
-Worktree: <assigned worktree>
+Workgroup: <workgroup id>
+Visible workspace identity: <controller-assigned workspace identity>
+Canonical node work packet ref: <ref>
+Allowed paths:
+- <project-relative path>
+Acceptance refs:
+- <ref>
+Verification refs:
+- <ref>
+Verification results:
+- <command and result>
 Changed paths:
 - <path>
 Verification:
@@ -40,11 +50,12 @@ Then stop. Do not poll, watch, ping, wait, or set a timeout.
 
 ## Continuation
 
-- `status: pass`: do not modify files or run tools. Return the final node result
-  immediately.
+- `status: pass`: return Coder terminal `done` immediately.
 - `status: rework_required`: apply only the requested bounded repair, rerun
   verification, ask the same Reviewer with `--chain` again, then stop.
-- `status: blocked` or `status: non_converged`: return a non-pass final result.
+- `status: blocked`: return Coder terminal `blocked`.
+- `status: non_converged`: return Coder terminal `needs_rework`.
+- `status: rework_required` remains bounded intermediate evidence only.
 
 ## Boundaries
 

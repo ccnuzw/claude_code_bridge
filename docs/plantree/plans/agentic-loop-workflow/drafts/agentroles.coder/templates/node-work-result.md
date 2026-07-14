@@ -34,4 +34,5 @@ canonical node work packet: <ref>
 - scope expanded: no
 - undeclared fallback or degradation: no
 - workflow authority mutated: no
-- downstream asks submitted: no
+- assigned Reviewer chain outcome: <pass|rework_required|blocked|non_converged>
+- unauthorized downstream asks submitted: no

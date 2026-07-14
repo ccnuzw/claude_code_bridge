@@ -135,6 +135,12 @@ def test_frontdesk_tool_rejects_wrong_actor_and_mismatched_request(monkeypatch) 
     assert mismatch['isError'] is True
     assert 'must match request_id' in mismatch['content'][0]['text']
 
+    missing = module.submit_frontdesk_planner(
+        {'request_id': 'req-1', 'evidence': '**Intake Evidence**\nMacro request: missing id'}
+    )
+    assert missing['isError'] is True
+    assert 'CCB_REQ_ID must match request_id' in missing['content'][0]['text']
+
 
 def test_task_detailer_tool_submits_exact_silent_planner_request(monkeypatch, tmp_path: Path) -> None:
     module = _load_module()
