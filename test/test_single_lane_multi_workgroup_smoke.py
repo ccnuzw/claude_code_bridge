@@ -21,6 +21,10 @@ from provider_execution.fake import FakeProviderAdapter
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'single_lane_multi_workgroup_smoke.py'
+REQUIRES_AGENT_ROLES_RUNTIME = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason='Agent Roles runtime requires Python 3.11+',
+)
 
 
 def _scenario_contract(
@@ -793,6 +797,7 @@ def test_logged_concurrent_commands_launch_in_same_observation_window(tmp_path: 
 
 
 @pytest.mark.ccb_lifecycle_smoke
+@REQUIRES_AGENT_ROLES_RUNTIME
 @pytest.mark.parametrize(
     ('count', 'shape'),
     ((1, 'parallel'), (2, 'parallel'), (3, 'mixed_dag'), (4, 'mixed_dag')),
@@ -825,6 +830,7 @@ def test_real_cli_fake_multi_workgroup_full_flow(
 
 
 @pytest.mark.ccb_lifecycle_smoke
+@REQUIRES_AGENT_ROLES_RUNTIME
 @pytest.mark.parametrize(
     ('scenario', 'count', 'shape', 'expected_classification'),
     (

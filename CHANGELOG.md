@@ -28,6 +28,9 @@
 - **Historical Evidence Tests Are Checkout-Portable**: PlanTree acceptance
   tests validate committed launch packets and B7 records without requiring
   author-machine experiment directories that cannot exist on clean CI hosts.
+- **Python 3.10 Keeps The Correct Test Boundary**: the core compatibility lane
+  still runs the source/fake workflow unit coverage, while the 13 full-flow
+  cases that invoke the Python 3.11+ Agent Roles runtime are gated explicitly.
 
 ### Release Surface
 
