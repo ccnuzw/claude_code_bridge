@@ -31,6 +31,12 @@
 - **Python 3.10 Keeps The Correct Test Boundary**: the core compatibility lane
   still runs the source/fake workflow unit coverage, while the 13 full-flow
   cases that invoke the Python 3.11+ Agent Roles runtime are gated explicitly.
+- **macOS Validation Respects Native Filesystems**: planner projection selects
+  the exact case-preserved plan entry, and durability, timeout, and push tests
+  no longer depend on Linux `/proc`, GNU `timeout`, or narrow wall-clock races.
+- **Scheduler Tests Follow Durable Progress**: real git integration coverage
+  waits through bounded scheduler transitions before completing round review,
+  matching the public one-step-at-a-time runtime contract across Python builds.
 
 ### Release Surface
 

@@ -508,6 +508,7 @@ def test_sequence11_run_required_fails_hard_on_command_status_failed_text_and_js
                 f'PHASE6B_L1L4_ROOT={shlex.quote(str(root))}',
                 f'PHASE6B_L1L4_COMMAND_LOG={shlex.quote(str(command_log))}',
                 'PHASE6B_L1L4_TIMEOUT_SECONDS=5',
+                'timeout() { shift; shift; "$@"; }',
                 _sequence11_run_required_function(),
                 f'run_required {shlex.quote(label)} bash -c {shlex.quote(shell_command)}',
             )

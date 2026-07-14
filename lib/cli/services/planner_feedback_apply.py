@@ -597,7 +597,11 @@ def select_plan_projection_targets(context, plan_root) -> list[Path]:
 
 
 def _select_variant(plan_root: Path, first: str, second: str, *, default: str) -> Path:
-    existing = [plan_root / name for name in (first, second) if (plan_root / name).exists()]
+    try:
+        child_names = {child.name for child in plan_root.iterdir()}
+    except FileNotFoundError:
+        child_names = set()
+    existing = [plan_root / name for name in (first, second) if name in child_names]
     if len(existing) > 1:
         raise ValueError(f'planner backfill ambiguous semantic files: {first}, {second}')
     return existing[0] if existing else plan_root / default

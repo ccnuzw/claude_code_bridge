@@ -414,9 +414,14 @@ def test_push_invalid_token_cleanup_revoke_and_scope_compatibility(tmp_path: Pat
 
 def test_push_sender_timeout_does_not_block_completion_observation(tmp_path: Path) -> None:
     client = _ActivityCcbdClient(project_id='proj-demo', project_root='/srv/demo', display_name='demo')
+    sender_started = threading.Event()
+    sender_release = threading.Event()
+    sender_finished = threading.Event()
 
     def slow_sender(_token: str, _payload: dict[str, object], _timeout: float) -> PushSendResult:
-        time.sleep(0.25)
+        sender_started.set()
+        sender_release.wait(timeout=2)
+        sender_finished.set()
         return PushSendResult()
 
     service = _service(
@@ -431,11 +436,15 @@ def test_push_sender_timeout_does_not_block_completion_observation(tmp_path: Pat
     service.dispatch_put('/v1/devices/me/push-token', {'token': 'slow'}, headers)
     service.project_view_payload('proj-demo')
     client.activity_state = 'idle'
-    started = time.monotonic()
     service.project_view_payload('proj-demo')
 
-    assert time.monotonic() - started < 0.2
-    assert any(event['kind'] == 'task_completed' for event in service.notification_events_since('/v1/mobile/notifications?once=1', headers))
+    try:
+        assert sender_started.is_set()
+        assert not sender_finished.is_set()
+        assert any(event['kind'] == 'task_completed' for event in service.notification_events_since('/v1/mobile/notifications?once=1', headers))
+    finally:
+        sender_release.set()
+    assert sender_finished.wait(timeout=1)
 
 
 def test_notification_service_observes_only_explicit_project_views(tmp_path: Path) -> None:

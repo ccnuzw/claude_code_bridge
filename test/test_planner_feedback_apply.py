@@ -412,10 +412,11 @@ def test_real_plan_layout_selects_one_frozen_surface_per_semantic(
 
     imported = _run_apply(context)
     transaction = json.loads(Path(imported['transaction_path']).read_text())
+    actual_names = {path.name for path in plan_root.iterdir()}
 
     assert tuple(Path(item['path']).name for item in transaction['targets']) == expected_targets
-    assert all((plan_root / name).is_file() for name in expected_targets)
-    assert all(not (plan_root / name).exists() for name in absent)
+    assert all(name in actual_names for name in expected_targets)
+    assert all(name not in actual_names for name in absent)
 
 
 @pytest.mark.parametrize(
@@ -433,6 +434,9 @@ def test_case_duplicate_semantic_files_are_rejected(
     (plan_root / 'brief.md').write_text('brief\n', encoding='utf-8')
     for name in files:
         (plan_root / name).write_text(name + '\n', encoding='utf-8')
+    actual_names = {path.name for path in plan_root.iterdir()}
+    if not all(name in actual_names for name in files):
+        pytest.skip('filesystem does not support case-distinct semantic files')
 
     with pytest.raises(ValueError, match='ambiguous semantic files'):
         _run_apply(context)

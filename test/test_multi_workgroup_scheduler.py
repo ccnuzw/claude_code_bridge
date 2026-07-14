@@ -409,6 +409,21 @@ class Harness:
         return {'status': 'done' if command.result == 'pass' else command.result, 'result': command.result}
 
 
+def _run_until_job_submitted(
+    scheduler: MultiWorkgroupScheduler,
+    harness: Harness,
+    node_id: str,
+    purpose: str,
+    *,
+    max_runs: int = 4,
+) -> None:
+    for _attempt in range(max_runs):
+        if (node_id, purpose) in harness.jobs:
+            return
+        scheduler.run_once()
+    raise AssertionError(f'job was not submitted after {max_runs} scheduler runs: {node_id}/{purpose}')
+
+
 def _review_status(reply: str) -> str:
     for line in str(reply or '').splitlines():
         if line.strip().lower().startswith('status:'):
@@ -1191,7 +1206,7 @@ def test_scheduler_uses_real_r2_worktrees_commits_merge_promotion_and_cleanup(tm
     scheduler.run_once()
     for node_id in ('node-001', 'node-002'):
         harness.complete(node_id, 'reviewer', reply='status: pass')
-    scheduler.run_once()
+    _run_until_job_submitted(scheduler, harness, 'round', 'ccb_round_reviewer')
     harness.complete('round', 'ccb_round_reviewer', reply='round result: pass')
 
     final = scheduler.run_once()
@@ -1238,7 +1253,7 @@ def test_real_r2_scheduler_records_rework_cycles_then_integrates(
         scheduler.run_once()
 
     harness.complete('node-001', 'reviewer_recheck', attempt=cycles, reply='status: pass')
-    scheduler.run_once()
+    _run_until_job_submitted(scheduler, harness, 'round', 'ccb_round_reviewer')
     harness.complete('round', 'ccb_round_reviewer', reply='round result: pass')
     final = scheduler.run_once()
     integration = json.loads(

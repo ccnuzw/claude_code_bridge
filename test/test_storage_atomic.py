@@ -3,10 +3,28 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import stat
 
 import pytest
 
 from storage import atomic
+
+
+def _is_directory_fd(fd: int) -> bool:
+    return stat.S_ISDIR(os.fstat(fd).st_mode)
+
+
+def _track_open_directories(monkeypatch) -> dict[int, Path]:
+    opened: dict[int, Path] = {}
+    real_open_directory = atomic._open_directory
+
+    def tracking_open_directory(path: Path) -> int:
+        fd = real_open_directory(path)
+        opened[fd] = Path(path)
+        return fd
+
+    monkeypatch.setattr(atomic, '_open_directory', tracking_open_directory)
+    return opened
 
 
 def test_atomic_write_text_orders_file_and_directory_sync(monkeypatch, tmp_path: Path) -> None:
@@ -43,7 +61,7 @@ def test_atomic_write_text_orders_file_and_directory_sync(monkeypatch, tmp_path:
         return TrackingHandle(real_fdopen(*args, **kwargs))
 
     def tracking_fsync(fd):
-        events.append('dir-fsync' if os.path.isdir(f'/proc/self/fd/{fd}') else 'file-fsync')
+        events.append('dir-fsync' if _is_directory_fd(fd) else 'file-fsync')
         return real_fsync(fd)
 
     def tracking_replace(*args, **kwargs):
@@ -66,7 +84,7 @@ def test_failure_before_replace_preserves_old_target(monkeypatch, tmp_path: Path
     real_fsync = os.fsync
 
     def fail_file_fsync(fd):
-        if not os.path.isdir(f'/proc/self/fd/{fd}'):
+        if not _is_directory_fd(fd):
             raise OSError('file fsync failed')
         return real_fsync(fd)
 
@@ -85,7 +103,7 @@ def test_directory_fsync_failure_surfaces_after_complete_replace(monkeypatch, tm
     real_fsync = os.fsync
 
     def fail_directory_fsync(fd):
-        if os.path.isdir(f'/proc/self/fd/{fd}'):
+        if _is_directory_fd(fd):
             raise OSError('directory fsync failed')
         return real_fsync(fd)
 
@@ -100,12 +118,12 @@ def test_directory_fsync_failure_surfaces_after_complete_replace(monkeypatch, tm
 def test_nested_parent_entries_are_synced(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / 'one' / 'two' / 'state.txt'
     synced_directories: list[Path] = []
+    opened_directories = _track_open_directories(monkeypatch)
     real_fsync = os.fsync
 
     def tracking_fsync(fd):
-        link = Path(f'/proc/self/fd/{fd}')
-        if link.is_dir():
-            synced_directories.append(link.resolve())
+        if fd in opened_directories:
+            synced_directories.append(opened_directories[fd])
         return real_fsync(fd)
 
     monkeypatch.setattr(os, 'fsync', tracking_fsync)
@@ -119,10 +137,11 @@ def test_nested_parent_entries_are_synced(monkeypatch, tmp_path: Path) -> None:
 def test_ensure_durable_directory_orders_parent_syncs(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / 'one' / 'two'
     events: list[Path] = []
+    opened_directories = _track_open_directories(monkeypatch)
     real_fsync = os.fsync
 
     def tracking_fsync(fd):
-        events.append(Path(f'/proc/self/fd/{fd}').resolve())
+        events.append(opened_directories[fd])
         return real_fsync(fd)
 
     monkeypatch.setattr(os, 'fsync', tracking_fsync)
@@ -194,7 +213,7 @@ def test_directory_close_failure_is_surfaced(monkeypatch, tmp_path: Path) -> Non
     real_close = os.close
 
     def fail_directory_close(fd):
-        if os.path.isdir(f'/proc/self/fd/{fd}'):
+        if _is_directory_fd(fd):
             real_close(fd)
             raise OSError('directory close failed')
         return real_close(fd)
@@ -216,7 +235,7 @@ def test_directory_close_failure_does_not_replace_original_failure(monkeypatch, 
         raise OSError('replace failed')
 
     def fail_directory_close(fd):
-        if os.path.isdir(f'/proc/self/fd/{fd}'):
+        if _is_directory_fd(fd):
             real_close(fd)
             raise OSError('directory close failed')
         return real_close(fd)
