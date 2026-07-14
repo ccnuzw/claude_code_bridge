@@ -12,7 +12,7 @@ from .models import (
     SwitchDecision,
     SwitchEvidence,
 )
-from .resolver import resolve_switch_decision
+from .resolver import resolve_switch_decision, select_exact_anchor_candidate
 
 __all__ = [
     "STATE_AUTO_REBINDABLE",
@@ -26,6 +26,7 @@ __all__ = [
     "commit_rebind",
     "read_diagnostics",
     "resolve_switch_decision",
+    "select_exact_anchor_candidate",
     "write_decision",
     "write_rebound",
 ]

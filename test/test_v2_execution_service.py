@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -2256,6 +2257,8 @@ def test_execution_service_codex_adapter_quarantines_anchor_fallback_without_reb
         + "\n",
         encoding='utf-8',
     )
+    os.utime(old_log, (100, 100))
+    os.utime(fallback_log, (200, 200))
     work_dir_str = str(work_dir)
 
     class FakeBackend:
@@ -2351,6 +2354,8 @@ def test_execution_service_codex_adapter_adopts_new_session_after_delayed_fallba
         + "\n",
         encoding='utf-8',
     )
+    os.utime(old_log, (100, 100))
+    os.utime(fallback_log, (200, 200))
     work_dir_str = str(work_dir)
     current_now = {'value': '2026-03-18T00:00:00Z'}
 

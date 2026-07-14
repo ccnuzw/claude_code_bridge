@@ -6,9 +6,9 @@ from pathlib import Path
 from ccbd.system import parse_utc_timestamp
 from ccbd.api_models import JobRecord
 from completion.models import CompletionConfidence, CompletionDecision, CompletionItemKind, CompletionStatus
-from provider_backends.codex.comm_runtime.binding import extract_cwd_from_log_file, extract_session_id, is_codex_subagent_log
-from provider_backends.codex.comm_runtime.pathing import normalize_work_dir
-from provider_core.protocol import REQ_ID_PREFIX, request_anchor_for_job, wrap_codex_turn_prompt
+from provider_backends.codex.comm_runtime.binding import extract_session_id, is_codex_subagent_log
+from provider_backends.codex.session_switch import select_exact_anchor_candidate
+from provider_core.protocol import request_anchor_for_job, wrap_codex_turn_prompt
 from provider_execution.base import ProviderPollResult, ProviderRuntimeContext, ProviderSubmission
 from provider_execution.common import build_item, request_anchor_from_runtime_state
 from provider_execution.reliability import CompletionReliabilityPolicy
@@ -334,6 +334,12 @@ def _delivery_acceptance_guard(submission: ProviderSubmission, *, now: str) -> P
     if str(state.get('delivery_state') or '').strip() != 'pending_anchor':
         return None
     if not str(state.get('delivery_target_pane_id') or '').strip():
+        return None
+
+    # The shared selector has already proved an exact active-job anchor in a
+    # newer managed-root log.  Let protocol polling consume that authority
+    # instead of terminalizing the stale official binding at its old timeout.
+    if _active_anchor_fallback_log(state) is not None:
         return None
 
     failure_kind = _delivery_failure_kind(state, submission=submission, now=now)
@@ -702,35 +708,15 @@ def _anchor_fallback_log(
     request_anchor = request_anchor_from_runtime_state(state, fallback=submission.job_id)
     if not request_anchor:
         return None
-    root = codex_session_root_path(getattr(session, 'data', None))
-    if root is None or not root.is_dir():
-        return None
-    target_work_dir = normalize_work_dir(work_dir)
-    if not target_work_dir:
-        return None
-
-    current_path = _normalized_resolved_path(current_log)
-    matches: list[Path] = []
-    try:
-        candidates = sorted(root.glob('**/*.jsonl'))
-    except OSError:
-        return None
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        if _normalized_resolved_path(candidate) == current_path:
-            continue
-        if not _log_matches_work_dir(candidate, target_work_dir):
-            continue
-        if not extract_session_id(candidate):
-            continue
-        if _log_contains_request_anchor(candidate, request_anchor):
-            matches.append(candidate)
-            if len(matches) > 1:
-                return None
-    if len(matches) != 1:
-        return None
-    return matches[0]
+    data = dict(getattr(session, 'data', None) or {})
+    data.setdefault('work_dir', str(work_dir))
+    data.setdefault('codex_session_path', str(current_log))
+    candidate = select_exact_anchor_candidate(
+        data,
+        session_file=getattr(session, 'session_file', None),
+        request_anchor=request_anchor,
+    )
+    return candidate.path if candidate is not None else None
 
 
 def _current_log_has_unread_data(log_path: Path, offset: object) -> bool:
@@ -749,28 +735,6 @@ def _current_log_is_drained(log_path: Path, offset: object) -> bool:
         return log_path.stat().st_size <= offset
     except OSError:
         return False
-
-
-def _log_matches_work_dir(log_path: Path, target_work_dir: str) -> bool:
-    raw = extract_cwd_from_log_file(log_path)
-    if not raw:
-        return False
-    try:
-        return normalize_work_dir(Path(raw).expanduser()) == target_work_dir
-    except Exception:
-        return False
-
-
-def _log_contains_request_anchor(log_path: Path, request_anchor: str) -> bool:
-    needle = f'{REQ_ID_PREFIX} {request_anchor}'
-    try:
-        with log_path.open('r', encoding='utf-8-sig', errors='ignore') as handle:
-            for line in handle:
-                if needle in line:
-                    return True
-    except OSError:
-        return False
-    return False
 
 
 def _normalized_resolved_path(value: object) -> str:

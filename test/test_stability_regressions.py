@@ -279,6 +279,45 @@ def test_codex_execution_quarantines_matching_fallback_until_official_binding_mo
     assert result.decision is None
 
 
+def test_codex_delivery_timeout_polls_exact_changed_cwd_anchor_before_failure(monkeypatch, tmp_path: Path) -> None:
+    from provider_execution import codex as codex_adapter_module
+
+    work_dir = tmp_path / "repo"
+    root = tmp_path / "sessions"
+    old_id = "11111111-1111-1111-1111-111111111111"
+    new_id = "22222222-2222-2222-2222-222222222222"
+    old_log = _codex_log(root, old_id, work_dir, entries=())
+    new_log = _codex_log(
+        root,
+        new_id,
+        tmp_path / "groups" / "talk2_workers",
+        entries=(_codex_user_entry("job_1", "delivered"),),
+    )
+    os.utime(old_log, (100, 100))
+    os.utime(new_log, (200, 200))
+    monkeypatch.setattr(
+        codex_adapter_module,
+        "_load_session",
+        lambda work_dir_arg, agent_name: _CodexSession(
+            work_dir=work_dir_arg, root=root, log_path=old_log, session_id=old_id
+        ),
+    )
+    submission = _codex_submission(
+        reader=CodexLogReader(root=root, log_path=old_log, session_id_filter=old_id, work_dir=work_dir),
+        state={"log_path": old_log, "offset": old_log.stat().st_size},
+        work_dir=work_dir,
+        delivery=True,
+    )
+
+    result = codex_adapter_module.CodexProviderAdapter().poll(submission, now="2026-04-04T10:03:00Z")
+
+    assert result is not None
+    assert result.decision is None
+    assert result.submission.runtime_state["codex_anchor_fallback_log"] == str(new_log)
+    assert result.submission.runtime_state["delivery_state"] == "pending_anchor"
+    assert result.submission.runtime_state.get("delivery_failure_kind") is None
+
+
 def test_codex_execution_does_not_switch_without_current_anchor(
     monkeypatch,
     tmp_path: Path,

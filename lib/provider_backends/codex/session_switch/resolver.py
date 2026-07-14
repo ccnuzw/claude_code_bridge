@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
-from provider_backends.codex.comm_runtime.binding import extract_cwd_from_log_file, extract_session_id
+from provider_backends.codex.comm_runtime.binding import extract_cwd_from_log_file, extract_session_id, is_codex_subagent_log
 from provider_backends.codex.comm_runtime.pathing import normalize_work_dir
 from provider_backends.codex.session_runtime.follow_policy import codex_session_root_path
 
@@ -37,18 +38,28 @@ def resolve_switch_decision(
         return _decision(STATE_MISMATCH, "missing_work_dir_or_session_root", None, evidence)
 
     running_anchors = running_request_anchors(session_file=session_file, session_data=session_data)
-    candidates = _candidate_sessions(session_data, session_file=session_file, root=root, work_dir=work_dir)
+    candidates = _candidate_sessions(
+        session_data,
+        session_file=session_file,
+        root=root,
+        work_dir=work_dir,
+        request_anchors=running_anchors,
+    )
     evidence = _evidence_with_candidates(evidence, candidates=candidates, running_anchors=running_anchors)
 
     if not candidates:
+        if running_anchors and _candidate_sessions(
+            session_data,
+            session_file=session_file,
+            root=root,
+            work_dir=work_dir,
+        ):
+            return _decision(STATE_SWITCHED_UNBOUND, "running_job_anchor_not_seen", None, evidence)
         return _decision(STATE_BOUND, "no_new_managed_session", None, evidence)
     if len(candidates) != 1:
         return _decision(STATE_SWITCHED_UNBOUND, "ambiguous_session_candidates", None, evidence)
 
     candidate = candidates[0]
-    if running_anchors and not _path_contains_any(candidate.path, running_anchors):
-        return _decision(STATE_SWITCHED_UNBOUND, "running_job_anchor_not_seen", candidate, evidence)
-
     evidence = SwitchEvidence(
         managed_root=evidence.managed_root,
         runtime_match=evidence.runtime_match,
@@ -56,7 +67,7 @@ def resolve_switch_decision(
         candidate_unique=evidence.candidate_unique,
         newer_than_bound=evidence.newer_than_bound,
         running_job_count=evidence.running_job_count,
-        request_anchor_seen=(not running_anchors or _path_contains_any(candidate.path, running_anchors)),
+        request_anchor_seen=(not running_anchors or _path_contains_any_exact_anchor(candidate.path, running_anchors)),
     )
     return _decision(STATE_AUTO_REBINDABLE, "single_managed_session_switch", candidate, evidence)
 
@@ -67,6 +78,7 @@ def _candidate_sessions(
     session_file: Path,
     root: Path,
     work_dir: str,
+    request_anchors: tuple[str, ...] = (),
 ) -> tuple[SwitchCandidate, ...]:
     current_path = _normalize_path(session_data.get("codex_session_path"))
     current_id = str(session_data.get("codex_session_id") or "").strip()
@@ -78,6 +90,8 @@ def _candidate_sessions(
         return ()
     for path in paths:
         if not path.is_file():
+            continue
+        if is_codex_subagent_log(path):
             continue
         normalized = _normalize_path(path)
         if normalized is not None and current_path is not None and normalized == current_path:
@@ -92,11 +106,42 @@ def _candidate_sessions(
             continue
         if current_mtime is not None and mtime <= current_mtime:
             continue
-        cwd = _normalized_log_cwd(path)
-        if cwd != work_dir:
-            continue
+        if request_anchors:
+            if not _path_contains_any_exact_anchor(path, request_anchors):
+                continue
+        else:
+            cwd = _normalized_log_cwd(path)
+            if cwd != work_dir:
+                continue
         candidates.append(SwitchCandidate(path=path, session_id=session_id, mtime=mtime))
     return tuple(candidates)
+
+
+def select_exact_anchor_candidate(
+    session_data: dict[str, object],
+    *,
+    session_file: Path | None,
+    request_anchor: str,
+) -> SwitchCandidate | None:
+    """Return one safe newer managed-root log for an active request anchor.
+
+    This deliberately ignores stale ``cwd`` metadata only after the exact
+    request anchor has established ownership of a newer top-level session.
+    Idle discovery continues to use the strict cwd path above.
+    """
+    root = codex_session_root_path(session_data)
+    work_dir = _normalized_work_dir(session_data)
+    anchor = str(request_anchor or "").strip()
+    if root is None or not root.is_dir() or work_dir is None or not anchor:
+        return None
+    candidates = _candidate_sessions(
+        session_data,
+        session_file=session_file,
+        root=root,
+        work_dir=work_dir,
+        request_anchors=(anchor,),
+    )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _base_evidence(session_data: dict[str, object], *, runtime_dir: Path | None) -> SwitchEvidence:
@@ -163,7 +208,9 @@ def _runtime_matches(session_data: dict[str, object], *, runtime_dir: Path | Non
     return recorded == actual
 
 
-def _bound_to_other_session(*, session_file: Path, path: Path, session_id: str) -> bool:
+def _bound_to_other_session(*, session_file: Path | None, path: Path, session_id: str) -> bool:
+    if session_file is None:
+        return False
     session_dir = session_file.expanduser().parent
     try:
         candidates = sorted(session_dir.glob(".codex*-session"))
@@ -214,7 +261,7 @@ def _mtime(path: Path | None) -> float | None:
         return None
 
 
-def _path_contains_any(path: Path, anchors: tuple[str, ...]) -> bool:
+def _path_contains_any_exact_anchor(path: Path, anchors: tuple[str, ...]) -> bool:
     if not anchors:
         return True
     try:
@@ -225,7 +272,14 @@ def _path_contains_any(path: Path, anchors: tuple[str, ...]) -> bool:
             text = handle.read().decode("utf-8", errors="replace")
     except Exception:
         return False
-    return any(anchor and anchor in text for anchor in anchors)
+    return any(_path_contains_exact_anchor_text(text, anchor) for anchor in anchors)
 
 
-__all__ = ["resolve_switch_decision"]
+def _path_contains_exact_anchor_text(text: str, anchor: str) -> bool:
+    normalized = str(anchor or "").strip()
+    if not normalized:
+        return False
+    return bool(re.search(rf"CCB_REQ_ID:\s*{re.escape(normalized)}(?![A-Za-z0-9_-])", text))
+
+
+__all__ = ["resolve_switch_decision", "select_exact_anchor_candidate"]
