@@ -1338,16 +1338,24 @@ Orchestrator used the bundle schema as its fence language and the importer
 correctly required literal fenced JSON. A harness read-only observation replay
 defect was found during recovery. The next gate is to land both bounded
 repairs and rerun the full source gate before a fresh root15. Those repairs
-landed through `3a4b41da` and their focused gates pass, but two complete
-single-lane smoke runs exposed non-deterministic reviewer-rework exact-once
-and cleanup failures (`37/39` and `38/39`). Root15 remains forbidden until
-that source stability blocker and the full source gate close. Persistent-root
-evidence now shows the exact authority gap: after the first review chain, the
-original Worker is terminal and the scheduler attempts the second Reviewer
-chain without first creating a fresh Worker-rework parent job. See
+landed through `3a4b41da`, after which two complete single-lane smoke runs
+exposed the Worker-rework parent-authority race and cleanup leak. The source
+blockers are now closed through `b14c66ef`: strict review-chain and RolePack
+contracts pass focused gates, the final source suite passes `4674` tests with
+`2` skipped, and the post-run audit reports zero related live processes or
+listening sockets. Root15 is admitted as the next gate. See
 [history/g6c-root13-planner-terminal-constraint-diagnostic-20260713.md](history/g6c-root13-planner-terminal-constraint-diagnostic-20260713.md).
 See also
 [history/g6c-root14-orchestrator-fence-diagnostic-20260713.md](history/g6c-root14-orchestrator-fence-diagnostic-20260713.md).
+
+2026-07-14 G6C source checkpoint: the accepted source/fake head is
+`b14c66ef`. A rejected wrong-environment full run was isolated from acceptance;
+its exact 46 failures passed under the corrected environment, followed by one
+clean full run and external residue audit. The next target is a fresh visible
+root15 full five-route run. Remaining G6 three/four-workgroup, restart,
+busy-retain/sidebar, and exact provider/model weak-model repeat rows remain
+separate acceptance work. See
+[history/g6c-source-gate-and-root15-readiness-20260714.md](history/g6c-source-gate-and-root15-readiness-20260714.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from

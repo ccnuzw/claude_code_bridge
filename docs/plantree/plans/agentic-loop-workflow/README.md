@@ -88,6 +88,10 @@ recoverable workflow loops.
   rejected root14 real-provider evidence after L1 pass; records the
   Orchestrator schema-as-fence RolePack drift, fail-closed importer result,
   harness replay defect, and root15 repair gates.
+- [history/g6c-source-gate-and-root15-readiness-20260714.md](history/g6c-source-gate-and-root15-readiness-20260714.md):
+  accepted source/fake closure through `b14c66ef`, corrected full-suite
+  environment contract, post-run live-residue audit, and fresh root15
+  admission boundary.
 - [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
   P2 post-acceptance deployment-readiness evidence for real-project
   frontdesk macro-intake pressure across direct, detail, macro-adjustment, and

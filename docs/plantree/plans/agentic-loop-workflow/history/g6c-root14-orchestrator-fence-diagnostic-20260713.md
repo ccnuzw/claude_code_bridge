@@ -1,7 +1,7 @@
 # G6C Root14 Orchestrator Fence Diagnostic
 
 Date: 2026-07-13
-Status: rejected real-provider acceptance; bounded repairs landed; source smoke blocker active
+Status: rejected real-provider acceptance; source blockers later closed
 Phase: G6C / Decision 029 P5
 Read when: reviewing the Orchestrator output contract or preparing root15
 
@@ -94,7 +94,7 @@ The literal-`json` RolePack repair, bounded read-only harness recovery, and
 exact schema-as-fence controller regression landed through `3a4b41da`.
 Focused RolePack, harness, document, and loop-controller gates passed.
 
-Root15 is still forbidden. Two complete
+Root15 was still forbidden at this checkpoint. Two complete
 `test/test_single_lane_multi_workgroup_smoke.py` runs passed only `37/39` and
 `38/39`. The unstable rows are the reviewer-rework scenarios; observed failed
 checks include `rework_exactly_once` and, in one run, release, dynamic-agent,
@@ -112,3 +112,10 @@ sender has no active parent job. On the failing path the round records
 `review_chain_final_rework_required`. The runtime must create a fresh
 Worker-rework parent job before the second Reviewer chain; the smoke harness
 must not manufacture or bypass that authority.
+
+## Later Closure
+
+The authority and cleanup blockers were closed through `b14c66ef`. The final
+source suite and external live-residue audit passed on 2026-07-14, admitting a
+fresh root15 without reclassifying root14 itself as accepted evidence. See
+[g6c-source-gate-and-root15-readiness-20260714.md](g6c-source-gate-and-root15-readiness-20260714.md).
