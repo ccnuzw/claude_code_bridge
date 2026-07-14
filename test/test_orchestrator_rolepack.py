@@ -6,7 +6,9 @@ import re
 import shutil
 
 from provider_profiles.codex_home_config import materialize_codex_home_config
+from provider_backends.claude.launcher_runtime.home import materialize_claude_home_config
 from cli.services.role_command_policy import claude_permission_allowlist, load_role_command_policy
+from cli.services.planner_feedback import parse_planner_feedback_reply
 from rolepacks.manifest import load_role_manifest
 
 
@@ -37,6 +39,7 @@ ROLE_EXPECTATIONS = {
             'templates/task-packet.md',
             'templates/readiness.json',
             'templates/candidate-questions.jsonl',
+            'templates/planner-backfill-detailer-replan.json',
             'templates/planner-backfill.json',
             'templates/frontdesk-status.json',
         ),
@@ -520,6 +523,7 @@ def test_planner_rolepack_defines_revision_fenced_replan_and_task_set_closure_mo
             (root / 'memory.md').read_text(encoding='utf-8'),
             (root / 'adapters' / 'ccb' / 'memory.md').read_text(encoding='utf-8'),
             (root / 'skills' / 'planner-closure-backfill' / 'SKILL.md').read_text(encoding='utf-8'),
+            (root / 'templates' / 'planner-backfill-detailer-replan.json').read_text(encoding='utf-8'),
             (root / 'templates' / 'planner-backfill.json').read_text(encoding='utf-8'),
             (root / 'templates' / 'frontdesk-status.json').read_text(encoding='utf-8'),
         ]
@@ -533,7 +537,8 @@ def test_planner_rolepack_defines_revision_fenced_replan_and_task_set_closure_mo
     assert 'closure_evidence_digest' in combined
     assert 'accepted_scope' in combined
     assert 'unresolved_scope' in combined
-    assert 'closure_complete|closure_partial|task_set_replanned|closure_blocked' in combined
+    assert 'pass -> closure_complete' in combined
+    assert 'replan_required -> task_set_replanned' in combined
     assert 'selected|workflow_terminal|blocked_none' in combined
     assert 'ccb.planner.frontdesk_status.v1' in combined
     assert 'multiple replan children produce one coherent macro proposal' in combined.lower()
@@ -549,6 +554,38 @@ def test_planner_rolepack_defines_revision_fenced_replan_and_task_set_closure_mo
     assert 'complete replacement macro proposal' in combined.lower()
     assert 'invalidates and replaces old orchestration semantics' in ' '.join(combined.split()).lower()
     assert 'Use this output contract only when the activation mode is exactly\n`task_set_closure`' not in combined
+
+
+def test_planner_backfill_templates_are_complete_mode_specific_parser_examples() -> None:
+    root = role_root('agentroles.ccb_planner')
+    detailer_path = root / 'templates' / 'planner-backfill-detailer-replan.json'
+    closure_path = root / 'templates' / 'planner-backfill.json'
+    detailer = json.loads(detailer_path.read_text(encoding='utf-8'))
+    closure = json.loads(closure_path.read_text(encoding='utf-8'))
+
+    for payload in (detailer, closure):
+        serialized = json.dumps(payload, sort_keys=True)
+        assert '<' not in serialized and '>' not in serialized and '|' not in serialized
+        proposal = parse_planner_feedback_reply(
+            '**planner-backfill.json**\n```json\n' + json.dumps(payload) + '\n```\n'
+        )
+        assert proposal.schema == 'ccb.planner.backfill_proposal.v1'
+        assert proposal.frontdesk_status['aggregate_result'] == proposal.aggregate_result
+
+    assert detailer['mode'] == 'detailer_replan'
+    assert detailer['aggregate_result'] == 'replan_required'
+    assert detailer['result'] == 'task_set_replanned'
+    assert 'task_set_closure' not in json.dumps(detailer)
+    assert 'closure_complete' not in json.dumps(detailer)
+    assert closure['mode'] == 'task_set_closure'
+    assert closure['aggregate_result'] == 'pass'
+    assert closure['result'] == 'closure_complete'
+    assert 'detailer_replan' not in json.dumps(closure)
+    assert 'task_set_replanned' not in json.dumps(closure)
+
+    projected_root = root / 'skills' / 'planner-closure-backfill' / 'templates'
+    for path in (detailer_path, closure_path):
+        assert (projected_root / path.name).read_text(encoding='utf-8') == path.read_text(encoding='utf-8')
 
 
 def test_frontdesk_rolepack_reports_validated_closure_without_reinterpreting_result() -> None:
@@ -1091,4 +1128,63 @@ def test_planner_rolepack_projects_planner_skill_to_codex_home(tmp_path: Path, m
     assert 'readiness recommendations' in projected.read_text(encoding='utf-8')
     closure = target_home / 'skills' / 'planner-closure-backfill' / 'SKILL.md'
     assert closure.is_file()
-    assert 'ccb.planner.backfill_proposal.v1' in closure.read_text(encoding='utf-8')
+    projected_skill = closure.read_text(encoding='utf-8')
+    assert 'detailer_replan' in projected_skill and 'task_set_closure' in projected_skill
+    projected_templates = closure.parent / 'templates'
+    for template_name in ('planner-backfill-detailer-replan.json', 'planner-backfill.json'):
+        projected_template = projected_templates / template_name
+        assert projected_template.is_file()
+        assert json.loads(projected_template.read_text(encoding='utf-8')) == json.loads(
+            (role_root('agentroles.ccb_planner') / 'templates' / template_name).read_text(encoding='utf-8')
+        )
+    projected_memory = (target_home / 'AGENTS.md').read_text(encoding='utf-8')
+    assert 'detailer_replan' in projected_memory and 'task_set_closure' in projected_memory
+
+
+def test_planner_rolepack_projects_complete_backfill_templates_to_claude_home(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(tmp_path / '.roles'))
+    installed = tmp_path / '.roles' / 'installed' / 'agentroles.ccb_planner' / 'current'
+    installed.parent.mkdir(parents=True)
+    shutil.copytree(role_root('agentroles.ccb_planner'), installed)
+
+    project = tmp_path / 'project'
+    (project / '.ccb').mkdir(parents=True)
+    (project / '.ccb' / 'ccb.config').write_text(
+        '\n'.join(
+            [
+                'version = 2',
+                'entry_window = "main"',
+                '',
+                '[windows]',
+                'main = "planner:claude"',
+                '',
+                '[agents.planner]',
+                'role = "agentroles.ccb_planner"',
+            ]
+        )
+        + '\n',
+        encoding='utf-8',
+    )
+    layout = materialize_claude_home_config(
+        tmp_path / 'managed-claude',
+        source_home=tmp_path / 'source-claude',
+        project_root=project,
+        agent_name='planner',
+        workspace_path=project,
+    )
+
+    closure = layout.claude_dir / 'skills' / 'planner-closure-backfill' / 'SKILL.md'
+    assert closure.is_file()
+    projected_skill = closure.read_text(encoding='utf-8')
+    assert 'detailer_replan' in projected_skill and 'task_set_closure' in projected_skill
+    for template_name in ('planner-backfill-detailer-replan.json', 'planner-backfill.json'):
+        projected_template = closure.parent / 'templates' / template_name
+        assert projected_template.is_file()
+        assert json.loads(projected_template.read_text(encoding='utf-8')) == json.loads(
+            (role_root('agentroles.ccb_planner') / 'templates' / template_name).read_text(encoding='utf-8')
+        )
+    projected_memory = (layout.claude_dir / 'CLAUDE.md').read_text(encoding='utf-8')
+    assert 'detailer_replan' in projected_memory and 'task_set_closure' in projected_memory

@@ -457,13 +457,22 @@ def test_fake_frontdesk_rejects_invalid_or_laundered_status(
 def test_closure_rolepack_templates_use_digest_revision_and_exact_mode() -> None:
     planner_root = WORKFLOW_DRAFTS / 'agentroles.ccb_planner'
     backfill = json.loads((planner_root / 'templates/planner-backfill.json').read_text(encoding='utf-8'))
+    detailer = json.loads(
+        (planner_root / 'templates/planner-backfill-detailer-replan.json').read_text(encoding='utf-8')
+    )
     skill = (planner_root / 'skills/planner-closure-backfill/SKILL.md').read_text(encoding='utf-8')
     assert backfill['mode'] == 'task_set_closure'
-    assert backfill['expected_plan_revision'] == 'sha256:<64 lowercase hex>'
+    assert re.fullmatch(r'sha256:[0-9a-f]{64}', backfill['expected_plan_revision'])
+    assert backfill['aggregate_result'] == 'pass'
+    assert backfill['result'] == 'closure_complete'
     assert list(backfill).count('frontdesk_status') == 1
-    expected_path = 'docs/plantree/plans/<plan_slug>/task-sets/<task_set_id>/closure.json'
+    expected_path = 'docs/plantree/plans/example-plan/task-sets/task-set-a/closure.json'
     assert backfill['evidence_refs'] == [expected_path]
     assert backfill['frontdesk_status']['evidence_refs'] == [expected_path]
+    assert detailer['mode'] == 'detailer_replan'
+    assert detailer['aggregate_result'] == 'replan_required'
+    assert detailer['result'] == 'task_set_replanned'
+    assert detailer['frontdesk_status']['aggregate_result'] == detailer['aggregate_result']
     assert 'expected_plan_revision is a digest' in skill
     assert 'Treat `closure_ref` as script-owned input' in skill
     assert 'Never rewrite, normalize, infer, or reconstruct that path' in skill

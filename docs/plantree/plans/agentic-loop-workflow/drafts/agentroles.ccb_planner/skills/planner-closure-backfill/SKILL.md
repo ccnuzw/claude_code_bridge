@@ -127,8 +127,10 @@ For `task_set_closure`, emit this separate legal core:
 ```
 ````
 
-`templates/planner-backfill.json` is a `task_set_closure` exemplar. It does
-not authorize emitting that mode for a `detailer_replan` activation.
+This skill carries two complete JSON exemplars: its
+`templates/planner-backfill-detailer-replan.json` file is only for
+`detailer_replan`, and `templates/planner-backfill.json` is only for
+`task_set_closure`. Neither exemplar authorizes emitting the other mode.
 
 ## Rules
 

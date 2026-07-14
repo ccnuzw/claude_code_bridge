@@ -241,6 +241,38 @@ def test_detailer_replan_uses_task_identity_and_exact_mode_name() -> None:
     assert obsolete.value.code == 'planner_backfill_enum_invalid'
 
 
+@pytest.mark.parametrize(
+    ('activation_mode', 'wrong_mode', 'aggregate_result', 'result', 'expected_code'),
+    (
+        ('detailer_replan', 'task_set_closure', 'pass', 'closure_complete', 'planner_backfill_authority_mismatch'),
+        ('task_set_closure', 'detailer_replan', 'replan_required', 'task_set_replanned', 'planner_backfill_authority_mismatch'),
+    ),
+)
+def test_authority_rejects_cross_mode_template_result_mutations(
+    activation_mode: str,
+    wrong_mode: str,
+    aggregate_result: str,
+    result: str,
+    expected_code: str,
+) -> None:
+    proposal = parse_planner_feedback_reply(
+        _reply(aggregate_result=aggregate_result, result=result, mode=wrong_mode)
+    )
+
+    with pytest.raises(PlannerFeedbackError) as rejected:
+        validate_planner_feedback_authority(
+            proposal,
+            mode=activation_mode,
+            expected_plan_revision=_PLAN_DIGEST,
+            task_or_task_set_id='task-a' if activation_mode == 'detailer_replan' else 'set-a',
+            task_or_task_set_revision=2,
+            closure_evidence_digest=_DIGEST,
+            aggregate_result='replan_required' if activation_mode == 'detailer_replan' else 'pass',
+            evidence_refs=['task-sets/set-a/closure.json'],
+        )
+    assert rejected.value.code == expected_code
+
+
 def test_next_milestone_is_structured_and_cannot_be_prompt_overridden() -> None:
     reply = _reply()
     payload = json.loads(reply.split('```json\n', 1)[1].rsplit('\n```', 1)[0])
