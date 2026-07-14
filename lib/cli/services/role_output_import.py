@@ -185,6 +185,15 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
     if not reply.strip():
         return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='missing_reply')
     normalized_agent = _base_agent_name(agent_name)
+    detailer_wrapper = _detailer_replan_wrapper(context, job_id)
+    if detailer_wrapper is not None:
+        if '_invalid' in detailer_wrapper:
+            return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='detailer_replan_wrapper_invalid', evidence={'error': detailer_wrapper['_invalid']})
+        activation_error = _detailer_replan_activation_error(activation, job_id=job_id)
+        if activation_error is not None:
+            return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='detailer_replan_activation_invalid', evidence={'error': activation_error})
+        if activation is None:
+            return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='detailer_replan_activation_missing', evidence={})
     stale_activation = _stale_activation_revision(context, deps, activation=activation)
     strict_detailer_replan = (
         _parse_task_detailer_reply(reply).get('result') == 'planner_replan_required'
@@ -3949,6 +3958,33 @@ def _activation_for_job(context, job_id: str) -> dict[str, object] | None:
     if len(matches) > 1:
         return {'_activation_error': 'duplicate managed activations for Planner job'}
     return None
+
+
+def _detailer_replan_wrapper(context, job_id: str) -> dict[str, object] | None:
+    records = [record for record in _iter_agent_job_records(context, agent_name='planner') if str(record.get('job_id') or '') == job_id]
+    if len(records) != 1:
+        return None
+    request = records[0].get('request') if isinstance(records[0].get('request'), dict) else {}
+    body = request.get('body')
+    if not isinstance(body, str):
+        return None
+    try:
+        wrapper = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(wrapper, dict) or wrapper.get('schema') != 'ccb.detailer.planner_activation.v1':
+        return None
+    required = {'schema', 'mode', 'authority', 'source_request', 'source_request_body', 'source_request_body_sha256'}
+    if set(wrapper) != required or wrapper.get('mode') != 'detailer_replan':
+        return {'_invalid': 'Detailer replan Planner wrapper fields invalid'}
+    if not isinstance(wrapper['source_request_body'], str) or wrapper['source_request_body_sha256'] != hashlib.sha256(wrapper['source_request_body'].encode('utf-8')).hexdigest():
+        return {'_invalid': 'Detailer replan Planner wrapper raw request invalid'}
+    try:
+        if json.loads(wrapper['source_request_body']) != wrapper['source_request']:
+            return {'_invalid': 'Detailer replan Planner wrapper source request mismatch'}
+    except json.JSONDecodeError:
+        return {'_invalid': 'Detailer replan Planner wrapper source request invalid'}
+    return wrapper
 
 
 def _detailer_replan_activation_error(activation: dict[str, object] | None, *, job_id: str) -> str | None:
