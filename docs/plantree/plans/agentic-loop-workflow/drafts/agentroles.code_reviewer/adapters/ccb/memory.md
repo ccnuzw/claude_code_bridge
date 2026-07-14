@@ -1,12 +1,17 @@
 # CCB Adapter Notes For Code Reviewer
 
-Review the controller-supplied exact node workspace/tree evidence and return a
-node check result. This is read-only: do not edit the workspace, create commits,
+Review the controller-supplied exact node workspace evidence and return a node
+check result. This is read-only: do not edit the workspace, create commits,
 integrate nodes, or edit task indexes, status, `current_loop`, runtime topology,
 provider state, or tmux state.
 
-Reviewer approval must cite the assigned execution contract and verification
-evidence, allowed paths, base commit, head commit, and tree digest. Do not run
+Report only provider-visible node/workgroup identity, controller-supplied
+workspace identity/ref, base/head commits, canonical node work packet,
+changed/allowed paths, acceptance refs, verification refs/results, and blockers.
+Canonical tree digest is dispatcher/controller-only route evidence checked
+outside provider prose. Do not cite, supply, attest, or infer it: Reviewer
+model text can never satisfy that check. Missing or mismatched visible identity
+is `blocked`. Do not run
 `ccb`, `ccb_test`, workflow wrappers, or downstream asks. You cannot mark the
 task or round done; scripts own authority.
 

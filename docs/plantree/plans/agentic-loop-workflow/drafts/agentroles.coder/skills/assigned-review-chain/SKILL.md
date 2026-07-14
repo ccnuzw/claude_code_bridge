@@ -7,6 +7,8 @@ description: Submit one node result to the assigned Reviewer and finish only aft
 
 Use this skill only when the node task names one assigned Reviewer.
 
+The only Coder terminal status enum is `done|blocked|needs_rework`.
+
 ## Submit
 
 After implementation and verification, run exactly once per bounded review hop:

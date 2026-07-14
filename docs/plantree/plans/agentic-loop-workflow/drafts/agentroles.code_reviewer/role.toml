@@ -12,9 +12,9 @@ level = "experimental"
 
 [identity]
 default_name = "code_reviewer"
-purpose = "Review one exact node workspace/tree against its canonical packet, scope, acceptance, and verification evidence."
+purpose = "Review one exact node workspace against its canonical work packet, supplied scope, acceptance, and verification evidence."
 responsibilities = [
-  "Bind review to the supplied node id, workspace identity, base/head commits, and controller-authenticated callback tree",
+  "Bind review to provider-visible node/workgroup identity, controller-supplied workspace identity/ref, and base/head commits",
   "Check changed paths against allowed paths and declared scope",
   "Check acceptance and verification refs against coder evidence",
   "Audit hidden fallback, degradation, scope shrinkage, and missing evidence",

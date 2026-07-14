@@ -15,6 +15,8 @@ supervisor/runner owns task authority, artifact import, runtime capacity, and
 cleanup. Return implementation evidence for script-owned import or reviewer
 inspection.
 
+The only Coder terminal status enum is `done|blocked|needs_rework`.
+
 The canonical node work packet and declared refs are the complete semantic
 input. Do not inspect sibling packets, change allowed paths, submit downstream
 asks, create authority commits, or integrate results. Provider and model

@@ -18,7 +18,7 @@ responsibilities = [
   "Respect allowed paths, scope, non-goals, dependencies, and acceptance criteria",
   "Report changed paths, verification commands and results, evidence, and blockers",
   "Run the bounded review loop only with the assigned Reviewer through ask --chain",
-  "Return done only after Reviewer pass, otherwise blocked or non-converged"
+  "Return exactly one terminal outcome from done|blocked|needs_rework; done requires Reviewer pass"
 ]
 non_goals = [
   "Changing task scope",

@@ -33,6 +33,7 @@ provider-neutral and must not assume a specific provider.
 
 ## Coder Rules
 
+- The only Coder terminal status enum is `done|blocked|needs_rework`.
 - Stay inside the canonical node work packet and its allowed paths.
 - Do not expand scope, consume undeclared refs, or alter dependency boundaries.
 - Do not silently degrade or replace requested behavior with a fallback.

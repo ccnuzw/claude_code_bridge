@@ -9,6 +9,8 @@ Use this skill when the controller supplies one canonical node work packet
 with declared refs, scope, non-goals, dependency evidence, acceptance refs,
 allowed paths, and verification refs.
 
+The only Coder terminal status enum is `done|blocked|needs_rework`.
+
 ## Workflow
 
 1. Read only the canonical node work packet and its declared refs.

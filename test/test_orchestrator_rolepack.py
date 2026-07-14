@@ -725,6 +725,18 @@ def test_p1_node_rolepacks_bind_canonical_packet_and_exact_review_tree() -> None
     assert 'per bounded review hop' in coder_adapter
     assert 'pass`: return Coder terminal `done`' in coder_skill
     assert 'non_converged`: return Coder terminal `needs_rework`' in coder_skill
+    assert 'done|blocked|needs_rework' in (coder_contract + coder_template)
+    assert 'otherwise blocked or non-converged' not in coder_contract
+    for coder_surface in (
+        coder_readme,
+        (coder_root / 'memory.md').read_text(encoding='utf-8'),
+        coder_adapter,
+        coder_skill,
+        (coder_root / 'skills' / 'bounded-work-item' / 'SKILL.md').read_text(encoding='utf-8'),
+        coder_template,
+        (coder_root / 'role.toml').read_text(encoding='utf-8'),
+    ):
+        assert 'done|blocked|needs_rework' in coder_surface
     assert 'command ask --chain --artifact-reply <assigned-reviewer>' in coder_adapter
     assert 'unauthorized downstream asks submitted: no' in coder_template
     assert '\n- downstream asks submitted: no' not in coder_template
@@ -743,18 +755,34 @@ def test_p1_node_rolepacks_bind_canonical_packet_and_exact_review_tree() -> None
         'fallback',
     ):
         assert required in coder_contract + coder_template
+    reviewer_combined = reviewer_contract + reviewer_template
     for required in (
-        'exact node workspace',
-        'base commit',
-        'head commit',
-        'tree digest',
+        'provider-visible',
+        'node/workgroup',
+        'workspace identity/ref',
+        'base/head commits',
+        'canonical node work packet',
+        'changed/allowed paths',
+        'acceptance refs',
+        'verification refs/results',
+        'blockers',
+        'dispatcher/controller-only route evidence',
+        'outside provider prose',
+        'model text can never satisfy that check',
         'read-only',
         'scope violations',
-        'acceptance refs',
-        'verification refs',
         'cannot mark the task or round done',
     ):
-        assert required in reviewer_contract + reviewer_template
+        assert required in reviewer_combined
+    assert 'reviewed tree digest:' not in reviewer_template
+    assert 'canonical node work packet: <ref>' in reviewer_template
+    for stale_digest_authority in (
+        'approval must cite the assigned execution contract and verification\n'
+        'evidence, allowed paths, base commit, head commit, and tree digest',
+        'reviewed tree digest: <digest>',
+        'CCB binds the reviewed worktree digest to the callback edge',
+    ):
+        assert stale_digest_authority not in reviewer_combined
 
 
 def test_p1_round_reviewer_is_immaculate_and_rejects_unproven_integration() -> None:

@@ -10,17 +10,21 @@ for its current node workspace.
 
 ## Workflow
 
-1. Bind the review to the supplied node id, workspace identity, base commit,
-   and head commit. CCB records the canonical tree digest outside provider
-   text. Missing or mismatched visible identity is `blocked`.
-2. Read the canonical node work packet, coder result, changed paths, acceptance
-   refs, verification refs, and dependency evidence.
-3. Check that every changed path is allowed and that no scope violation or
+1. Bind the review to supplied provider-visible node/workgroup identity,
+   controller-supplied workspace identity/ref, base/head commits, changed and
+   allowed paths, acceptance refs, verification refs/results, and blockers.
+   Missing or mismatched visible identity is `blocked`.
+2. Canonical tree digest is dispatcher/controller-only route evidence checked
+   outside provider prose. Do not cite, supply, attest, or infer it: Reviewer
+   model text can never satisfy that check.
+3. Read the supplied canonical node work packet, coder result, and dependency
+   evidence.
+4. Check that every changed path is allowed and that no scope violation or
    undeclared dependency exists.
-4. Evaluate the supplied verification evidence. Use only read-only checks that
+5. Evaluate the supplied verification evidence. Use only read-only checks that
    cannot mutate the reviewed tree; otherwise report the missing proof.
-5. Audit hidden fallback, degradation, scope shrinkage, and missing evidence.
-6. Return a parser-stable machine verdict as the first non-empty line:
+6. Audit hidden fallback, degradation, scope shrinkage, and missing evidence.
+7. Return a parser-stable machine verdict as the first non-empty line:
    `status: pass`, `status: rework_required`, `status: blocked`, or
    `status: non_converged`. Put explanatory evidence after that line.
 
