@@ -104,6 +104,16 @@ def _write_project_memory(project_root: Path, text: str) -> None:
     path.write_text(text, encoding='utf-8')
 
 
+@pytest.fixture(autouse=True)
+def _stable_claude_cli_capabilities(monkeypatch) -> None:
+    """Keep launch-command assertions independent from the host Claude CLI."""
+    monkeypatch.setattr(
+        claude_launcher,
+        'claude_cli_supports_flag',
+        lambda cmd_parts, flag: str(flag) in {'--setting-sources', '--settings', '--permission-mode'},
+    )
+
+
 def _clipboard_bind_call(key: str) -> tuple[str, tuple[str, ...]]:
     return (
         'bind-key',
@@ -951,10 +961,11 @@ def test_ensure_agent_runtime_launches_named_claude_session(monkeypatch, tmp_pat
         )
     )
     assert settings_payload['skipDangerousModePermissionPrompt'] is True
-    assert json.loads(_claude_settings_arg(payload['start_cmd'])) == settings_payload
+    settings_path = ctx.paths.agent_dir('reviewer') / 'provider-runtime' / 'claude' / 'claude-settings.json'
+    assert _claude_settings_arg(payload['start_cmd']) == str(settings_path)
     assert payload['start_cmd'].endswith(
         f'claude --setting-sources user,project,local --settings '
-        f'{shlex.quote(json.dumps(settings_payload, ensure_ascii=False))} '
+        f'{shlex.quote(str(settings_path))} '
         '--permission-mode bypassPermissions --continue'
     )
     assert tmux_state['title'] == ('%44', 'reviewer')
@@ -2541,6 +2552,47 @@ def test_claude_launcher_build_start_cmd_does_not_duplicate_root_skip_flag(monke
     assert start_cmd.endswith(
         'claude --setting-sources user,project,local --dangerously-skip-permissions --debug'
     )
+
+
+def test_claude_cli_capability_probe_does_not_reuse_prior_help_output(monkeypatch) -> None:
+    help_outputs = iter(('--settings\n', '--permission-mode\n'))
+
+    monkeypatch.setattr(
+        claude_launcher.subprocess,
+        'run',
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, next(help_outputs), ''),
+    )
+
+    assert '--settings' in claude_launcher._claude_help_text(('claude',))
+    assert '--permission-mode' in claude_launcher._claude_help_text(('claude',))
+
+
+def test_claude_launcher_skips_unsupported_optional_flags(monkeypatch, tmp_path: Path) -> None:
+    runtime_dir = tmp_path / 'runtime-claude-no-optional-flags'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    spec = _spec('reviewer', provider='claude')
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=False, auto_permission=True)
+
+    monkeypatch.setattr(claude_launcher, 'claude_cli_supports_flag', lambda cmd_parts, flag: False)
+    monkeypatch.setattr(claude_launcher, 'is_root_user', lambda: False)
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(run_cwd=runtime_dir, has_history=False),
+    )
+
+    start_cmd = claude_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'claude-sess-no-optional-flags',
+        prepared_state=_claude_prepared_state(runtime_dir),
+    )
+
+    assert '--setting-sources' not in start_cmd
+    assert '--settings' not in start_cmd
+    assert '--permission-mode' not in start_cmd
+    assert '--dangerously-skip-permissions' in start_cmd
 
 
 def test_claude_launcher_build_start_cmd_requires_launch_context(tmp_path: Path) -> None:

@@ -18,10 +18,10 @@ _PROVIDER_START_ENV_VARS = {
     'cursor': 'CURSOR_START_CMD',
     'copilot': 'COPILOT_START_CMD',
     'crush': 'CRUSH_START_CMD',
+    'grok': 'GROK_START_CMD',
     'kiro': 'KIRO_START_CMD',
     'pi': 'PI_START_CMD',
     'zai': 'ZAI_START_CMD',
-    'grok': 'GROK_START_CMD',
 }
 
 _PROVIDER_DEFAULT_EXECUTABLES = {
@@ -38,10 +38,10 @@ _PROVIDER_DEFAULT_EXECUTABLES = {
     'cursor': 'agent',
     'copilot': 'copilot',
     'crush': 'crush',
+    'grok': 'grok',
     'kiro': 'kiro-cli',
     'pi': 'pi',
     'zai': 'zai',
-    'grok': 'grok',
 }
 
 SUPPORTED_PROVIDER_NAMES = tuple(_PROVIDER_DEFAULT_EXECUTABLES)

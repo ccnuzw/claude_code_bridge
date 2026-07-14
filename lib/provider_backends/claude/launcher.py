@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 import os
 from pathlib import Path
 import subprocess
@@ -254,7 +253,6 @@ def claude_cli_supports_flag(cmd_parts: list[str], flag: str) -> bool:
     return normalized in help_text
 
 
-@lru_cache(maxsize=16)
 def _claude_help_text(cmd_parts: tuple[str, ...]) -> str:
     command = tuple(cmd_parts or ('claude',))
     try:
