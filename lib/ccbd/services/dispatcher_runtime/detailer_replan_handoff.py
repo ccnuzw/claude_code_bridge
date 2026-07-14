@@ -224,6 +224,7 @@ def _prepare(
             'source_replan_request': {
                 'schema': REPLAN_REQUEST_SCHEMA,
                 'request_identity': payload['request_identity'],
+                'source_detailer_job_id': payload['source_detailer_job_id'],
                 'detail_digest': payload['detail_digest'],
                 'macro_impact_digest': payload['macro_impact_digest'],
                 'intent_path': str(intent_path),
@@ -539,6 +540,7 @@ def _validate_existing_activation(
         str(activation.get('task_id') or '') != str(payload['task_id'])
         or activation.get('task_revision') != accepted_revision
         or source.get('request_identity') != payload['request_identity']
+        or source.get('source_detailer_job_id') != payload['source_detailer_job_id']
         or source.get('detail_digest') != payload['detail_digest']
         or source.get('macro_impact_digest') != payload['macro_impact_digest']
         or source.get('source_request_body') != request.body

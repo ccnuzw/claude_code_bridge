@@ -614,6 +614,64 @@ def test_detailer_replan_runner_start_retry_reuses_persisted_planner_job(tmp_pat
     assert len({job.job_id for job in dispatcher._job_store.list_agent('planner')}) == 1
 
 
+@pytest.mark.parametrize(
+    'mutation',
+    ('missing_activation', 'tampered_wrapper', 'raw_whitespace', 'tampered_activation', 'tampered_intent', 'tampered_feedback', 'duplicate_intent', 'duplicate_job_record'),
+)
+def test_detailer_replan_durable_authority_mutations_block_before_import(
+    tmp_path: Path, monkeypatch, mutation: str,
+) -> None:
+    project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    planner = dispatcher.submit(_envelope(dispatcher, source_job_id))
+    job_id = planner.jobs[0].job_id
+    activation_path = next((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-detailer-replan-*.json'))
+    intent_path = next((project_root / '.ccb' / 'runtime' / 'detailer-replan').glob('*.json'))
+    index_path = project_root / 'docs' / 'plantree' / 'plans' / 'demo' / 'tasks' / 'index.json'
+    jobs_path = project_root / '.ccb' / 'agents' / 'planner' / 'jobs.jsonl'
+    if mutation == 'missing_activation':
+        activation_path.unlink()
+    elif mutation == 'tampered_wrapper':
+        jobs = [json.loads(line) for line in jobs_path.read_text(encoding='utf-8').splitlines()]
+        wrapper = json.loads(jobs[0]['request']['body'])
+        wrapper['mode'] = 'single_task'
+        jobs[0]['request']['body'] = json.dumps(wrapper, sort_keys=True, separators=(',', ':'))
+        jobs_path.write_text('\n'.join(json.dumps(record) for record in jobs) + '\n', encoding='utf-8')
+    elif mutation == 'raw_whitespace':
+        activation = json.loads(activation_path.read_text(encoding='utf-8'))
+        raw = activation['source_replan_request']['source_request_body']
+        activation['source_replan_request']['source_request_body'] = json.dumps(json.loads(raw), indent=1)
+        activation['source_replan_request']['source_request_body_sha256'] = hashlib.sha256(activation['source_replan_request']['source_request_body'].encode()).hexdigest()
+        activation_path.write_text(json.dumps(activation), encoding='utf-8')
+    elif mutation == 'tampered_activation':
+        activation = json.loads(activation_path.read_text(encoding='utf-8'))
+        activation['planner_authority']['plan_slug'] = 'other'
+        activation_path.write_text(json.dumps(activation), encoding='utf-8')
+    elif mutation == 'tampered_intent':
+        intent = json.loads(intent_path.read_text(encoding='utf-8'))
+        intent['detail_digest'] = 'sha256:' + '0' * 64
+        intent_path.write_text(json.dumps(intent), encoding='utf-8')
+    elif mutation == 'tampered_feedback':
+        index = json.loads(index_path.read_text(encoding='utf-8'))
+        index['tasks'][0]['replan_feedback']['source_detailer_job_id'] = 'wrong-job'
+        index_path.write_text(json.dumps(index), encoding='utf-8')
+    elif mutation == 'duplicate_intent':
+        duplicate = json.loads(intent_path.read_text(encoding='utf-8'))
+        (intent_path.parent / 'duplicate.json').write_text(json.dumps(duplicate), encoding='utf-8')
+    else:
+        jobs_path.write_text(jobs_path.read_text(encoding='utf-8') * 2, encoding='utf-8')
+    snapshot_path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{job_id}.json'
+    snapshot_path.write_text(json.dumps({'job_id': job_id, 'agent_name': 'planner', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'completed', 'reply': 'old task-packet'}}), encoding='utf-8')
+    before = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    import_log = project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+    log_before = import_log.read_text(encoding='utf-8') if import_log.exists() else ''
+    blocked = consume_explicit_role_output(_context(project_root), SimpleNamespace(role_job_id=job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+    assert blocked['action'] == 'role_output_import_blocked'
+    assert blocked['reason'] == 'detailer_replan_authority_invalid'
+    after = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    assert after == before
+    assert (import_log.read_text(encoding='utf-8') if import_log.exists() else '') == log_before
+
+
 def test_detailer_replan_post_submit_append_crash_recovers_persisted_job(tmp_path: Path, monkeypatch) -> None:
     _project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
     original_finalize = replan_handoff_module._finalize

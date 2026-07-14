@@ -165,7 +165,7 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
                 status = str(decision.get('status') or '').strip().lower()
     reply = str(decision.get('reply') or '')
     if status != 'completed':
-        return _blocked_payload(
+        return _detailer_replan_blocked_payload(
             context,
             job_id=job_id,
             agent_name=agent_name,
@@ -174,7 +174,7 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
         )
     resolved_reply = _resolve_completion_reply_artifact(context, reply)
     if resolved_reply.get('status') == 'blocked':
-        return _blocked_payload(
+        return _detailer_replan_blocked_payload(
             context,
             job_id=job_id,
             agent_name=agent_name,
@@ -185,15 +185,15 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
     if not reply.strip():
         return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='missing_reply')
     normalized_agent = _base_agent_name(agent_name)
-    detailer_wrapper = _detailer_replan_wrapper(context, job_id)
-    if detailer_wrapper is not None:
-        if '_invalid' in detailer_wrapper:
-            return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='detailer_replan_wrapper_invalid', evidence={'error': detailer_wrapper['_invalid']})
-        activation_error = _detailer_replan_activation_error(activation, job_id=job_id)
-        if activation_error is not None:
-            return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='detailer_replan_activation_invalid', evidence={'error': activation_error})
-        if activation is None:
-            return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='detailer_replan_activation_missing', evidence={})
+    detailer_replan = _resolve_detailer_replan_authority(context, deps, job_id=job_id)
+    if detailer_replan['claimed'] and detailer_replan['error']:
+        return _detailer_replan_blocked_payload(
+            context, job_id=job_id, agent_name=agent_name,
+            reason='detailer_replan_authority_invalid',
+            evidence={'error': detailer_replan['error']},
+        )
+    if detailer_replan['claimed']:
+        activation = detailer_replan['activation']
     stale_activation = _stale_activation_revision(context, deps, activation=activation)
     strict_detailer_replan = (
         _parse_task_detailer_reply(reply).get('result') == 'planner_replan_required'
@@ -456,12 +456,14 @@ def _consume_planner(
     activation: dict[str, object] | None,
 ) -> dict[str, object]:
     job_id = str(snapshot.get('job_id') or '')
-    activation_error = _detailer_replan_activation_error(activation, job_id=job_id)
-    if activation_error is not None:
-        return _blocked_payload(
+    detailer_replan = _resolve_detailer_replan_authority(context, deps, job_id=job_id)
+    if detailer_replan['claimed'] and detailer_replan['error']:
+        return _detailer_replan_blocked_payload(
             context, job_id=job_id, agent_name=str(snapshot.get('agent_name') or ''),
-            reason='detailer_replan_activation_invalid', evidence={'error': activation_error},
+            reason='detailer_replan_authority_invalid', evidence={'error': detailer_replan['error']},
         )
+    if detailer_replan['claimed']:
+        activation = detailer_replan['activation']
     planner_contract = _planner_contract_from_activation(activation, reply=reply)
     parsed = _parse_planner_reply_for_contract(reply, planner_contract=planner_contract)
     if parsed.get('status') != 'ok':
@@ -2520,10 +2522,11 @@ def _consume_detailer_replan_planner_backfill(context, deps, *, snapshot, reply:
     consume the strict planner-backfill section authenticated by its activation.
     """
     job_id = str(snapshot.get('job_id') or '')
-    activation_error = _detailer_replan_activation_error(activation, job_id=job_id)
-    if activation_error is not None:
-        return _blocked_payload(context, job_id=job_id, agent_name='planner', reason='detailer_replan_activation_invalid', evidence={'error': activation_error})
-    authority = activation.get('planner_authority')
+    resolved = _resolve_detailer_replan_authority(context, deps, job_id=job_id)
+    if not resolved['claimed'] or resolved['error']:
+        return _detailer_replan_blocked_payload(context, job_id=job_id, agent_name='planner', reason='detailer_replan_authority_invalid', evidence={'error': resolved['error'] or 'detailer replan authority missing'})
+    activation = resolved['activation']
+    authority = activation.get('planner_authority') if isinstance(activation, dict) else None
     if not isinstance(authority, dict):
         return _blocked_payload(context, job_id=job_id, agent_name='planner', reason='detailer_replan_authority_missing', evidence={})
     try:
@@ -3987,6 +3990,149 @@ def _detailer_replan_wrapper(context, job_id: str) -> dict[str, object] | None:
     return wrapper
 
 
+def _resolve_detailer_replan_authority(context, deps, *, job_id: str) -> dict[str, object]:
+    """Resolve the controller-owned Detailer→Planner authority fail-closed.
+
+    A provider reply is deliberately not an input.  Once any durable record
+    identifies this Planner job as a Detailer replan, all four controller
+    records must be present exactly once and bind byte-for-byte.
+    """
+    planner_records = [r for r in _iter_agent_job_records(context, agent_name='planner') if str(r.get('job_id') or '') == job_id]
+    activations = [a for _p, a in _iter_activation_records(context) if str((a.get('ask') or {}).get('job_id') or '') == job_id]
+    intents = _detailer_replan_intents_for_job(context, job_id)
+    feedbacks = _detailer_replan_feedbacks_for_job(context, deps, job_id)
+    claimed = bool(intents or feedbacks or any(_activation_claims_detailer_replan(a) for a in activations))
+    # A valid wrapper is itself a claim.  A damaged wrapper remains a claim
+    # whenever another durable record binds this job, which prevents fallback.
+    for record in planner_records:
+        request = record.get('request') if isinstance(record.get('request'), dict) else {}
+        body = request.get('body')
+        if isinstance(body, str):
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                parsed = None
+            claimed = claimed or isinstance(parsed, dict) and (
+                parsed.get('schema') == 'ccb.detailer.planner_activation.v1' or parsed.get('mode') == 'detailer_replan'
+            )
+    if not claimed:
+        return {'claimed': False, 'error': None, 'activation': None}
+    if len(planner_records) != 1:
+        return _detailer_replan_resolution_error('planner_job_record_count')
+    if len(activations) != 1:
+        return _detailer_replan_resolution_error('activation_record_count')
+    if len(intents) != 1:
+        return _detailer_replan_resolution_error('intent_record_count')
+    if len(feedbacks) != 1:
+        return _detailer_replan_resolution_error('task_feedback_record_count')
+    activation, intent, feedback = activations[0], intents[0], feedbacks[0]
+    wrapper = _detailer_replan_wrapper(context, job_id)
+    if not isinstance(wrapper, dict) or '_invalid' in wrapper:
+        return _detailer_replan_resolution_error('planner_wrapper_invalid')
+    activation_error = _detailer_replan_activation_error(activation, job_id=job_id)
+    if activation_error:
+        return _detailer_replan_resolution_error('activation_invalid')
+    error = _detailer_replan_cross_binding_error(
+        planner_record=planner_records[0], wrapper=wrapper, activation=activation,
+        intent=intent, feedback=feedback, job_id=job_id,
+    )
+    if error:
+        return _detailer_replan_resolution_error(error)
+    return {'claimed': True, 'error': None, 'activation': activation}
+
+
+def _detailer_replan_resolution_error(code: str) -> dict[str, object]:
+    return {'claimed': True, 'error': f'detailer_replan_{code}', 'activation': None}
+
+
+def _activation_claims_detailer_replan(activation: dict[str, object]) -> bool:
+    return (
+        activation.get('record_type') == 'ccb_loop_detailer_planner_replan_activation'
+        or activation.get('planner_contract') == _PLANNER_CONTRACT_DETAILER_REPLAN
+    )
+
+
+def _detailer_replan_intents_for_job(context, job_id: str) -> list[dict[str, object]]:
+    root = Path(context.project.project_root) / '.ccb' / 'runtime' / 'detailer-replan'
+    matches = []
+    for path in sorted(root.glob('*.json')) if root.is_dir() else ():
+        try:
+            value = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and str(value.get('planner_job_id') or '') == job_id:
+            matches.append(value)
+    return matches
+
+
+def _detailer_replan_feedbacks_for_job(context, deps, job_id: str) -> list[dict[str, object]]:
+    # plan-task is the sole controller API for the current accepted task.
+    root = Path(context.project.project_root) / 'docs' / 'plantree' / 'plans'
+    matches = []
+    for index in root.glob('*/tasks/index.json') if root.is_dir() else ():
+        try:
+            tasks = json.loads(index.read_text(encoding='utf-8')).get('tasks', [])
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            feedback = task.get('replan_feedback')
+            if isinstance(feedback, dict) and str(feedback.get('planner_job_id') or '') == job_id:
+                shown = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=str(task.get('task_id') or '')))
+                current = shown.get('task') if isinstance(shown.get('task'), dict) else {}
+                if current.get('replan_feedback') == feedback:
+                    matches.append(current)
+                else:
+                    matches.append({'_stale_task_record': True})
+    return matches
+
+
+def _detailer_replan_cross_binding_error(*, planner_record, wrapper, activation, intent, feedback, job_id: str) -> str | None:
+    request = planner_record.get('request') if isinstance(planner_record.get('request'), dict) else {}
+    source = activation.get('source_replan_request')
+    authority = activation.get('planner_authority')
+    intent_request = intent.get('request') if isinstance(intent.get('request'), dict) else {}
+    task_feedback = feedback.get('replan_feedback') if isinstance(feedback.get('replan_feedback'), dict) else {}
+    if not isinstance(source, dict) or not isinstance(authority, dict) or not isinstance(task_feedback, dict):
+        return 'nested_record_invalid'
+    raw = source.get('source_request_body')
+    if not isinstance(raw, str) or hashlib.sha256(raw.encode('utf-8')).hexdigest() != source.get('source_request_body_sha256'):
+        return 'raw_request_digest_mismatch'
+    try:
+        parsed_raw = json.loads(raw)
+    except json.JSONDecodeError:
+        return 'raw_request_json_invalid'
+    if not isinstance(parsed_raw, dict) or parsed_raw != wrapper.get('source_request') or raw != wrapper.get('source_request_body'):
+        return 'raw_request_mismatch'
+    if source.get('source_request_body_sha256') != wrapper.get('source_request_body_sha256') or intent_request.get('body') != raw:
+        return 'raw_request_binding_mismatch'
+    if intent.get('request_body_sha256') != hashlib.sha256(raw.encode('utf-8')).hexdigest():
+        return 'intent_raw_request_mismatch'
+    expected_envelope_task_id = f"detailer-replan-{str(source.get('request_identity') or '').removeprefix('sha256:')[:32]}"
+    if request.get('to_agent') != 'planner' or request.get('from_actor') != 'task_detailer' or request.get('task_id') != expected_envelope_task_id or request.get('message_type') != 'ask' or request.get('delivery_scope') != 'single' or request.get('silence_on_success') is not True:
+        return 'planner_envelope_mismatch'
+    if wrapper.get('authority') != authority:
+        return 'planner_authority_mismatch'
+    pairs = {
+        'request_identity': (intent.get('request_identity'), source.get('request_identity'), authority.get('request_identity'), task_feedback.get('request_identity')),
+        'detail_digest': (intent.get('detail_digest'), source.get('detail_digest'), authority.get('detail_digest'), task_feedback.get('detail_digest')),
+        'macro_impact_digest': (intent.get('macro_impact_digest'), source.get('macro_impact_digest'), authority.get('macro_impact_digest'), task_feedback.get('macro_impact_digest')),
+        'source_detailer_job_id': (intent.get('source_detailer_job_id'), source.get('source_detailer_job_id'), task_feedback.get('source_detailer_job_id')),
+    }
+    if any(len(set(values)) != 1 for values in pairs.values()):
+        return 'source_binding_mismatch'
+    if intent.get('task_id') != activation.get('task_id') or authority.get('task_id') != activation.get('task_id') or feedback.get('task_id') != activation.get('task_id'):
+        return 'task_id_mismatch'
+    if intent.get('source_task_revision') != activation.get('source_task_revision') or task_feedback.get('source_task_revision') != activation.get('source_task_revision'):
+        return 'source_revision_mismatch'
+    if intent.get('accepted_task_revision') != activation.get('task_revision') or task_feedback.get('accepted_task_revision') != activation.get('task_revision') or authority.get('task_revision') != activation.get('task_revision'):
+        return 'accepted_revision_mismatch'
+    if task_feedback.get('planner_job_id') != job_id or intent.get('planner_job_id') != job_id:
+        return 'planner_job_binding_mismatch'
+    return None
+
+
 def _detailer_replan_activation_error(activation: dict[str, object] | None, *, job_id: str) -> str | None:
     if not isinstance(activation, dict):
         return None
@@ -4008,6 +4154,17 @@ def _detailer_replan_activation_error(activation: dict[str, object] | None, *, j
     ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
     source = activation.get('source_replan_request') if isinstance(activation.get('source_replan_request'), dict) else {}
     authority = activation.get('planner_authority') if isinstance(activation.get('planner_authority'), dict) else {}
+    source_job = activation.get('source_job') if isinstance(activation.get('source_job'), dict) else {}
+    if set(source_job) != {'job_id', 'agent_name'} or set(ask) != {'target', 'job_id', 'status', 'sender', 'silence'}:
+        return 'Detailer replan activation nested fields invalid'
+    if set(source) != {
+        'schema', 'request_identity', 'source_detailer_job_id', 'detail_digest', 'macro_impact_digest',
+        'intent_path', 'source_request_version', 'source_request_body', 'source_request_body_sha256',
+    } or set(authority) != {
+        'task_id', 'task_revision', 'plan_slug', 'expected_plan_revision', 'closure_evidence_digest',
+        'evidence_refs', 'request_identity', 'detail_digest', 'macro_impact_digest',
+    }:
+        return 'Detailer replan activation nested fields invalid'
     if (
         activation.get('schema_version') != 1 or activation.get('target') != 'planner'
         or activation.get('planner_contract') != _PLANNER_CONTRACT_DETAILER_REPLAN
@@ -4016,6 +4173,10 @@ def _detailer_replan_activation_error(activation: dict[str, object] | None, *, j
         or authority.get('task_id') != activation.get('task_id')
         or authority.get('task_revision') != activation.get('task_revision')
         or authority.get('plan_slug') != activation.get('plan_slug')
+        or source_job.get('job_id') != source.get('source_detailer_job_id')
+        or ask.get('sender') != 'task_detailer' or ask.get('silence') is not True
+        or ask.get('status') not in {'accepted', 'queued', 'running'}
+        or activation.get('status') != 'planner_submitted'
     ):
         return 'Detailer replan activation binding invalid'
     body = source.get('source_request_body')
@@ -4305,6 +4466,25 @@ def _blocked_payload(
         job_id=job_id,
         agent_name=agent_name,
         extra={'reason': reason, 'evidence': evidence_payload, 'role_output_import': trace, 'next_activation': 'inspect'},
+    )
+
+
+def _detailer_replan_blocked_payload(
+    context,
+    *,
+    job_id: str,
+    agent_name: str | None,
+    reason: str,
+    evidence: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Reject unauthenticated controller authority without creating import state."""
+    return _base_payload(
+        context,
+        loop_runner_status='blocked',
+        action='role_output_import_blocked',
+        job_id=job_id,
+        agent_name=agent_name,
+        extra={'reason': reason, 'evidence': evidence or {}, 'next_activation': 'inspect'},
     )
 
 
