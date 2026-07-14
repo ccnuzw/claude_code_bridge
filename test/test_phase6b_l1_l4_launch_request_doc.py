@@ -541,8 +541,7 @@ def test_sequence11_embedded_driver_and_normalizer_are_static_parseable() -> Non
         compile(embedded_python, '<phase6b-l1-l4-sequence11-driver-python>', 'exec')
 
 
-def test_sequence11_root_is_consumed_after_supervised_run() -> None:
-    assert Path(SEQUENCE11_ROOT).exists()
+def test_sequence11_evidence_is_consumed_after_supervised_run() -> None:
     combined = '\n'.join(
         _text(path)
         for path in (IMPLEMENTATION_STATUS, CLAIM_COVERAGE_MATRIX, ACTIVE_SUPERVISION_BOARD)
@@ -577,8 +576,7 @@ def test_sequence12_packet_records_consumed_single_use_runtime() -> None:
     assert 'phase6b-real-provider-l1-l4-repeat11-b7-20260704' not in driver
 
 
-def test_sequence12_root_and_b7_are_consumed_after_runtime() -> None:
-    assert Path(SEQUENCE12_ROOT).exists()
+def test_sequence12_b7_is_consumed_after_runtime() -> None:
     b7_path = PROJECT_ROOT / SEQUENCE12_B7
     assert b7_path.exists()
     assert 'Status: pass' in _text(b7_path)

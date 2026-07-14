@@ -25,6 +25,9 @@
   transaction ceiling is 30 seconds, preventing valid dual-Claude startup on
   macOS and mounted WSL filesystems from being cut off by the former 20-second
   default while still returning immediately when readiness is reached.
+- **Historical Evidence Tests Are Checkout-Portable**: PlanTree acceptance
+  tests validate committed launch packets and B7 records without requiring
+  author-machine experiment directories that cannot exist on clean CI hosts.
 
 ### Release Surface
 
