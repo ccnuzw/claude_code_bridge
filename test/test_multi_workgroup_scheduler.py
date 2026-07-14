@@ -417,11 +417,26 @@ def _run_until_job_submitted(
     *,
     max_runs: int = 4,
 ) -> None:
+    last_state: dict[str, object] | None = None
     for _attempt in range(max_runs):
         if (node_id, purpose) in harness.jobs:
             return
-        scheduler.run_once()
-    raise AssertionError(f'job was not submitted after {max_runs} scheduler runs: {node_id}/{purpose}')
+        payload = scheduler.run_once()
+        last_state = {
+            key: payload.get(key)
+            for key in (
+                'scheduler_action',
+                'controller_status',
+                'round_result',
+                'round_result_source',
+                'failure',
+            )
+            if payload.get(key) is not None
+        }
+    raise AssertionError(
+        f'job was not submitted after {max_runs} scheduler runs: '
+        f'{node_id}/{purpose}; last_state={last_state}'
+    )
 
 
 def _review_status(reply: str) -> str:
@@ -433,7 +448,20 @@ def _review_status(reply: str) -> str:
 
 def _record(root: Path) -> dict[str, object]:
     artifact = root / 'execution-contract.md'
-    artifact.write_text('# Execution Contract\n\nVerification:\n- python -m unittest\n', encoding='utf-8')
+    artifact.write_text(
+        '# Execution Contract\n\nVerification:\n- python -m unittest test_integration.py\n',
+        encoding='utf-8',
+    )
+    (root / 'test_integration.py').write_text(
+        'from pathlib import Path\n'
+        'import unittest\n\n'
+        'class IntegrationTest(unittest.TestCase):\n'
+        '    def test_worker_outputs(self):\n'
+        "        outputs = list(Path('parts').glob('*/result.txt'))\n"
+        '        self.assertTrue(outputs)\n'
+        '        self.assertTrue(all(path.read_text().strip() for path in outputs))\n',
+        encoding='utf-8',
+    )
     return {
         'task_id': 'task-g3',
         'task_revision': 1,

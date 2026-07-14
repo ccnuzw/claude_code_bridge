@@ -37,6 +37,9 @@
 - **Scheduler Tests Follow Durable Progress**: real git integration coverage
   waits through bounded scheduler transitions before completing round review,
   matching the public one-step-at-a-time runtime contract across Python builds.
+- **Real Integration Verification Is Cross-Version**: scheduler fixtures run a
+  concrete worker-output unittest instead of treating an empty unittest suite
+  as success, preserving the integration gate on Python 3.10 through 3.12.
 
 ### Release Surface
 
