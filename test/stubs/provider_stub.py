@@ -612,7 +612,7 @@ def _native_cli_prompt(provider: str, argv: list[str]) -> str | None:
         return _last_positional(argv, options_with_values={"--data-dir", "--cwd", "--model"})
     if provider == "kiro" and "chat" in argv and "--no-interactive" in argv:
         return _last_positional(argv, options_with_values={"--wrap", "--model"})
-    if provider == "pi" and "--mode" in argv and "json" in argv:
+    if provider in {"pi", "omp"} and "--mode" in argv and "json" in argv:
         return _last_positional(
             argv,
             options_with_values={
@@ -624,6 +624,7 @@ def _native_cli_prompt(provider: str, argv: list[str]) -> str | None:
                 "--models",
                 "--mode",
                 "--name",
+                "--approval-mode",
                 "--provider",
                 "--session",
                 "--session-dir",
@@ -670,13 +671,13 @@ def _handle_native_cli_run(provider: str, argv: list[str], delay_s: float) -> in
         time.sleep(float(os.environ.get("STUB_TIMEOUT_SLEEP", "5")))
         return 0
     reply = "" if mode == "empty" else f"stub reply for {req_id}"
-    if provider == "pi":
+    if provider in {"pi", "omp"}:
         print(
             json.dumps(
                 {
                     "type": "session",
                     "version": 3,
-                    "id": f"ses-pi-{req_id}",
+                    "id": f"ses-{provider}-{req_id}",
                     "timestamp": _now_iso(),
                     "cwd": os.getcwd(),
                 },
@@ -985,6 +986,7 @@ def main(argv: list[str]) -> int:
         "grok",
         "kiro",
         "pi",
+        "omp",
         "zai",
     ):
         print(f"[stub] unknown provider: {provider}", file=sys.stderr)
@@ -994,7 +996,7 @@ def main(argv: list[str]) -> int:
 
     if provider == "mimo" and _mimo_run_prompt(argv[1:]) is not None:
         return _handle_mimo_run_cli(argv[1:], delay_s)
-    if provider in {"qwen", "cursor", "copilot", "crush", "grok", "kiro", "pi", "zai"} and _native_cli_prompt(provider, argv[1:]) is not None:
+    if provider in {"qwen", "cursor", "copilot", "crush", "grok", "kiro", "pi", "omp", "zai"} and _native_cli_prompt(provider, argv[1:]) is not None:
         return _handle_native_cli_run(provider, argv[1:], delay_s)
 
     # Provider-specific initialization.

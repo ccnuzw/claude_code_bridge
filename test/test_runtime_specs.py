@@ -24,6 +24,8 @@ from provider_core.runtime_specs import (
     MIMO_RUNTIME_SPEC,
     PI_CLIENT_SPEC,
     PI_RUNTIME_SPEC,
+    OMP_CLIENT_SPEC,
+    OMP_RUNTIME_SPEC,
     QWEN_CLIENT_SPEC,
     QWEN_RUNTIME_SPEC,
     RUNTIME_SPECS_BY_PROVIDER,
@@ -87,6 +89,9 @@ def test_runtime_specs_use_provider_native_names() -> None:
     assert PI_RUNTIME_SPEC.provider_key == "pi"
     assert PI_RUNTIME_SPEC.idle_timeout_env == "CCB_PI_RUNTIME_IDLE_TIMEOUT_S"
     assert PI_CLIENT_SPEC.session_filename == ".pi-session"
+    assert OMP_RUNTIME_SPEC.provider_key == "omp"
+    assert OMP_RUNTIME_SPEC.idle_timeout_env == "CCB_OMP_RUNTIME_IDLE_TIMEOUT_S"
+    assert OMP_CLIENT_SPEC.session_filename == ".omp-session"
     assert RUNTIME_SPECS_BY_PROVIDER["kimi"] is KIMI_RUNTIME_SPEC
     assert CLIENT_SPECS_BY_PROVIDER["deepseek"] is DEEPSEEK_CLIENT_SPEC
     assert RUNTIME_SPECS_BY_PROVIDER["mimo"] is MIMO_RUNTIME_SPEC
@@ -98,3 +103,4 @@ def test_runtime_specs_use_provider_native_names() -> None:
     assert CLIENT_SPECS_BY_PROVIDER["grok"] is GROK_CLIENT_SPEC
     assert RUNTIME_SPECS_BY_PROVIDER["kiro"] is KIRO_RUNTIME_SPEC
     assert CLIENT_SPECS_BY_PROVIDER["pi"] is PI_CLIENT_SPEC
+    assert CLIENT_SPECS_BY_PROVIDER["omp"] is OMP_CLIENT_SPEC
