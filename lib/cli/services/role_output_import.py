@@ -26,7 +26,14 @@ from .loop_effective_capacity import (
 )
 from .plan_tasks import detail_ready_stop_contract_authority, plan_task
 from .task_set_closure import create_task_set_authority
+from .planner_feedback import (
+    PlannerFeedbackError,
+    parse_planner_feedback_reply,
+    planner_feedback_digest,
+    validate_planner_feedback_authority,
+)
 from .planner_feedback_apply import plan_revision_authority
+from .detailer_replan_backfill import apply_detailer_replan_backfill
 from .planner_task_set_import_transaction import (
     PlannerTaskSetImportConflict,
     authority_trace as planner_task_set_transaction_trace,
@@ -56,7 +63,8 @@ _SEGMENT_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$')
 _SLUG_RE = re.compile(r'[^A-Za-z0-9_-]+')
 _PLANNER_CONTRACT_SINGLE_TASK = 'single_task'
 _PLANNER_CONTRACT_TASK_SET = 'task_set'
-_PLANNER_CONTRACTS = frozenset({_PLANNER_CONTRACT_SINGLE_TASK, _PLANNER_CONTRACT_TASK_SET})
+_PLANNER_CONTRACT_DETAILER_REPLAN = 'detailer_replan'
+_PLANNER_CONTRACTS = frozenset({_PLANNER_CONTRACT_SINGLE_TASK, _PLANNER_CONTRACT_TASK_SET, _PLANNER_CONTRACT_DETAILER_REPLAN})
 _FRONTDESK_SINGLE_TASK_SEMANTIC_SECTIONS = (
     'goal',
     'acceptance criteria',
@@ -528,6 +536,10 @@ def _consume_planner(
             reply=reply,
             activation=activation,
             parsed=parsed,
+        )
+    if parsed.get('planner_contract') == _PLANNER_CONTRACT_DETAILER_REPLAN:
+        return _consume_detailer_replan_planner_backfill(
+            context, deps, snapshot=snapshot, reply=reply, activation=activation,
         )
     plan_slug, plan_result = _resolve_or_bootstrap_plan(context, command, activation=activation)
     if plan_slug is None:
@@ -2464,6 +2476,12 @@ def _optional_planner_readiness_text(readiness: dict[str, object], *, field: str
 
 
 def _parse_planner_reply_for_contract(reply: str, *, planner_contract: str) -> dict[str, object]:
+    if planner_contract == _PLANNER_CONTRACT_DETAILER_REPLAN:
+        try:
+            proposal = parse_planner_feedback_reply(reply)
+        except PlannerFeedbackError as exc:
+            return {'status': 'blocked', 'reason': exc.code, 'error': str(exc)}
+        return {'status': 'ok', 'planner_contract': _PLANNER_CONTRACT_DETAILER_REPLAN, 'proposal': proposal}
     if planner_contract == _PLANNER_CONTRACT_TASK_SET:
         parsed = _parse_planner_task_set_reply(reply)
         if parsed.get('status') == 'ok':
@@ -2478,6 +2496,53 @@ def _parse_planner_reply_for_contract(reply: str, *, planner_contract: str) -> d
     if parsed.get('status') == 'ok':
         parsed['planner_contract'] = _PLANNER_CONTRACT_SINGLE_TASK
     return parsed
+
+
+def _consume_detailer_replan_planner_backfill(context, deps, *, snapshot, reply: str, activation):
+    """Import the sole Planner backfill contract used after a Detailer replan.
+
+    This deliberately has no packet-parser fallback: a replan activation can only
+    consume the strict planner-backfill section authenticated by its activation.
+    """
+    job_id = str(snapshot.get('job_id') or '')
+    if not isinstance(activation, dict):
+        return _blocked_payload(context, job_id=job_id, agent_name='planner', reason='detailer_replan_activation_missing', evidence={})
+    authority = activation.get('planner_authority')
+    if not isinstance(authority, dict):
+        return _blocked_payload(context, job_id=job_id, agent_name='planner', reason='detailer_replan_authority_missing', evidence={})
+    try:
+        proposal = parse_planner_feedback_reply(reply)
+        validate_planner_feedback_authority(
+            proposal,
+            mode='detailer_replan',
+            expected_plan_revision=str(authority['expected_plan_revision']),
+            task_or_task_set_id=str(authority['task_id']),
+            task_or_task_set_revision=int(authority['task_revision']),
+            closure_evidence_digest=str(authority['closure_evidence_digest']),
+            aggregate_result='replan_required',
+            evidence_refs=list(authority['evidence_refs']),
+        )
+        if proposal.result != 'task_set_replanned':
+            raise PlannerFeedbackError('planner_backfill_result_laundering', 'detailer replan must result in task_set_replanned')
+        applied = apply_detailer_replan_backfill(context, proposal, authority=authority, planner_job_id=job_id)
+        settled = deps.plan_task(context, SimpleNamespace(
+            action='task-complete-detailer-replan', task_id=str(authority['task_id']),
+            expected_task_revision=int(authority['task_revision']), planner_job_id=job_id,
+            planner_feedback_digest=planner_feedback_digest(proposal),
+            backfill_path=applied['backfill_path'],
+        ))
+    except (KeyError, TypeError, ValueError, PlannerFeedbackError) as exc:
+        return _blocked_payload(context, job_id=job_id, agent_name='planner', reason='detailer_replan_backfill_invalid', evidence={'error': str(exc)})
+    record = _log_import(context, {
+        'action': 'imported_detailer_replan_planner_backfill', 'status': 'ok',
+        'source_job': _job_trace(snapshot, reply), 'planner_contract': _PLANNER_CONTRACT_DETAILER_REPLAN,
+        'authority': authority, 'backfill': applied, 'task_transition': _compact_plan_payload(settled),
+    })
+    return _base_payload(context, loop_runner_status='ok', action='imported_detailer_replan_planner_backfill', job_id=job_id, agent_name='planner', extra={
+        'task_id': authority['task_id'], 'task_status': settled.get('status'),
+        'next_owner': settled.get('next_owner'), 'backfill': applied,
+        'role_output_import': record, 'next_activation': 'orchestrator',
+    })
 
 
 def _validate_frontdesk_single_task_semantics(

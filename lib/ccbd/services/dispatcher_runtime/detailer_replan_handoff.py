@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ from ccbd.api_models import (
     SubmitReceipt,
 )
 from cli.services.plan_tasks import plan_task
+from cli.services.planner_feedback_apply import plan_revision_authority
 from storage.atomic import atomic_write_json
 from storage.locks import file_lock
 
@@ -77,7 +79,7 @@ def submit_detailer_replan_handoff(
     request: MessageEnvelope,
     *,
     accepted_at: str,
-    submit: Callable[[], SubmitReceipt],
+    submit: Callable[[MessageEnvelope], SubmitReceipt],
 ) -> SubmitReceipt:
     payload = _validate_request(
         dispatcher,
@@ -91,7 +93,13 @@ def submit_detailer_replan_handoff(
         if existing is not None:
             _finalize(dispatcher, prepared, existing)
             return _existing_receipt(existing, accepted_at=accepted_at)
-        receipt = submit()
+        # Legacy test/in-process submit hooks may be zero-argument; the runtime
+        # hook receives the constructed Planner envelope.
+        receipt = (
+            submit()
+            if len(inspect.signature(submit).parameters) == 0
+            else submit(_planner_request(request, prepared.activation))
+        )
         if len(receipt.jobs) != 1:
             raise dispatcher._dispatch_error('Detailer replan handoff must create exactly one Planner job')
         job = dispatcher.get(receipt.jobs[0].job_id)
@@ -183,6 +191,20 @@ def _prepare(
     activation_path = _activation_path(dispatcher, activation_id)
     activation = _read_json_optional(activation_path)
     if activation is None:
+        detail = payload['detail'] if isinstance(payload.get('detail'), Mapping) else {}
+        macro = payload['macro_impact'] if isinstance(payload.get('macro_impact'), Mapping) else {}
+        evidence_refs = tuple(dict.fromkeys([
+            *[str(value) for value in detail.get('artifact_refs', ())],
+            *[str(value) for value in detail.get('clarification_refs', ())],
+        ]))
+        closure_digest = _canonical_digest({
+            'request_identity': payload['request_identity'], 'detail_digest': payload['detail_digest'],
+            'macro_impact_digest': payload['macro_impact_digest'], 'evidence_refs': evidence_refs,
+        })
+        plan_slug = str(task.get('plan_slug') or '')
+        if not plan_slug:
+            raise dispatcher._dispatch_error('Detailer replan accepted task is missing plan_slug')
+        expected_plan_revision = plan_revision_authority(context, plan_slug)['digest']
         activation = {
             'schema_version': 1,
             'record_type': 'ccb_loop_detailer_planner_replan_activation',
@@ -192,8 +214,8 @@ def _prepare(
             'task_id': payload['task_id'],
             'task_revision': accepted_revision,
             'source_task_revision': payload['task_revision'],
-            'plan_slug': task.get('plan_slug'),
-            'planner_contract': 'single_task',
+            'plan_slug': plan_slug,
+            'planner_contract': 'detailer_replan',
             'reason_for_activation': 'planner_replan_required_from_task_detailer',
             'source_job': {
                 'job_id': payload['source_detailer_job_id'],
@@ -205,7 +227,16 @@ def _prepare(
                 'detail_digest': payload['detail_digest'],
                 'macro_impact_digest': payload['macro_impact_digest'],
                 'intent_path': str(intent_path),
-                'controller_rewrote_body': False,
+                'source_request_version': 1,
+                'source_request_body': request.body,
+                'source_request_body_sha256': body_sha256,
+            },
+            'planner_authority': {
+                'task_id': payload['task_id'], 'task_revision': accepted_revision,
+                'plan_slug': plan_slug, 'expected_plan_revision': expected_plan_revision,
+                'closure_evidence_digest': closure_digest, 'evidence_refs': list(evidence_refs),
+                'request_identity': payload['request_identity'], 'detail_digest': payload['detail_digest'],
+                'macro_impact_digest': payload['macro_impact_digest'],
             },
         }
         activation_path.parent.mkdir(parents=True, exist_ok=True)
@@ -435,6 +466,7 @@ def _existing_planner_job(dispatcher, *, payload: Mapping[str, object], request:
             continue
         if not isinstance(existing, dict):
             continue
+        existing = existing.get('source_request') if isinstance(existing.get('source_request'), dict) else existing
         if all(
             existing.get(key) == payload.get(key)
             for key in (
@@ -448,6 +480,28 @@ def _existing_planner_job(dispatcher, *, payload: Mapping[str, object], request:
     if len(exact) != 1 or len(matches) != 1:
         raise dispatcher._dispatch_error('Detailer replan request identity conflict')
     return exact[0]
+
+
+def _planner_request(request: MessageEnvelope, activation: Mapping[str, object]) -> MessageEnvelope:
+    """Add mechanical controller authority without changing Detailer's JSON bytes."""
+    authority = activation.get('planner_authority')
+    source = activation.get('source_replan_request')
+    if not isinstance(authority, Mapping) or not isinstance(source, Mapping):
+        raise ValueError('Detailer replan planner authority is missing')
+    body = json.dumps({
+        'schema': 'ccb.detailer.planner_activation.v1',
+        'mode': 'detailer_replan',
+        'authority': dict(authority),
+        'source_request': json.loads(request.body),
+        'source_request_body': str(source['source_request_body']),
+        'source_request_body_sha256': str(source['source_request_body_sha256']),
+    }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+    return MessageEnvelope(
+        project_id=request.project_id, to_agent=request.to_agent, from_actor=request.from_actor,
+        body=body, task_id=request.task_id, reply_to=request.reply_to, message_type=request.message_type,
+        delivery_scope=request.delivery_scope, silence_on_success=request.silence_on_success,
+        route_options=dict(request.route_options or {}), body_artifact=request.body_artifact,
+    )
 
 
 def _validate_existing_intent(dispatcher, intent: Mapping[str, object], *, payload: Mapping[str, object]) -> None:

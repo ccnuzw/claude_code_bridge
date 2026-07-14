@@ -338,6 +338,23 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
     planner = dispatcher.submit(_envelope(dispatcher, source_job_id))
     context = _context(project_root)
     planner_job_id = planner.jobs[0].job_id
+    activation = json.loads(next((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-detailer-replan-*.json')).read_text(encoding='utf-8'))
+    authority = activation['planner_authority']
+    evidence_refs = authority['evidence_refs']
+    milestone = {'kind': 'selected', 'ref': 'replanned-task-a', 'rationale': 'Use the corrected interface.'}
+    proposal = {
+        'schema': 'ccb.planner.backfill_proposal.v1', 'mode': 'detailer_replan',
+        'expected_plan_revision': authority['expected_plan_revision'], 'task_or_task_set_id': authority['task_id'],
+        'task_or_task_set_revision': authority['task_revision'], 'closure_evidence_digest': authority['closure_evidence_digest'],
+        'aggregate_result': 'replan_required', 'result': 'task_set_replanned', 'brief_summary': 'Revise the macro task.',
+        'roadmap_transitions': [], 'todo_transitions': [], 'decision_refs': [], 'open_question_refs': [],
+        'evidence_refs': evidence_refs, 'accepted_scope': ['preserved fact'], 'unresolved_scope': ['replanned scope'],
+        'blockers': [], 'replan_inputs': ['detailer macro impact'], 'next_milestone': milestone,
+        'frontdesk_notification_required': False,
+        'frontdesk_status': {'schema': 'ccb.planner.frontdesk_status.v1', 'notification_identity': 'task-a-replan',
+            'aggregate_result': 'replan_required', 'accepted_scope': ['preserved fact'], 'unresolved_scope': ['replanned scope'],
+            'blockers': [], 'next_milestone': milestone, 'evidence_refs': evidence_refs, 'user_report_body': 'Replanned.'},
+    }
     snapshot_path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{planner_job_id}.json'
     snapshot_path.write_text(
         json.dumps(
@@ -348,25 +365,7 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
                 'latest_decision': {
                     'terminal': True,
                     'status': 'completed',
-                    'reply': '''**task-packet.md**
-```markdown
-# Task: Revised Task A
-Route: direct_execution
-## Goal
-Use the corrected public interface.
-## Acceptance Criteria
-- The corrected behavior is verified.
-Allowed paths:
-- src/
-Verification:
-- python -m unittest
-```
-
-**readiness.json**
-```json
-{"readiness":"ready","route":"direct_execution","blockers":[],"allowed_paths":["src/"],"verification":["python -m unittest"]}
-```
-''',
+                    'reply': '**planner-backfill.json**\n```json\n' + json.dumps(proposal) + '\n```\n',
                 },
             }
         )
@@ -378,10 +377,10 @@ Verification:
         SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'),
         services=SimpleNamespace(plan_task=plan_task),
     )
-    assert imported['action'] == 'imported_planner_task_authority'
+    assert imported['action'] == 'imported_detailer_replan_planner_backfill'
     assert imported['task_status'] == 'ready_for_orchestration'
     ready = plan_task(context, SimpleNamespace(action='task-show', task_id='task-a'))
-    assert ready['task']['task_revision'] > 2
+    assert ready['task']['task_revision'] == authority['task_revision']
     assert ready['status'] == 'ready_for_orchestration'
     actionable = find_first_actionable_task(context, task_id='task-a')
     assert actionable is not None

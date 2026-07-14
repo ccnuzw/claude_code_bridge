@@ -36,10 +36,10 @@ _RETRY_SOURCE_JOB_ID_OPTION = 'retry_source_job_id'
 
 def submit_jobs(dispatcher, request: MessageEnvelope) -> SubmitReceipt:
     accepted_at = dispatcher._clock()
-    def submit() -> SubmitReceipt:
+    def submit(message: MessageEnvelope = request) -> SubmitReceipt:
         receipt, _ = _submit_plan(
             dispatcher,
-            _plan_agent_submission(dispatcher, request),
+            _plan_agent_submission(dispatcher, message),
             accepted_at=accepted_at,
         )
         return receipt

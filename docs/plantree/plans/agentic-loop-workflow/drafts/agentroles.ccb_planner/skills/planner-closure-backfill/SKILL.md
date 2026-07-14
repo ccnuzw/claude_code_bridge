@@ -65,18 +65,27 @@ revision checks passed. Those are controller-owned input facts.
 ## Output
 
 Return exactly this one fenced section and no alternative authority shape. Set
-`mode` to the exact activation value, not a placeholder and not a renamed mode.
-For `detailer_replan`, the JSON line is exactly
-`"mode": "detailer_replan"`. For `task_set_closure`, it is exactly
-`"mode": "task_set_closure"`. The bracketed value in the shape below is a
-documentation selector only and is never a permitted emitted value.
+`mode` to the exact activation value, never a selector or placeholder.
+
+For `detailer_replan`, emit this legal identity/result core (all remaining
+fields use the same schema fields shown below):
+
+```json
+{"schema":"ccb.planner.backfill_proposal.v1","mode":"detailer_replan","expected_plan_revision":"<controller expected_plan_revision>","task_or_task_set_id":"<controller task_id>","task_or_task_set_revision":<controller task_revision>,"closure_evidence_digest":"<controller closure_evidence_digest>","aggregate_result":"replan_required","result":"task_set_replanned","evidence_refs":["<controller ordered evidence ref>"]}
+```
+
+For `task_set_closure`, emit this separate legal core:
+
+```json
+{"schema":"ccb.planner.backfill_proposal.v1","mode":"task_set_closure","expected_plan_revision":"<controller expected_plan_revision>","task_or_task_set_id":"<controller task_set_id>","task_or_task_set_revision":<controller task_set_revision>,"closure_evidence_digest":"<controller closure digest>","aggregate_result":"<controller aggregate_result>","result":"<mapped controller result>","evidence_refs":["<controller ordered evidence ref>"]}
+```
 
 ````markdown
 **planner-backfill.json**
 ```json
 {
   "schema": "ccb.planner.backfill_proposal.v1",
-  "mode": "<detailer_replan|task_set_closure: exact activation mode>",
+  "mode": "detailer_replan",
   "expected_plan_revision": "sha256:<64 lowercase hex>",
   "task_or_task_set_id": "stable-id",
   "task_or_task_set_revision": 1,

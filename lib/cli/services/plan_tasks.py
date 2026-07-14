@@ -150,6 +150,8 @@ def plan_task(context, command) -> dict[str, object]:
         return _task_reconcile_detail_ready(context, command)
     if action == 'task-accept-detailer-replan':
         return _task_accept_detailer_replan(context, command)
+    if action == 'task-complete-detailer-replan':
+        return _task_complete_detailer_replan(context, command)
     if action == 'task-bind-loop':
         return _task_bind_loop(context, command)
     if action == 'task-import-round':
@@ -652,6 +654,40 @@ def _task_accept_detailer_replan(context, command) -> dict[str, object]:
         _write_task_readme(context, record)
         payload = _payload(context, action='task-accept-detailer-replan', record=record)
         payload['idempotent'] = False
+        return payload
+
+
+def _task_complete_detailer_replan(context, command) -> dict[str, object]:
+    task = _require_task(context, command.task_id)
+    with file_lock(_task_lock_path(context, task['record'])):
+        task = _require_task(context, command.task_id)
+        record = _materialize_task_revision(task['record'])
+        expected = getattr(command, 'expected_task_revision', None)
+        if expected != task_revision(record) or record.get('status') != 'replan_required':
+            raise ValueError('detailer replan completion revision or status conflict')
+        feedback = record.get('replan_feedback') if isinstance(record.get('replan_feedback'), dict) else {}
+        job_id = _normalize_job_id(getattr(command, 'planner_job_id', None))
+        if feedback.get('planner_job_id') != job_id:
+            raise ValueError('detailer replan completion Planner job binding conflict')
+        digest = _required_sha256(getattr(command, 'planner_feedback_digest', None), field='planner_feedback_digest')
+        backfill_path = str(getattr(command, 'backfill_path', None) or '').strip()
+        if not backfill_path:
+            raise ValueError('detailer replan completion backfill path required')
+        existing = record.get('planner_replan_backfill') if isinstance(record.get('planner_replan_backfill'), dict) else None
+        expected_record = {'planner_job_id': job_id, 'planner_feedback_digest': digest, 'backfill_path': backfill_path}
+        if existing is not None and existing != expected_record:
+            raise ValueError('detailer replan completion authority conflict')
+        record['planner_replan_backfill'] = expected_record
+        record['status'] = 'ready_for_orchestration'
+        record['owner'] = 'orchestrator'
+        record['next_owner'] = 'orchestrator'
+        record['activation_reason'] = 'detailer_replan_planner_backfill_imported'
+        record['current_loop'] = None
+        record['updated_at'] = _utc_now()
+        _replace_record(task['tasks_root'], task['index'], record)
+        _write_task_readme(context, record)
+        payload = _payload(context, action='task-complete-detailer-replan', record=record)
+        payload['idempotent'] = existing is not None
         return payload
 
 
