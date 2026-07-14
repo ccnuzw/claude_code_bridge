@@ -2009,7 +2009,7 @@ def test_final_round_json_uses_public_workgroup_round_schema(tmp_path: Path) -> 
     scheduler.run_once()
     harness.complete('node-001', 'reviewer', reply='status: pass')
     scheduler.run_once()
-    harness.complete('round', 'ccb_round_reviewer', reply='round_result: pass')
+    harness.complete('round', 'ccb_round_reviewer', reply='round result: pass')
     scheduler.run_once()
 
     raw = json.loads((scheduler.loop_dir / 'round.json').read_text(encoding='utf-8'))
