@@ -274,7 +274,8 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 <details open>
 <summary><b>v8.1.6</b> - Cross-platform release validation correction</summary>
 
-- Added the missing `jsonschema` test dependency to clean CI environments and built the repository runtime accelerator before Linux, macOS, and WSL lifecycle assertions.
+- Added the missing `jsonschema` test dependency to clean CI environments, built the repository runtime accelerator before platform lifecycle assertions, and made macOS ownership checks canonicalize `/tmp` socket aliases.
+- Aligned communication smoke coverage with nested `ask --chain` / `--silence` policy and raised the bounded cold-start ceiling to 30 seconds for valid multi-agent startup on macOS and mounted WSL filesystems.
 - Kept the 8.1.5 runtime changes intact while publishing a new immutable patch version instead of rewriting the existing tag.
 
 </details>
