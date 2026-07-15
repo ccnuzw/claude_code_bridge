@@ -36,6 +36,30 @@ def test_build_claude_env_prefix_prefers_settings_base_url_over_ambient_env() ->
     assert result == "export ANTHROPIC_BASE_URL=https://ccswitch.example.test"
 
 
+def test_build_claude_env_prefix_preserves_auth_token_credential_kind() -> None:
+    common = {
+        "should_drop_base_url_fn": lambda value: False,
+        "claude_user_base_url_fn": lambda: "",
+    }
+
+    explicit = build_claude_env_prefix(
+        extra_env={"ANTHROPIC_AUTH_TOKEN": "explicit-token"},
+        **common,
+    )
+    ambient = build_claude_env_prefix(
+        env={"ANTHROPIC_AUTH_TOKEN": "ambient-token"},
+        **common,
+    )
+    settings = build_claude_env_prefix(
+        claude_user_api_env_fn=lambda: {"ANTHROPIC_AUTH_TOKEN": "settings-token"},
+        **common,
+    )
+
+    assert explicit == "export ANTHROPIC_AUTH_TOKEN=explicit-token"
+    assert ambient == "export ANTHROPIC_AUTH_TOKEN=ambient-token"
+    assert settings == "export ANTHROPIC_AUTH_TOKEN=settings-token"
+
+
 def test_write_claude_settings_overlay_returns_none_without_agent_settings(tmp_path) -> None:
     assert write_claude_settings_overlay(tmp_path, profile=None) is None
 

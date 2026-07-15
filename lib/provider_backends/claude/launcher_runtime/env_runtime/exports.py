@@ -69,19 +69,11 @@ def collect_explicit_api_env(*, profile=None, extra_env: dict[str, str] | None, 
         explicit_env.update(filtered_api_env(profile.env, api_keys=api_keys))
     if extra_env:
         explicit_env.update(filtered_api_env(extra_env, api_keys=api_keys))
-    sync_claude_api_key_alias(explicit_env)
     return explicit_env
 
 
 def filtered_api_env(env_map: dict[str, str], *, api_keys: set[str]) -> dict[str, str]:
     return {key: value for key, value in env_map.items() if key in api_keys}
-
-
-def sync_claude_api_key_alias(env_map: dict[str, str]) -> None:
-    auth_token = str(env_map.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
-    api_key = str(env_map.get("ANTHROPIC_API_KEY") or "").strip()
-    if auth_token and not api_key:
-        env_map["ANTHROPIC_API_KEY"] = auth_token
 
 
 def inherit_api_env(
@@ -100,7 +92,6 @@ def inherit_api_env(
     if profile is not None and not getattr(profile, "inherit_auth", True):
         inherited.pop("ANTHROPIC_AUTH_TOKEN", None)
         inherited.pop("ANTHROPIC_API_KEY", None)
-    sync_claude_api_key_alias(inherited)
     return merge_missing_api_env(explicit_env, inherited)
 
 
@@ -119,7 +110,6 @@ def inherit_user_settings_api_env(
     if profile is not None and not getattr(profile, "inherit_auth", True):
         inherited.pop("ANTHROPIC_AUTH_TOKEN", None)
         inherited.pop("ANTHROPIC_API_KEY", None)
-    sync_claude_api_key_alias(inherited)
     return merge_missing_api_env(explicit_env, inherited)
 
 

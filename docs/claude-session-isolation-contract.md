@@ -161,6 +161,17 @@ When `ccb` starts a managed Claude agent:
 - managed `settings.json` projection must treat Claude auth env keys such as
   `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` as auth authority, not generic
   config
+- managed settings and launcher environment projection must preserve the
+  selected credential kind: `ANTHROPIC_AUTH_TOKEN` remains bearer-token
+  authority and `ANTHROPIC_API_KEY` remains API-key authority; CCB must not
+  synthesize one from the other or export both merely because one is present
+- custom API-key acceptance metadata may be generated only for an actual
+  `ANTHROPIC_API_KEY`; an inherited `ANTHROPIC_AUTH_TOKEN` must not be relabeled
+  as an API key to bypass provider prompts
+- compatibility cleanup may remove an equal-valued `ANTHROPIC_API_KEY` from
+  existing managed settings when the same managed record already contains
+  `ANTHROPIC_AUTH_TOKEN`; this is the legacy CCB-generated token-to-key alias,
+  while distinct or API-key-only authority must remain intact
 - managed login-auth projection must synchronize Claude Code credential cache
   artifacts required for non-interactive reuse, such as
   `.claude/.credentials.json`, when official login auth inheritance is enabled

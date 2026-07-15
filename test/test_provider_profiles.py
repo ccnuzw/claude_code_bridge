@@ -1838,8 +1838,39 @@ def test_materialize_claude_home_config_projects_system_settings_into_managed_ho
 
     payload = json.loads(layout.settings_path.read_text(encoding='utf-8'))
     assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == 'system-token'
+    assert 'ANTHROPIC_API_KEY' not in payload['env']
     assert payload['env']['ANTHROPIC_BASE_URL'] == 'https://claude.example.test'
     assert payload['theme'] == 'light'
+    trust = json.loads(layout.trust_path.read_text(encoding='utf-8'))
+    assert 'customApiKeyResponses' not in trust
+
+
+def test_materialize_claude_home_config_preserves_explicit_api_key_kind(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-home'
+    target_home = tmp_path / 'managed-home'
+    source_settings = source_home / '.claude' / 'settings.json'
+    source_settings.parent.mkdir(parents=True, exist_ok=True)
+    source_settings.write_text(
+        json.dumps(
+            {
+                'env': {
+                    'ANTHROPIC_API_KEY': 'system-api-key',
+                    'ANTHROPIC_BASE_URL': 'https://claude.example.test',
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+
+    layout = materialize_claude_home_config(target_home, source_home=source_home)
+
+    payload = json.loads(layout.settings_path.read_text(encoding='utf-8'))
+    assert payload['env']['ANTHROPIC_API_KEY'] == 'system-api-key'
+    assert 'ANTHROPIC_AUTH_TOKEN' not in payload['env']
+    trust = json.loads(layout.trust_path.read_text(encoding='utf-8'))
+    assert trust['customApiKeyResponses']['approved'] == ['system-api-key']
 
 
 def test_materialize_claude_home_config_projects_official_login_auth_into_managed_home(tmp_path: Path) -> None:
@@ -2939,7 +2970,18 @@ def test_materialize_claude_home_config_respects_inherit_skills_without_disablin
     assert (layout.claude_dir / 'commands' / 'check.md').read_text(encoding='utf-8') == 'command\n'
 
 
-def test_materialize_claude_home_config_preserves_managed_auth_when_source_is_logged_out(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ('managed_api_key', 'expected_api_key'),
+    [
+        pytest.param('managed-token', None, id='legacy-token-alias'),
+        pytest.param('independent-api-key', 'independent-api-key', id='distinct-credentials'),
+    ],
+)
+def test_materialize_claude_home_config_preserves_managed_auth_when_source_is_logged_out(
+    tmp_path: Path,
+    managed_api_key: str,
+    expected_api_key: str | None,
+) -> None:
     source_home = tmp_path / 'system-home'
     target_home = tmp_path / 'managed-home'
     source_settings = source_home / '.claude' / 'settings.json'
@@ -2964,6 +3006,7 @@ def test_materialize_claude_home_config_preserves_managed_auth_when_source_is_lo
             {
                 'env': {
                     'ANTHROPIC_AUTH_TOKEN': 'managed-token',
+                    'ANTHROPIC_API_KEY': managed_api_key,
                     'ANTHROPIC_BASE_URL': 'https://managed.example.test',
                 },
                 'theme': 'stale-theme',
@@ -2980,6 +3023,10 @@ def test_materialize_claude_home_config_preserves_managed_auth_when_source_is_lo
 
     payload = json.loads(layout.settings_path.read_text(encoding='utf-8'))
     assert payload['env']['ANTHROPIC_AUTH_TOKEN'] == 'managed-token'
+    if expected_api_key is None:
+        assert 'ANTHROPIC_API_KEY' not in payload['env']
+    else:
+        assert payload['env']['ANTHROPIC_API_KEY'] == expected_api_key
     assert payload['env']['ANTHROPIC_BASE_URL'] == 'https://claude.example.test'
     assert payload['theme'] == 'light'
     assert payload['hooks']['Stop'][0]['hooks'][0]['command'] == 'echo hook'

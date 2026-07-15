@@ -852,8 +852,6 @@ def _projected_settings_payload(source_settings_path: Path, *, profile) -> dict[
     elif not _inherits_auth(profile):
         env_payload.pop('ANTHROPIC_AUTH_TOKEN', None)
         env_payload.pop('ANTHROPIC_API_KEY', None)
-    else:
-        _sync_claude_api_key_alias(env_payload)
 
     include_config = _inherits_config(profile)
     payload: dict[str, object] = {}
@@ -1025,7 +1023,7 @@ def _carry_forward_managed_auth_env(
                 value = existing_env.get(key)
                 if _env_value_present(value):
                     merged_env[key] = value
-        _sync_claude_api_key_alias(merged_env)
+        _drop_legacy_claude_api_key_alias(merged_env)
 
     if merged_env:
         merged_payload['env'] = merged_env
@@ -1048,11 +1046,11 @@ def _env_value_present(value: object) -> bool:
     return value is not None
 
 
-def _sync_claude_api_key_alias(env_payload: dict[str, object]) -> None:
+def _drop_legacy_claude_api_key_alias(env_payload: dict[str, object]) -> None:
     auth_token = env_payload.get('ANTHROPIC_AUTH_TOKEN')
     api_key = env_payload.get('ANTHROPIC_API_KEY')
-    if _env_value_present(auth_token) and not _env_value_present(api_key):
-        env_payload['ANTHROPIC_API_KEY'] = auth_token
+    if _env_value_present(auth_token) and _env_value_present(api_key) and auth_token == api_key:
+        env_payload.pop('ANTHROPIC_API_KEY', None)
 
 
 def _claude_custom_api_key_from_settings(settings_path: Path) -> object:
