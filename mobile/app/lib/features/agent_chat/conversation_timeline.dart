@@ -75,7 +75,8 @@ class ConversationTimeline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final contentById = {for (final item in contentItems) item.id: item};
-    final loadingOffset = isLoading ? 1 : 0;
+    final showLoadingIndicator = isLoading && items.isEmpty;
+    final loadingOffset = showLoadingIndicator ? 1 : 0;
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         final userDriven = isUserDrivenScrollNotification(notification);
@@ -115,7 +116,7 @@ class ConversationTimeline extends StatelessWidget {
             itemCount: items.length + loadingOffset,
             separatorBuilder: (context, index) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
-              if (isLoading && index == 0) {
+              if (showLoadingIndicator && index == 0) {
                 return const LinearProgressIndicator(
                   key: ValueKey('agent-conversation-loading'),
                 );

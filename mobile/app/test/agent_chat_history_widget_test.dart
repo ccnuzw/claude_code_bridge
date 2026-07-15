@@ -9,6 +9,114 @@ import 'support/project_home_test_driver.dart';
 import 'support/project_home_test_fakes.dart';
 
 void main() {
+  testWidgets('background refresh keeps an existing timeline visually stable', (
+    tester,
+  ) async {
+    final repository = FakeMobileCcbRepository.demo();
+    final view = CcbProjectView.fromProjectViewPayload(demoProjectViewFixture);
+    final agent = view.agentByName('lead')!;
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final item = CcbConversationItem(
+      id: 'stable-during-refresh',
+      agentName: agent.name,
+      kind: CcbConversationItemKind.agentReply,
+      title: 'Agent reply',
+      body: 'Do not move while refreshing',
+      source: 'provider_native/codex',
+    );
+
+    Widget timeline({required bool isLoading}) {
+      return MaterialApp(
+        home: SizedBox(
+          height: 600,
+          child: ConversationTimeline(
+            repository: repository,
+            view: view,
+            agent: agent,
+            contentItems: const [],
+            initialHistory: null,
+            items: [item],
+            isLoading: isLoading,
+            controller: controller,
+            expandedItemIds: const {},
+            downloadingAttachmentIds: const {},
+            downloadedAttachmentIds: const {},
+            onRetry: (_) {},
+            onDeleteFailedMessage: (_) {},
+            onToggleExpanded: (_) {},
+            onNearEnd: () {},
+            onUserNearEnd: () {},
+            onNearStart: () {},
+            onUserScrollDirectionChanged: (_) {},
+            hasOlderItems: false,
+            onDownloadAttachment: (_) {},
+            onOpenAttachment: (_) {},
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(timeline(isLoading: false));
+    final itemFinder = find.byKey(conversationTimelineItemKey(item.id));
+    final settledTop = tester.getTopLeft(itemFinder).dy;
+
+    await tester.pumpWidget(timeline(isLoading: true));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('agent-conversation-loading')),
+      findsNothing,
+    );
+    expect(tester.getTopLeft(itemFinder).dy, settledTop);
+  });
+
+  testWidgets('empty timeline still shows its initial loading state', (
+    tester,
+  ) async {
+    final repository = FakeMobileCcbRepository.demo();
+    final view = CcbProjectView.fromProjectViewPayload(demoProjectViewFixture);
+    final agent = view.agentByName('lead')!;
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          height: 600,
+          child: ConversationTimeline(
+            repository: repository,
+            view: view,
+            agent: agent,
+            contentItems: const [],
+            initialHistory: null,
+            items: const [],
+            isLoading: true,
+            controller: controller,
+            expandedItemIds: const {},
+            downloadingAttachmentIds: const {},
+            downloadedAttachmentIds: const {},
+            onRetry: (_) {},
+            onDeleteFailedMessage: (_) {},
+            onToggleExpanded: (_) {},
+            onNearEnd: () {},
+            onUserNearEnd: () {},
+            onNearStart: () {},
+            onUserScrollDirectionChanged: (_) {},
+            hasOlderItems: false,
+            onDownloadAttachment: (_) {},
+            onOpenAttachment: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('agent-conversation-loading')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('timeline item identity is safe across route recreation', (
     tester,
   ) async {
