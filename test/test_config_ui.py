@@ -54,6 +54,25 @@ def test_config_ui_asset_is_packaged_source_content() -> None:
     assert embedded_icon == mobile_icon.read_bytes()
 
 
+def test_config_ui_layout_canvas_can_fill_stretched_workspace_column() -> None:
+    page = config_ui_asset_path().read_text(encoding='utf-8')
+
+    def css_rule(selector: str) -> str:
+        match = re.search(
+            rf'^\s*{re.escape(selector)}\s*\{{(?P<body>.*?)^\s*\}}',
+            page,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        assert match is not None
+        return match.group('body')
+
+    assert 'display: grid' in css_rule('.layout-card')
+    assert 'height: 100%' in css_rule('.layout-shell')
+    preview_rule = css_rule('.layout-preview')
+    assert 'height: 100%' in preview_rule
+    assert 'max-height: none' in preview_rule
+
+
 def test_config_ui_serves_token_guarded_page_and_project_session(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     config_path = project_root / '.ccb' / 'ccb.config'

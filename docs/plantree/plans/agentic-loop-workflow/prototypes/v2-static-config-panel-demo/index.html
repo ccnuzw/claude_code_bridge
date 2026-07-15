@@ -450,6 +450,7 @@
       display: grid;
       grid-template-columns: 108px minmax(0, 1fr);
       gap: 10px;
+      height: 100%;
       min-height: 276px;
     }
 
@@ -517,14 +518,17 @@
     }
 
     .layout-card {
+      display: grid;
+      min-height: 0;
       padding: 10px;
       background: #fbfcfd;
     }
 
     .layout-preview {
       display: block;
+      height: 100%;
       min-height: 256px;
-      max-height: 276px;
+      max-height: none;
       overflow: auto;
     }
 
