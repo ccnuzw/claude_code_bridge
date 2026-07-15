@@ -91,6 +91,10 @@ Date: 2026-07-13
   the sibling subtree to collapse the binary split, removes stale Agent
   overlays, supports undo, removes a sole-leaf Window only when another Window
   remains, and delegates activation to the guarded `remove_agent` reload path.
+- Fixed explicit multi-window config rendering so Agent overlays are indexed
+  from every Window rather than only the entry Window. Model, thinking, Role,
+  API, and other `[agents.<name>]` overrides now survive the visual editor's
+  asynchronous render round trip for non-entry-window Agents.
 
 ## Validation Evidence
 
@@ -169,6 +173,12 @@ Date: 2026-07-13
   vertical stack matching `claude1:claude, grok1:grok`. Follow-up dry-run was
   `no_change`.
 - Final Config UI/config-loader/reload/remove/reflow suite: `196 passed`.
+- 2026-07-15 multi-window overlay regression: reproduced the reset with the
+  live five-Window project shape, then verified model/thinking retention for
+  eight Codex Agents across the first three Windows in real headless Chrome.
+  Config UI plus V2 config-loader suites passed `132 passed`; an external
+  `/home/bfly/yunwei/ccb_source/ccb_test config ui --no-open --port 0` probe
+  also preserved the non-entry Agent overlay through `GET /api/config`.
 
 ## In Progress
 

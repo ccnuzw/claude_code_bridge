@@ -204,7 +204,11 @@ def _sidebar_payload(config) -> dict[str, object]:
 
 
 def _windows_agent_overlay_payload(config) -> dict[str, dict[str, object]]:
-    compact_agent_defaults = _compact_agent_defaults_by_name(_render_hybrid_layout(config))
+    compact_agent_defaults: dict[str, dict[str, str]] = {}
+    for window in tuple(getattr(config, 'windows', ()) or ()):
+        compact_agent_defaults.update(
+            _compact_agent_defaults_by_name(str(window.layout_spec))
+        )
     overlay_agents: dict[str, dict[str, object]] = {}
     ordered_names = list(config.default_agents) + [name for name in config.agents if name not in config.default_agents]
     for name in ordered_names:

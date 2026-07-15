@@ -239,13 +239,22 @@ def test_config_ui_validates_saves_with_digest_guard_and_hot_reloads(tmp_path: P
         assert rendered['validation']['agent_names'] == ['agent1']
 
         thinking_document = json.loads(json.dumps(document))
+        thinking_document['windows']['secondary'] = 'agent2:codex(worktree)'
         thinking_document['agents'] = {
             'agent1': {'model': 'gpt-5.5', 'thinking': 'high'},
+            'agent2': {'model': 'gpt-5.6-sol', 'thinking': 'xhigh'},
         }
         thinking_rendered = _post_json(handle.url, '/api/render', {'document': thinking_document})
         assert 'model = "gpt-5.5"' in thinking_rendered['text']
         assert 'thinking = "high"' in thinking_rendered['text']
+        assert '[agents.agent2]' in thinking_rendered['text']
+        assert 'model = "gpt-5.6-sol"' in thinking_rendered['text']
+        assert 'thinking = "xhigh"' in thinking_rendered['text']
         assert 'model_reasoning_effort' not in thinking_rendered['text']
+        assert thinking_rendered['editor']['document']['agents']['agent2'] == {
+            'model': 'gpt-5.6-sol',
+            'thinking': 'xhigh',
+        }
 
         rich_document = json.loads(json.dumps(document))
         rich_document['windows']['main'] = 'agent1:codex, rich'

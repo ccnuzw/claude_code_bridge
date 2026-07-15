@@ -2420,6 +2420,45 @@ startup_args = ["--demo"]
     assert spec.thinking == thinking
 
 
+def test_render_project_config_text_preserves_non_entry_window_agent_overlays(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-render-multi-window-overlays'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        '''version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+secondary = "agent2:codex(worktree)"
+
+[agents.agent1]
+model = "gpt-5.5"
+
+[agents.agent2]
+model = "gpt-5.6-sol"
+thinking = "xhigh"
+role = "agentroles.coder"
+''',
+    )
+
+    rendered = render_project_config_text(load_project_config(project_root).config)
+
+    assert '[agents.agent1]' in rendered
+    assert '[agents.agent2]' in rendered
+    assert 'model = "gpt-5.6-sol"' in rendered
+    assert 'thinking = "xhigh"' in rendered
+    assert 'role = "agentroles.coder"' in rendered
+    rewritten = tmp_path / 'repo-render-multi-window-overlays-roundtrip'
+    _write(rewritten / '.ccb' / 'ccb.config', rendered)
+    round_tripped = load_project_config(rewritten).config
+    assert round_tripped.agents['agent1'].model == 'gpt-5.5'
+    assert round_tripped.agents['agent2'].model == 'gpt-5.6-sol'
+    assert round_tripped.agents['agent2'].thinking == 'xhigh'
+    assert round_tripped.agents['agent2'].role == 'agentroles.coder'
+
+
 def test_render_project_config_text_round_trips_noncompact_provider_profile(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-render-provider-profile'
     config_path = project_root / '.ccb' / 'ccb.config'
