@@ -245,7 +245,7 @@ ccb update rich
 - WeChat: `seemseam-com`
 
 <p align="center">
-  <img src="../assets/weixin.jpg" alt="مجموعة WeChat" width="240">
+  <img src="../assets/weixin.png" alt="مجموعة WeChat" width="240">
 </p>
 
 <a id="community"></a>

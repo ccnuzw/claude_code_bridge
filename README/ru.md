@@ -245,7 +245,7 @@ CCB поддерживает [Agent Roles Spec](https://github.com/SeemSeam/agen
 - WeChat: `seemseam-com`
 
 <p align="center">
-  <img src="../assets/weixin.jpg" alt="Группа WeChat" width="240">
+  <img src="../assets/weixin.png" alt="Группа WeChat" width="240">
 </p>
 
 <a id="community"></a>

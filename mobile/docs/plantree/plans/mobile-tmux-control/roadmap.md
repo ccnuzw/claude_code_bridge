@@ -536,6 +536,14 @@ Work:
   outbound to the relay;
 - add a relay frame envelope, rendezvous model, E2EE handshake, reconnect
   model, abuse controls, and diagnostics;
+- implement the hosted-relay package in
+  [the invitation and Alibaba Cloud deployment plan](topics/public-relay-invitation-and-aliyun-deployment.md):
+  one-use applicant invitation, host public-key binding, minimal anonymous
+  security metadata, no forwarded-payload persistence, quotas, and operator
+  issue/status/revoke commands;
+- require
+  [the public Relay Android Emulator matrix](topics/public-relay-android-emulator-acceptance.md)
+  against the real Alibaba Cloud WSS endpoint before remote-alpha acceptance;
 - keep CCB device tokens, scopes, revocation, and terminal tokens owned by the
   user host, not the relay;
 - generate QR pairing with `route_provider: relay` while preserving LAN and
@@ -560,6 +568,11 @@ Acceptance criteria:
 - reconnect does not replay stale terminal input or lifecycle actions;
 - relay cannot control CCB lifecycle and should not see terminal content in
   cleartext.
+- one applicant invitation activates exactly one host under concurrent/retry
+  tests, while the separate CCB mobile pairing handoff retains Decision 021
+  semantics;
+- relay logs, metrics, database, and filesystem contain no plaintext prompt,
+  reply, terminal, path, file, token, or notification business payload.
 
 ## Phase 6: Advanced Routes And Self-Hosted Relay
 

@@ -146,10 +146,19 @@ See
 
 1. Should the default relay forward HTTP/WebSocket as-is, or expose a single
    framed bidirectional session that maps to the same request/response schemas?
-2. Should app/server messages be encrypted above relay TLS so self-hosted or
-   third-party relay operators cannot inspect terminal frames?
-3. What minimum relay self-hosting and abuse-control story is acceptable for an
-   open-source free release?
+2. Which maintained Python/Dart library and reviewed Noise-compatible handshake
+   should implement the accepted message-level E2EE contract without custom
+   cryptography?
+3. Should production start in Alibaba Cloud Hong Kong for fast no-ICP staging,
+   or in a China mainland region using an already-filed domain?
+
+Resolved 2026-07-15: the hosted public relay uses one-time applicant-specific
+invitations, host public-key binding, short-lived session capabilities, quotas,
+and no forwarded CCB payload storage. Encryption above relay TLS is required.
+This is separate from the reusable host-to-phone pairing handoff in Decision
+021. See [Decision 023](decisions/023-one-time-public-relay-admission.md),
+[the deployment plan](topics/public-relay-invitation-and-aliyun-deployment.md),
+and [the public Emulator gate](topics/public-relay-android-emulator-acceptance.md).
 
 ## App Install And Upgrade
 

@@ -131,6 +131,14 @@ Relevant implementation anchors in `/home/bfly/yunwei/ccb_source`:
 - [topics/relay-route-provider-spike.md](topics/relay-route-provider-spike.md)
   defines the first relay route-provider contract and emulator-only fake/local
   acceptance gates before a public relay exists.
+- [topics/public-relay-invitation-and-aliyun-deployment.md](topics/public-relay-invitation-and-aliyun-deployment.md)
+  defines the hosted relay, one-time applicant invitation, minimal metadata,
+  end-to-end encryption, abuse controls, Alibaba Cloud deployment, and inputs
+  required from the operator.
+- [topics/public-relay-android-emulator-acceptance.md](topics/public-relay-android-emulator-acceptance.md)
+  defines the strict public WSS Android Emulator, one-time invitation,
+  confidentiality, real-project workflow, recovery, capacity, and no-storage
+  acceptance gates.
 - [topics/emulator-only-acceptance-checklist.md](topics/emulator-only-acceptance-checklist.md)
   consolidates the current emulator-only completion gates, local proof, AVD
   smoke commands, accepted deferrals, and final audit surface.
@@ -279,6 +287,9 @@ Relevant implementation anchors in `/home/bfly/yunwei/ccb_source`:
 - [decisions/022-device-bound-push-delivery.md](decisions/022-device-bound-push-delivery.md)
   records the gateway's device-bound push-token, payload, authorization,
   migration, and external-provider boundary.
+- [decisions/023-one-time-public-relay-admission.md](decisions/023-one-time-public-relay-admission.md)
+  records that each hosted-relay applicant receives a one-use invitation that
+  activates one host key, while reusable CCB phone pairing remains separate.
 
 ## Current Direction
 

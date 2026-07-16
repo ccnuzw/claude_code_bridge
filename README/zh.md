@@ -250,7 +250,7 @@ CCB 支持 [Agent Roles Spec](https://github.com/SeemSeam/agent-roles-spec)：�
 - 微信: `seemseam-com`
 
 <p align="center">
-  <img src="../assets/weixin.jpg" alt="微信群" width="240">
+  <img src="../assets/weixin.png" alt="微信群" width="240">
 </p>
 
 <a id="community"></a>

@@ -159,6 +159,16 @@ Work:
 - deploy a first relay candidate at `relay.seemlab.top` or an equivalent local
   test endpoint.
 
+Hosted deployment and admission details:
+
+- [public-relay-invitation-and-aliyun-deployment.md](public-relay-invitation-and-aliyun-deployment.md)
+  defines the accountless but authenticated public service, one-time applicant
+  invitations, host key binding, end-to-end encryption, no-business-payload
+  storage, quotas, and Alibaba Cloud staging profile;
+- [public-relay-android-emulator-acceptance.md](public-relay-android-emulator-acceptance.md)
+  is the required public WSS gate. Local harness results cannot substitute for
+  that same-build real Emulator evidence.
+
 Local spike evidence:
 
 - mobile app commit `28dc384` added fake/local relay metadata guards:
@@ -197,6 +207,10 @@ Acceptance:
 - same project list, ProjectView, focus, terminal token, terminal frame,
   content, and event semantics as LAN/Cloudflare;
 - relay disconnect does not stop server-side CCB projects.
+- each applicant invitation can activate at most one host credential, including
+  concurrent claims, and cannot be reused after successful activation;
+- the relay stores only anonymous admission/security metadata and never
+  persists forwarded CCB payloads.
 
 ## Phase R3: Tailscale Tailnet Stable Private Route
 
@@ -364,6 +378,11 @@ Purpose: make the default relay route and optional advanced routes safe enough
 for normal open-source users.
 
 Work:
+
+- implement the one-time hosted-relay admission and key-binding contract from
+  [Decision 023](../decisions/023-one-time-public-relay-admission.md);
+- deploy the first staging endpoint and pass the complete public Android
+  Emulator plan before inviting beta users;
 
 - document relay setup, local emulator validation, Tailnet private setup, and
   advanced tunnel

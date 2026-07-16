@@ -19,7 +19,7 @@ Date: 2026-05-25
   - `assets/demo.webp`
   - `assets/readme_previews/video1.gif`
   - `assets/readme_previews/video2.gif`
-  - `assets/weixin.jpg`
+  - `assets/weixin.png`
 
 ## Runtime And Config Contracts
 

@@ -245,7 +245,7 @@ Für normale Projektkonfigurationen wird das **⚙ Einstellungen**-Panel empfohl
 - WeChat: `seemseam-com`
 
 <p align="center">
-  <img src="../assets/weixin.jpg" alt="WeChat-Gruppe" width="240">
+  <img src="../assets/weixin.png" alt="WeChat-Gruppe" width="240">
 </p>
 
 <a id="community"></a>
