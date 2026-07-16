@@ -52,6 +52,19 @@ class MainActivity : FlutterActivity() {
                 result.success(false)
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "io.ccb.mobile/background_connection"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> result.success(BackgroundConnectionService.start(this))
+                "stop" -> {
+                    BackgroundConnectionService.stop(this)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         localNotificationsChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "io.ccb.mobile/local_notifications"

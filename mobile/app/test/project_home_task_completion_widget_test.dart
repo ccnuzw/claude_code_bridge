@@ -149,6 +149,66 @@ void main() {
   );
 
   testWidgets(
+    'opt-in background connection keeps one notification stream alive',
+    (tester) async {
+      final streamClient = _LifecycleTaskCompletionStreamClient();
+      final backgroundConnection = _RecordingBackgroundConnectionPlatform();
+      final profileStore = await _profileStoreWith([
+        _pairedHost(scopes: const {'view', 'focus', 'notify'}),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProjectHomeScreen(
+            repository: FakeMobileCcbRepository.demo(),
+            profileStore: profileStore,
+            autoActivateStoredProfile: true,
+            backgroundConnectionEnabled: true,
+            backgroundConnectionPlatform: backgroundConnection,
+            gatewayRepositoryFactory: (_) => RecordingGatewayRepository(),
+            gatewayTerminalTransportFactory:
+                (_) => RecordingTerminalTransport(),
+            taskNotificationStreamClient: streamClient,
+            taskCompletionLocalNotifications:
+                _FakeTaskCompletionLocalNotifications(),
+            taskCompletionSeenStore: TaskCompletionSeenDedupeStore(
+              secureStore: MemorySecureStore(),
+            ),
+            taskCompletionUnreadStore: TaskCompletionUnreadStore(
+              secureStore: MemorySecureStore(),
+            ),
+            invalidationCursorStore: _cursorStore(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(backgroundConnection.startCalls, 1);
+      expect(backgroundConnection.running, isTrue);
+      expect(streamClient.subscribeCalls, 1);
+      expect(streamClient.hasListener, isTrue);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(streamClient.hasListener, isTrue);
+      expect(streamClient.subscribeCalls, 1);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(streamClient.hasListener, isTrue);
+      expect(streamClient.subscribeCalls, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(backgroundConnection.stopCalls, 1);
+    },
+  );
+
+  testWidgets(
     'notification stream retry does not reflow or disable the active chat',
     (tester) async {
       final streamClient = _FakeTaskCompletionStreamClient();
@@ -686,6 +746,26 @@ class _LifecycleTaskCompletionStreamClient
   ]) {
     subscribeCalls += 1;
     return _ImmediateCancelStream(_controller.stream);
+  }
+}
+
+class _RecordingBackgroundConnectionPlatform
+    implements BackgroundConnectionPlatform {
+  var startCalls = 0;
+  var stopCalls = 0;
+  var running = false;
+
+  @override
+  Future<bool> start() async {
+    startCalls += 1;
+    running = true;
+    return true;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls += 1;
+    running = false;
   }
 }
 

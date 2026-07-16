@@ -22,6 +22,8 @@ class ProjectHomeOnboardingScaffold extends StatelessWidget {
     required this.onClaim,
     this.themePreference = CcbThemePreference.system,
     this.onThemePreferenceChanged,
+    this.backgroundConnectionEnabled = false,
+    this.onBackgroundConnectionEnabledChanged,
     this.onClose,
     super.key,
   });
@@ -33,8 +35,10 @@ class ProjectHomeOnboardingScaffold extends StatelessWidget {
   final bool claiming;
   final bool loadingProfiles;
   final CcbThemePreference themePreference;
+  final bool backgroundConnectionEnabled;
   final ValueChanged<RouteProviderKind> onRouteKindChanged;
   final ValueChanged<CcbThemePreference>? onThemePreferenceChanged;
+  final ValueChanged<bool>? onBackgroundConnectionEnabledChanged;
   final VoidCallback onScan;
   final VoidCallback onClaim;
   final VoidCallback? onClose;
@@ -138,10 +142,48 @@ class ProjectHomeOnboardingScaffold extends StatelessWidget {
                 onThemePreferenceChanged: onThemePreferenceChanged,
               ),
               const SizedBox(height: 16),
+              _BackgroundConnectionSection(
+                enabled: backgroundConnectionEnabled,
+                onChanged: onBackgroundConnectionEnabledChanged,
+              ),
+              const SizedBox(height: 16),
               const ProjectHomeUpdatePanel(),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _BackgroundConnectionSection extends StatelessWidget {
+  const _BackgroundConnectionSection({
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final strings = CcbMobileLocalizations.of(context);
+    return Material(
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SwitchListTile(
+        key: const ValueKey('background-connection-switch'),
+        value: enabled,
+        onChanged: onChanged,
+        secondary: Icon(Icons.sync_lock_outlined, color: colorScheme.primary),
+        title: Text(strings.backgroundConnection),
+        subtitle: Text(strings.backgroundConnectionDescription),
       ),
     );
   }

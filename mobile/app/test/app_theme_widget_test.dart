@@ -63,6 +63,49 @@ void main() {
       Brightness.dark,
     );
   });
+
+  testWidgets('settings background connection switch persists opt-in', (
+    tester,
+  ) async {
+    final store = MemoryBackgroundConnectionPreferenceStore();
+
+    await tester.pumpWidget(
+      CcbMobileApp(
+        enableProductOnboarding: true,
+        backgroundConnectionPreferenceStore: store,
+        profileStore: GatewayHostProfileStore(secureStore: MemorySecureStore()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final switchFinder = find.byKey(
+      const ValueKey('background-connection-switch'),
+    );
+    await tester.ensureVisible(switchFinder);
+    await tester.tap(switchFinder);
+    await tester.pump();
+
+    expect(await store.read(), isTrue);
+    expect(tester.widget<SwitchListTile>(switchFinder).value, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      CcbMobileApp(
+        enableProductOnboarding: true,
+        backgroundConnectionPreferenceStore: store,
+        profileStore: GatewayHostProfileStore(secureStore: MemorySecureStore()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final restoredSwitch = find.byKey(
+      const ValueKey('background-connection-switch'),
+    );
+    await tester.ensureVisible(restoredSwitch);
+    expect(tester.widget<SwitchListTile>(restoredSwitch).value, isTrue);
+  });
 }
 
 class MemoryThemePreferenceStore implements CcbThemePreferenceStore {
@@ -76,5 +119,18 @@ class MemoryThemePreferenceStore implements CcbThemePreferenceStore {
   @override
   Future<void> write(CcbThemePreference preference) async {
     _preference = preference;
+  }
+}
+
+class MemoryBackgroundConnectionPreferenceStore
+    implements CcbBackgroundConnectionPreferenceStore {
+  bool enabled = false;
+
+  @override
+  Future<bool> read() async => enabled;
+
+  @override
+  Future<void> write(bool enabled) async {
+    this.enabled = enabled;
   }
 }

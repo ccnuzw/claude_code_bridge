@@ -8,6 +8,7 @@ import '../../cache/mobile_snapshot_codec.dart';
 import '../../cache/mobile_snapshot_store.dart';
 import '../../app/app_factories.dart';
 import '../../app/app_theme.dart';
+import '../../app/background_connection.dart';
 import '../../app/runtime_mode.dart';
 import '../../debug/debug_profile_seed.dart';
 import '../../l10n/ccb_mobile_localizations.dart';
@@ -63,6 +64,10 @@ class ProjectHomeScreen extends StatelessWidget {
     this.autoActivateStoredProfile = false,
     this.themePreference = CcbThemePreference.system,
     this.onThemePreferenceChanged,
+    this.backgroundConnectionEnabled = false,
+    this.backgroundConnectionPreferenceLoaded = true,
+    this.onBackgroundConnectionEnabledChanged,
+    this.backgroundConnectionPlatform,
     this.taskNotificationStreamClient,
     this.taskCompletionLocalNotifications,
     this.taskCompletionSeenStore,
@@ -84,6 +89,10 @@ class ProjectHomeScreen extends StatelessWidget {
   final bool autoActivateStoredProfile;
   final CcbThemePreference themePreference;
   final ValueChanged<CcbThemePreference>? onThemePreferenceChanged;
+  final bool backgroundConnectionEnabled;
+  final bool backgroundConnectionPreferenceLoaded;
+  final ValueChanged<bool>? onBackgroundConnectionEnabledChanged;
+  final BackgroundConnectionPlatform? backgroundConnectionPlatform;
   final GatewayTaskCompletionNotificationStreamClient?
   taskNotificationStreamClient;
   final TaskCompletionLocalNotifications? taskCompletionLocalNotifications;
@@ -107,6 +116,14 @@ class ProjectHomeScreen extends StatelessWidget {
       autoActivateStoredProfile: autoActivateStoredProfile,
       themePreference: themePreference,
       onThemePreferenceChanged: onThemePreferenceChanged,
+      backgroundConnectionEnabled: backgroundConnectionEnabled,
+      backgroundConnectionPreferenceLoaded:
+          backgroundConnectionPreferenceLoaded,
+      onBackgroundConnectionEnabledChanged:
+          onBackgroundConnectionEnabledChanged,
+      backgroundConnectionPlatform:
+          backgroundConnectionPlatform ??
+          const MethodChannelBackgroundConnectionPlatform(),
       taskNotificationStreamClient: taskNotificationStreamClient,
       taskCompletionLocalNotifications: taskCompletionLocalNotifications,
       taskCompletionSeenStore: taskCompletionSeenStore,
@@ -131,6 +148,10 @@ class _ProjectHomeView extends StatefulWidget {
     required this.autoActivateStoredProfile,
     required this.themePreference,
     required this.onThemePreferenceChanged,
+    required this.backgroundConnectionEnabled,
+    required this.backgroundConnectionPreferenceLoaded,
+    required this.onBackgroundConnectionEnabledChanged,
+    required this.backgroundConnectionPlatform,
     required this.taskNotificationStreamClient,
     required this.taskCompletionLocalNotifications,
     required this.taskCompletionSeenStore,
@@ -151,6 +172,10 @@ class _ProjectHomeView extends StatefulWidget {
   final bool autoActivateStoredProfile;
   final CcbThemePreference themePreference;
   final ValueChanged<CcbThemePreference>? onThemePreferenceChanged;
+  final bool backgroundConnectionEnabled;
+  final bool backgroundConnectionPreferenceLoaded;
+  final ValueChanged<bool>? onBackgroundConnectionEnabledChanged;
+  final BackgroundConnectionPlatform backgroundConnectionPlatform;
   final GatewayTaskCompletionNotificationStreamClient?
   taskNotificationStreamClient;
   final TaskCompletionLocalNotifications? taskCompletionLocalNotifications;
@@ -237,6 +262,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   int _gatewayActivationGeneration = 0;
   late final MobilePresenceCoordinator _presenceCoordinator;
   bool _taskNotificationsSuspendedForBackground = false;
+  late final BackgroundConnectionRuntime _backgroundConnectionRuntime;
 
   @override
   void initState() {
@@ -251,6 +277,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
             error,
             kind: MobileTransportKind.mutation,
           ),
+    );
+    _backgroundConnectionRuntime = BackgroundConnectionRuntime(
+      platform: widget.backgroundConnectionPlatform,
+      onRunningChanged: _handleBackgroundConnectionRunningChanged,
+      onStartFailed: _handleBackgroundConnectionStartFailure,
     );
     _taskCompletionUnreadStore =
         widget.taskCompletionUnreadStore ?? TaskCompletionUnreadStore();
@@ -286,10 +317,28 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     _activeRepository = widget.repository;
     _viewFuture = _loadActiveProjectView();
     _bootstrapProfiles();
+    if (widget.backgroundConnectionEnabled &&
+        widget.backgroundConnectionPreferenceLoaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _requestBackgroundConnectionReconcile();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProjectHomeView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.backgroundConnectionEnabled !=
+            widget.backgroundConnectionEnabled ||
+        oldWidget.backgroundConnectionPreferenceLoaded !=
+            widget.backgroundConnectionPreferenceLoaded) {
+      _requestBackgroundConnectionReconcile();
+    }
   }
 
   @override
   void dispose() {
+    unawaited(_backgroundConnectionRuntime.dispose());
     WidgetsBinding.instance.removeObserver(this);
     _pairingForm.dispose();
     unawaited(_taskNotifications.dispose());
@@ -306,13 +355,14 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     _appLifecycleState = state;
     if (state == AppLifecycleState.resumed) {
       _presenceCoordinator.setVisible(true);
+      _requestBackgroundConnectionReconcile();
       _connectionSupervisor.foregroundResume();
       final profile = _selectedProfile;
       if (_taskNotificationsSuspendedForBackground &&
           _mode == AppRuntimeMode.pairedGateway &&
           profile != null) {
         _startTaskCompletionNotifications(profile);
-      } else {
+      } else if (!_backgroundConnectionRuntime.running) {
         _taskNotifications.retryNow();
       }
     } else if (state == AppLifecycleState.paused ||
@@ -320,7 +370,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       _presenceCoordinator.setVisible(false);
-      if (state != AppLifecycleState.inactive) {
+      if (state != AppLifecycleState.inactive &&
+          !_backgroundConnectionRuntime.running) {
         _stopTaskCompletionNotifications(forBackground: true);
       }
     }
@@ -621,6 +672,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       loadingProfiles: _loadingProfiles,
       themePreference: widget.themePreference,
       onThemePreferenceChanged: widget.onThemePreferenceChanged,
+      backgroundConnectionEnabled: widget.backgroundConnectionEnabled,
+      onBackgroundConnectionEnabledChanged:
+          widget.onBackgroundConnectionEnabledChanged,
       onRouteKindChanged: (value) {
         setState(() {
           _setPairingRouteKind(value);
@@ -1257,6 +1311,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     switch (mode) {
       case AppRuntimeMode.fake:
         _gatewayProfileActivationSucceeded = false;
+        _requestBackgroundConnectionReconcile();
         final reset = resetProjectHomeFakeRuntime(
           defaultProjectId: _defaultProjectId,
         );
@@ -1307,6 +1362,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     _detachGatewayOutcomeReporters();
     final activationGeneration = ++_gatewayActivationGeneration;
     _gatewayProfileActivationSucceeded = false;
+    _requestBackgroundConnectionReconcile();
     _pairingForm.applyGatewayActivation(
       gatewayUrlText: activation.gatewayUrlText,
       routeKind: activation.routeKind,
@@ -1402,6 +1458,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     }
     _connectionSupervisor.reportSuccess();
     _gatewayProfileActivationSucceeded = true;
+    _requestBackgroundConnectionReconcile();
     await widget.profileStore.markSuccessful(profile);
   }
 
@@ -1451,10 +1508,13 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           .toList(growable: false);
       _selectedProfile = null;
     });
+    _requestBackgroundConnectionReconcile();
   }
 
   void _returnToPairingSetup() {
     _gatewayActivationGeneration += 1;
+    _gatewayProfileActivationSucceeded = false;
+    _requestBackgroundConnectionReconcile();
     _detachGatewayOutcomeReporters();
     _stopTaskCompletionNotifications();
     unawaited(_pushNotifications.stop());
@@ -2057,8 +2117,52 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     _showSnack(outcome.snackMessage);
   }
 
-  void _startTaskCompletionNotifications(GatewayPairedHost profile) {
+  bool get _shouldRunBackgroundConnectionService =>
+      widget.backgroundConnectionPreferenceLoaded &&
+      widget.backgroundConnectionEnabled &&
+      _mode == AppRuntimeMode.pairedGateway &&
+      _selectedProfile != null &&
+      _gatewayProfileActivationSucceeded;
+
+  void _requestBackgroundConnectionReconcile() {
+    if (!widget.backgroundConnectionPreferenceLoaded) {
+      return;
+    }
+    _backgroundConnectionRuntime.update(
+      shouldRun: _shouldRunBackgroundConnectionService,
+      canStart: _appLifecycleState == AppLifecycleState.resumed,
+    );
+  }
+
+  void _handleBackgroundConnectionRunningChanged(bool running) {
+    if (running) {
+      final profile = _selectedProfile;
+      if (_taskNotificationsSuspendedForBackground && profile != null) {
+        _startTaskCompletionNotifications(profile);
+      }
+      return;
+    }
     if (_appLifecycleState != AppLifecycleState.resumed) {
+      _stopTaskCompletionNotifications(forBackground: true);
+    }
+  }
+
+  void _handleBackgroundConnectionStartFailure() {
+    if (!mounted) {
+      return;
+    }
+    if (_appLifecycleState != AppLifecycleState.resumed) {
+      _stopTaskCompletionNotifications(forBackground: true);
+    }
+    _showSnack(
+      CcbMobileLocalizations.of(context).backgroundConnectionCouldNotStart,
+    );
+    widget.onBackgroundConnectionEnabledChanged?.call(false);
+  }
+
+  void _startTaskCompletionNotifications(GatewayPairedHost profile) {
+    if (_appLifecycleState != AppLifecycleState.resumed &&
+        !_backgroundConnectionRuntime.running) {
       _taskNotificationsSuspendedForBackground = true;
       return;
     }

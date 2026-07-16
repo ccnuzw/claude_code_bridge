@@ -113,6 +113,19 @@ class CcbMobileLocalizations {
 
   String get themeDark => isChinese ? '深色' : 'Dark';
 
+  String get backgroundConnection =>
+      isChinese ? '保持后台连接' : 'Keep connected in background';
+
+  String get backgroundConnectionDescription =>
+      isChinese
+          ? '配对后使用系统常驻通知保持实时事件连接。会增加耗电，可随时关闭。'
+          : 'After pairing, keep the live event connection active with a persistent system notification. This uses more battery and can be disabled anytime.';
+
+  String get backgroundConnectionCouldNotStart =>
+      isChinese
+          ? '无法启动后台连接，设置已关闭。'
+          : 'Could not start the background connection. The setting was disabled.';
+
   String get mobileUpdates =>
       isChinese ? 'CCB Mobile 更新' : 'CCB Mobile updates';
 
