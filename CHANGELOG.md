@@ -10,6 +10,10 @@
 - **Tmux And Storage Operations Are Bounded**: startup snapshots and atomic
   storage helpers avoid repeated subprocess and filesystem work without adding
   an always-on polling loop or changing per-agent launch ordering.
+- **Copied Or Moved Projects Recover Safely**: an unmounted lease left by a
+  different project anchor is treated as residue and replaced with a fresh
+  generation, while a mounted foreign lease still fails closed; reattached
+  runtime records adopt the current project identity.
 
 ### Communication Reliability
 
