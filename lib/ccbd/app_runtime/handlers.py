@@ -127,6 +127,23 @@ def register_handlers(app) -> None:
                 namespace_event_store=app.namespace_event_store,
                 start_policy_store=app.start_policy_store,
                 metrics=app.control_plane_metrics,
+                serving_identity_getter=lambda: {
+                    'serving_pid': app.pid,
+                    'serving_daemon_instance_id': app.daemon_instance_id,
+                    'serving_lease_generation': (
+                        app.lease.generation if app.lease is not None else None
+                    ),
+                    'serving_startup_generation': getattr(
+                        app,
+                        'startup_generation',
+                        None,
+                    ),
+                    'accepted_startup_id': (
+                        app.expected_startup_fence.startup_id
+                        if app.expected_startup_fence is not None
+                        else None
+                    ),
+                },
             ),
         ),
     )

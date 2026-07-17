@@ -139,6 +139,39 @@ class _PatchFakeBackend:
         if active_border_style:
             self.set_pane_user_option(pane_id, 'pane-active-border-style', active_border_style)
 
+    def _format_pane(self, session_name: str, record: dict[str, object], pane_id: str, fmt: str) -> str:
+        options = self.pane_options.get(pane_id, {})
+        values = {
+            'pane_id': pane_id,
+            'session_name': session_name,
+            'window_id': str(record['id']),
+            'window_name': str(record['name']),
+            'pane_dead': '0',
+            'pane_title': str(self.pane_titles.get(pane_id, '') or ''),
+            'window_width': str(self.window_widths.get(str(record['name']), 120)),
+            'pane_width': str(self.pane_widths.get(pane_id, 20)),
+        }
+        for option in (
+            '@ccb_role',
+            '@ccb_slot',
+            '@ccb_window',
+            '@ccb_sidebar_instance',
+            '@ccb_sidebar_helper_id',
+            '@ccb_project_id',
+            '@ccb_managed_by',
+            '@ccb_namespace_epoch',
+            '@ccb_agent',
+            '@ccb_label_style',
+            '@ccb_border_style',
+            '@ccb_active_border_style',
+            '@ccb_session_id',
+        ):
+            values[option] = str(options.get(option, '') or '')
+        rendered = fmt
+        for key, value in values.items():
+            rendered = rendered.replace(f'#{{{key}}}', value)
+        return rendered
+
     def _tmux_run(self, args: list[str], *, check=False, capture=False, input_bytes=None, timeout=None):
         del check, capture, input_bytes, timeout
         self.tmux_calls.append(tuple(args))
@@ -175,26 +208,12 @@ class _PatchFakeBackend:
                 rows.append(f"{record['id']}\t{record['name']}\t0")
             return SimpleNamespace(returncode=0, stdout='\n'.join(rows), stderr='')
         if len(args) >= 4 and args[:2] == ['list-panes', '-a']:
+            fmt = args[args.index('-F') + 1] if '-F' in args else '#{pane_id}'
             rows = []
             for session_name, windows in self.sessions.items():
                 for record in windows:
-                    window_width = self.window_widths.get(str(record['name']), 120)
                     for pane_id in record['panes']:
-                        options = self.pane_options.get(str(pane_id), {})
-                        rows.append(
-                            '\t'.join(
-                                [
-                                    session_name,
-                                    str(pane_id),
-                                    str(window_width),
-                                    str(self.pane_widths.get(str(pane_id), 20)),
-                                    options.get('@ccb_project_id', ''),
-                                    options.get('@ccb_role', ''),
-                                    options.get('@ccb_sidebar_instance', ''),
-                                    options.get('@ccb_managed_by', ''),
-                                ]
-                            )
-                        )
+                        rows.append(self._format_pane(session_name, record, str(pane_id), fmt))
             return SimpleNamespace(returncode=0, stdout='\n'.join(rows), stderr='')
         if len(args) >= 4 and args[:2] == ['list-panes', '-t']:
             target = args[2]
@@ -225,6 +244,18 @@ class _PatchFakeBackend:
         if len(args) >= 5 and args[:2] == ['resize-pane', '-t'] and args[3] == '-x':
             self.pane_widths[args[2]] = int(args[4])
             return SimpleNamespace(returncode=0, stdout='', stderr='')
+        if len(args) >= 5 and args[:3] == ['display-message', '-p', '-t']:
+            pane_id = str(args[3])
+            fmt = str(args[4])
+            for session_name, windows in self.sessions.items():
+                for record in windows:
+                    if pane_id in record['panes']:
+                        return SimpleNamespace(
+                            returncode=0,
+                            stdout=f'{self._format_pane(session_name, record, pane_id, fmt)}\n',
+                            stderr='',
+                        )
+            return SimpleNamespace(returncode=1, stdout='', stderr='pane not found')
         if len(args) >= 3 and args[:2] == ['kill-window', '-t']:
             session_name, _, window_ref = args[2].partition(':')
             windows = self.sessions.get(session_name, [])
@@ -297,7 +328,9 @@ def test_apply_add_window_creates_only_new_window_sidebar_and_agent_panes(tmp_pa
     assert result.diagnostics['graph_published'] is False
     assert result.diagnostics['runtime_authority_written'] is False
     assert result.diagnostics['lease_or_lifecycle_written'] is False
-    assert ('new-window', '-d', '-t', layout.ccbd_tmux_session_name, '-n', 'review') == backend.tmux_calls[1][:6]
+    assert ('new-window', '-d', '-t', layout.ccbd_tmux_session_name, '-n', 'review') in {
+        call[:6] for call in backend.tmux_calls
+    }
     assert all('kill' not in ' '.join(call) for call in backend.tmux_calls)
     assert backend.split_calls == [('%3', 'right', 85), ('%4', 'bottom', 50)]
     assert backend.respawn_calls[0][0] == '%3'
@@ -361,21 +394,32 @@ def test_preserved_snapshot_and_assertion_use_fake_identity_data(tmp_path: Path)
     current = _load_config(tmp_path / 'current-preserved', BASE_CONFIG)
     layout = PathLayout(_project(tmp_path / 'repo-preserved', BASE_CONFIG))
     backend = _PatchFakeBackend(socket_path=str(layout.ccbd_tmux_socket_path))
-    _seed_agent_pane(backend, '%11', project_id='proj-1', window='main', agent='agent1')
-    _seed_agent_pane(backend, '%12', project_id='proj-1', window='main', agent='agent2')
+    first_pane = backend.add_window(layout.ccbd_tmux_session_name, 'main')
+    backend.sessions[layout.ccbd_tmux_session_name][0]['panes'].append('%2')
+    backend.pane_counter = 2
+    _seed_agent_pane(backend, first_pane, project_id='proj-1', window='main', agent='agent1')
+    _seed_agent_pane(backend, '%2', project_id='proj-1', window='main', agent='agent2')
     controller = ProjectNamespaceController(layout, 'proj-1', backend_factory=lambda socket_path=None: backend)
+    namespace = SimpleNamespace(
+        namespace_epoch=3,
+        tmux_session_name=layout.ccbd_tmux_session_name,
+    )
 
     snapshot = snapshot_preserved_agent_panes(
         controller,
-        SimpleNamespace(backend=backend),
+        SimpleNamespace(
+            backend=backend,
+            current=namespace,
+            desired_session_name=namespace.tmux_session_name,
+        ),
         topology_plan=build_namespace_topology_plan(current),
         agents=('agent1', 'agent2', 'agent-missing'),
     )
 
-    assert snapshot == {'agent1': '%11', 'agent2': '%12'}
-    assert_preserved_agent_panes(snapshot, {'agent1': '%11', 'agent2': '%12'})
+    assert snapshot == {'agent1': '%1', 'agent2': '%2'}
+    assert_preserved_agent_panes(snapshot, {'agent1': '%1', 'agent2': '%2'})
     with pytest.raises(RuntimeError, match='changed=agent2'):
-        assert_preserved_agent_panes(snapshot, {'agent1': '%11', 'agent2': '%99'})
+        assert_preserved_agent_panes(snapshot, {'agent1': '%1', 'agent2': '%99'})
 
 
 def test_apply_add_window_failure_returns_partial_without_side_effect_contract(tmp_path: Path, monkeypatch) -> None:
@@ -428,6 +472,9 @@ def test_apply_add_window_fails_when_preserved_agent_pane_changes(tmp_path: Path
             pane_id = super().add_window(session_name, window_name)
             if window_name == 'review' and self.mutate_preserved_on_review_create:
                 self.pane_options.pop('%2', None)
+                for record in self.sessions.get(session_name, []):
+                    if '%2' in record['panes']:
+                        record['panes'][record['panes'].index('%2')] = '%99'
                 _seed_agent_pane(self, '%99', project_id='proj-1', window='main', agent='agent2')
             return pane_id
 
@@ -1080,7 +1127,9 @@ bottom_height = 20
     assert result.reflow_errors == {}
     assert result.preserved_before == {'alpha': '%4', 'main': '%1', 'zeta': '%3'}
     assert result.preserved_after == {'alpha': '%4', 'main': '%1', 'zeta': '%3'}
-    assert ('new-window', '-d', '-t', layout.ccbd_tmux_session_name, '-n', 'archive') == backend.tmux_calls[1][:6]
+    assert ('new-window', '-d', '-t', layout.ccbd_tmux_session_name, '-n', 'archive') in {
+        call[:6] for call in backend.tmux_calls
+    }
     assert ('move-pane', '-h', '-s', '%3', '-t', '%6') in backend.tmux_calls
     assert ('kill-pane', '-t', '%6') in backend.tmux_calls
     assert ('move-pane', '-v', '-s', '%4', '-t', '%3') in backend.tmux_calls
@@ -1305,7 +1354,9 @@ bottom_height = 20
     assert result.reflow_errors == {}
     assert result.preserved_before == {'agent1': '%1', 'agent2': '%2'}
     assert result.preserved_after == {'agent1': '%1', 'agent2': '%2'}
-    assert ('new-window', '-d', '-t', layout.ccbd_tmux_session_name, '-n', 'review') == backend.tmux_calls[1][:6]
+    assert ('new-window', '-d', '-t', layout.ccbd_tmux_session_name, '-n', 'review') in {
+        call[:6] for call in backend.tmux_calls
+    }
     assert ('move-pane', '-h', '-s', '%2', '-t', '%4') in backend.tmux_calls
     assert ('kill-pane', '-t', '%4') in backend.tmux_calls
     assert backend.sessions[layout.ccbd_tmux_session_name][0]['panes'] == ['%1']
@@ -1847,6 +1898,7 @@ def _seed_agent_pane(backend: _PatchFakeBackend, pane_id: str, *, project_id: st
         '@ccb_slot': agent,
         '@ccb_window': window,
         '@ccb_managed_by': 'ccbd',
+        '@ccb_namespace_epoch': '3',
     }
 
 
@@ -1858,6 +1910,7 @@ def _seed_sidebar_pane(backend: _PatchFakeBackend, pane_id: str, *, project_id: 
         '@ccb_sidebar_instance': window,
         '@ccb_window': window,
         '@ccb_managed_by': 'ccbd',
+        '@ccb_namespace_epoch': '3',
     }
 
 

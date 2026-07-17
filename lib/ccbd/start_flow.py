@@ -83,11 +83,14 @@ def run_start_flow(
     workspace_window_id: str | None = None,
     workspace_epoch: int | None = None,
     namespace_agent_panes: dict[str, str] | None = None,
+    namespace_cmd_pane: str | None = None,
     namespace_pane_records: dict[str, object] | None = None,
     namespace_active_panes: tuple[str, ...] | None = None,
+    namespace_topology_managed: bool = False,
     fresh_namespace: bool = False,
     fresh_workspace: bool = False,
     clock=utc_now,
+    readiness_recorder=None,
 ) -> StartFlowSummary:
     return run_start_flow_impl(
         project_root=project_root,
@@ -107,11 +110,14 @@ def run_start_flow(
         workspace_window_id=workspace_window_id,
         workspace_epoch=workspace_epoch,
         namespace_agent_panes=namespace_agent_panes,
+        namespace_cmd_pane=namespace_cmd_pane,
         namespace_pane_records=namespace_pane_records,
         namespace_active_panes=namespace_active_panes,
+        namespace_topology_managed=namespace_topology_managed,
         fresh_namespace=fresh_namespace,
         fresh_workspace=fresh_workspace,
         clock=clock,
+        readiness_recorder=readiness_recorder,
         deps=_deps(),
     )
 

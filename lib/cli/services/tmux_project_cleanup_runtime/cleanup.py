@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from runtime_observability import record_startup_operation, record_startup_operations
 
 from .killing import kill_panes
 from .listing import list_project_tmux_panes as list_project_tmux_panes_impl
@@ -64,6 +65,7 @@ def cleanup_project_tmux_orphans_by_socket(
     if None not in active_panes_by_socket:
         socket_names.append(None)
     for socket_name in socket_names:
+        record_startup_operation('orphan_cleanup_socket_scan_count')
         owned = list_project_tmux_panes(
             project_id=project_id,
             socket_name=socket_name,
@@ -86,6 +88,13 @@ def cleanup_project_tmux_orphans_by_socket(
             )
             if orphaned
             else ()
+        )
+        record_startup_operations(
+            {
+                'orphan_cleanup_owned_pane_count': len(owned),
+                'orphan_cleanup_orphan_pane_count': len(orphaned),
+                'orphan_cleanup_killed_pane_count': len(killed),
+            }
         )
         summaries.append(
             ProjectTmuxCleanupSummary(

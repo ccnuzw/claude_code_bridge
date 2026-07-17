@@ -6,6 +6,13 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+from runtime_observability import (
+    in_startup_operation_scope,
+    record_startup_operation,
+    record_startup_operations,
+    startup_operation_collection_active,
+)
+
 
 def _open_directory(path: Path) -> int:
     if not hasattr(os, 'O_DIRECTORY'):
@@ -71,6 +78,9 @@ def ensure_durable_directory(path: Path) -> None:
 
 def atomic_write_text(path: Path, text: str, *, encoding: str = 'utf-8') -> None:
     target = Path(path)
+    collect_metrics = startup_operation_collection_active()
+    if collect_metrics:
+        record_startup_operation('atomic_durable_write_attempt_count')
     ensure_durable_directory(target.parent)
     directory_fd = _open_directory(target.parent)
     _verify_directory_path(directory_fd, target.parent)
@@ -82,12 +92,18 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = 'utf-8') -> None
         _close_directory_after_error(directory_fd)
         raise
     handle_opened = False
+    written_bytes: int | None = None
     try:
         with os.fdopen(fd, 'w', encoding=encoding) as handle:
             handle_opened = True
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
+            if collect_metrics:
+                try:
+                    written_bytes = max(0, int(os.fstat(handle.fileno()).st_size))
+                except Exception:
+                    written_bytes = None
         _verify_directory_path(directory_fd, target.parent)
         os.replace(tmp_name, target.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
         os.fsync(directory_fd)
@@ -106,6 +122,15 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = 'utf-8') -> None
         raise
     else:
         os.close(directory_fd)
+    if collect_metrics:
+        counts = {'atomic_durable_write_count': 1}
+        if written_bytes is not None:
+            counts['atomic_durable_write_byte_count'] = written_bytes
+        if in_startup_operation_scope('provider_prepare'):
+            counts['provider_prepare_atomic_write_count'] = 1
+            if written_bytes is not None:
+                counts['provider_prepare_atomic_write_byte_count'] = written_bytes
+        record_startup_operations(counts)
 
 
 def atomic_write_json(path: Path, payload: Any, *, encoding: str = 'utf-8') -> None:
@@ -114,8 +139,13 @@ def atomic_write_json(path: Path, payload: Any, *, encoding: str = 'utf-8') -> N
 
 def atomic_write_text_if_changed(path: Path, text: str, *, encoding: str = 'utf-8') -> bool:
     target = Path(path)
+    collect_metrics = startup_operation_collection_active()
     try:
         if target.read_text(encoding=encoding) == text:
+            if collect_metrics:
+                record_startup_operation('atomic_durable_write_skip_count')
+                if in_startup_operation_scope('provider_prepare'):
+                    record_startup_operation('provider_prepare_atomic_write_skip_count')
             return False
     except FileNotFoundError:
         pass

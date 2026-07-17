@@ -85,8 +85,11 @@ def _wait_for(path: Path, timeout: float = 10.0) -> None:
             if path.suffix != '.sock':
                 return
             try:
-                CcbdClient(path, timeout_s=1.0).ping('ccbd')
-                return
+                payload = CcbdClient(path, timeout_s=1.0).ping('ccbd')
+                diagnostics = payload.get('diagnostics')
+                stage = diagnostics.get('startup_stage') if isinstance(diagnostics, dict) else None
+                if stage in {None, '', 'mounted'}:
+                    return
             except CcbdClientError as exc:
                 last_error = str(exc)
         time.sleep(0.05)
@@ -500,7 +503,7 @@ def test_socket_server_uses_larger_listen_backlog(tmp_path: Path, monkeypatch) -
             pass
 
     monkeypatch.setattr('ccbd.socket_server_runtime.lifecycle.socket.socket', lambda *args, **kwargs: _FakeSocket())
-    monkeypatch.setattr('ccbd.socket_server_runtime.lifecycle._bound_socket_stat', lambda path: None)
+    monkeypatch.setattr('ccbd.socket_server_runtime.lifecycle._bound_socket_stat', lambda path: (1, 2))
 
     server = CcbdSocketServer(socket_path)
     server.listen()

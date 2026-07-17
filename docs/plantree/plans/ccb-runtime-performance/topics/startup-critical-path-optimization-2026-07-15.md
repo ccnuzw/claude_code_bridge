@@ -49,11 +49,34 @@ low-risk critical-path work:
   writes skip identical content without changing generic `JsonStore.save()`
   semantics
 - startup reports and `doctor` expose stage timings, per-agent duration,
-  provider preparation count/time, and binding reject reason
+  provider preparation count/time, binding reject reason, request-scoped tmux/
+  subprocess counts, atomic durable write/skip counts, and cleanup topology
 
-P0 remains partial because tmux-command, process-snapshot, projection-file/byte,
-and durable-write counters are not yet persisted. P4 bounded launch concurrency
-and P5 foreground-first readiness were intentionally not implemented.
+P0 remains partial because explicit process-snapshot, projection-file/byte, and
+helper-spawn counters are not yet persisted, and absent operations still use a
+sparse map rather than every formal zero field.  A separate source-only harness
+now correlates CPU/RSS/process/I/O resource profiles and cleanup residue to
+native startup run IDs, but that does not make the production startup report a
+global process profiler.  P4 bounded launch concurrency and P5 foreground-first
+readiness were intentionally not implemented.
+
+Later Phase 0 testing exposed and fixed three additional serial correctness
+defects before concurrency: legacy topology materialization could prune the cmd
+root and let fallback placement overwrite sidebar identity; successful warm
+reuse could toggle persisted runtime health from `restored` to `healthy`; and
+identical project namespace state was rewritten.  Steady warm reuse now
+preserves final restored provenance and skips identical namespace/runtime
+content writes.  The current two-Agent smoke still executes `71` tmux backend
+subprocesses per warm start, which remains a measured optimization target rather
+than a correctness defect.
+
+The 2026-07-17 source-only readiness/attribution smoke then measured a
+`363.129 ms` warm wall, of which `94.664%` is now named.  Process bootstrap is
+`243.986 ms`, dominated by `211.349 ms` from `ccb.py` entry through eager
+imports.  Its no-attach T0-T6 shape is generation-correlated and monotonic, but
+the cold T1 is deliberately classified as an observation upper bound rather
+than the exact keeper checkpoint.  This is Phase 0 evidence, not acceptance of
+P4 launch concurrency or P5 foreground-first behavior.
 
 External source-runtime evidence used an isolated 5-window, 10-agent Codex-stub
 project at

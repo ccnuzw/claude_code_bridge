@@ -191,6 +191,7 @@ def _sync_sidebar_widths(
             session_name=current.tmux_session_name,
             topology_plan=topology_plan,
             timeout_s=timeout_s,
+            namespace_epoch=current.namespace_epoch,
         )
     except Exception as exc:
         result.reflow_errors[window_name] = f'sidebar_width_sync_failed: {exc}'

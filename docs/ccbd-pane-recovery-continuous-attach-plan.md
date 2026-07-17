@@ -198,6 +198,17 @@ project .ccb
 - tmux ownership 仍归属本项目 slot
 - provider `start_cmd` 明确可重放
 
+结构与存活门禁：
+
+- topology shape 使用结构归属判断：当前 session、project、role、slot、logical
+  window、`managed_by` 与 `namespace_epoch` 必须全部精确匹配，但允许
+  `pane_dead=1`
+- active pane、binding reuse、focus 与 UI 路径仍要求进程存活
+- 因此 exact-owned dead Agent pane 继续占有原 logical slot，并被分配给本地
+  respawn；它不能触发 whole-session recreate 或改变健康 peer identity
+- 缺失、重复、foreign、wrong-session、wrong-project、wrong-window 与
+  wrong-epoch pane 继续 fail closed
+
 动作：
 
 - `respawn-pane -k -t <pane_id>`
@@ -474,6 +485,10 @@ project .ccb
 
 - `kill-pane agent1` 后，当前 attach 不退出
 - 原 pane target 仍存在时走 `respawn-pane`
+- 原 pane target 为 exact-owned dead pane 时，namespace/workspace epoch 不变，
+  只 relaunch 目标，健康 peer 保持 attached 且 runtime/session/process identity
+  不变
+- 单 Agent 独占 logical window 且 pane dead 时，不得误报 window missing
 - 原 pane target 不存在时走 slot replacement
 - 恢复后 agent 回到原 `slot_key`
 

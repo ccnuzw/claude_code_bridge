@@ -19,23 +19,39 @@ def handle_connection(server, conn) -> str | None:
             return None
         message = json.loads(raw.split(b'\n', 1)[0].decode('utf-8'))
         request = RpcRequest.from_record(message)
-        handler = server._handlers.get(request.op)
-        if handler is None:
-            response = RpcResponse.failure(f'unknown op: {request.op}')
-        else:
-            guard = getattr(server, '_request_guard', None)
-            rejection = guard(request.op) if guard is not None else None
-            if rejection:
-                response = RpcResponse.failure(rejection)
+        # Final lifecycle publication and opening the runtime-bootstrap gate are
+        # one request-dispatch boundary.  Keep the gate through handler start so
+        # shutdown cannot clear bootstrap flags between the decision and an
+        # authority-mutating handler.  The request worker is already serial, so
+        # this does not reduce request concurrency; handlers follow the same
+        # gate -> authority-lock order as final mounted publication.
+        with server._bootstrap_gate_lock:
+            if server._stop_event.is_set() and request.op != 'shutdown':
+                response = RpcResponse.failure('ccbd request serving is stopping')
             else:
-                started = monotonic()
-                try:
-                    payload = handler(request.request)
-                finally:
-                    _record_handler_latency(server, request.op, max(0.0, monotonic() - started))
-                if isinstance(payload, tuple) and len(payload) == 2:
-                    payload, after_response_action = payload
-                response = RpcResponse.success(payload)
+                bootstrap_restricted = bool(
+                    getattr(server, '_bootstrap_probe_active', False)
+                    or getattr(server, '_runtime_bootstrap_active', False)
+                )
+                handler = server._handlers.get(request.op)
+                if bootstrap_restricted and request.op != 'ping':
+                    response = RpcResponse.failure('ccbd bootstrap accepts ping only')
+                elif handler is None:
+                    response = RpcResponse.failure(f'unknown op: {request.op}')
+                else:
+                    guard = getattr(server, '_request_guard', None)
+                    rejection = guard(request.op) if guard is not None else None
+                    if rejection:
+                        response = RpcResponse.failure(rejection)
+                    else:
+                        started = monotonic()
+                        try:
+                            payload = handler(request.request)
+                        finally:
+                            _record_handler_latency(server, request.op, max(0.0, monotonic() - started))
+                        if isinstance(payload, tuple) and len(payload) == 2:
+                            payload, after_response_action = payload
+                        response = RpcResponse.success(payload)
     except Exception as exc:
         response = RpcResponse.failure(str(exc))
     try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ccbd.services.runtime_recovery_policy import PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH
 from ccbd.system import parse_utc_timestamp
 
 ACTIVITY_ACTIVE = 'active'
@@ -19,7 +20,16 @@ ACTIVITY_PRESENTATION = {
 }
 
 _RECOVERY_STATES = frozenset({'starting', 'recovering', 'reflowing', 'mounting'})
-_FAULT_HEALTH = frozenset({'faulted', 'failed', 'error', 'crashed', 'orphaned'})
+_FAULT_HEALTH = frozenset(
+    {
+        'faulted',
+        'failed',
+        'error',
+        'crashed',
+        'orphaned',
+        PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH,
+    }
+)
 _PROVIDER_PROMPT_MARKERS = (
     'do you trust the contents of this directory?',
     'press enter to continue',
@@ -154,6 +164,8 @@ def resolve_agent_activity(
 
     if reconcile_state == 'failed':
         return AgentActivity(ACTIVITY_FAILED, 'reconcile', 'reconcile_failed')
+    if runtime_health == PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH:
+        return AgentActivity(ACTIVITY_FAILED, 'runtime_health', 'provider_auth_revoked')
     if runtime_state == 'failed' or runtime_health in _FAULT_HEALTH:
         return AgentActivity(ACTIVITY_FAILED, 'runtime_health', 'runtime_fault')
     if _pane_missing(facts) and reconcile_state not in _RECOVERY_STATES:

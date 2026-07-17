@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Mapping
 
 from ccbd.api_models import MessageEnvelope
 
@@ -88,6 +88,9 @@ def _payload_start(
     restore: bool = True,
     auto_permission: bool = True,
     terminal_size: tuple[int, int] | None = None,
+    startup_run_id: str | None = None,
+    daemon_started: bool | None = None,
+    readiness_trace: Mapping[str, object] | None = None,
 ) -> dict:
     payload = {
         'agent_names': list(agent_names),
@@ -98,6 +101,12 @@ def _payload_start(
         width, height = terminal_size
         payload['terminal_width'] = int(width)
         payload['terminal_height'] = int(height)
+    if startup_run_id is not None:
+        payload['startup_run_id'] = str(startup_run_id)
+    if daemon_started is not None:
+        payload['daemon_started'] = bool(daemon_started)
+    if readiness_trace is not None:
+        payload['readiness_trace'] = dict(readiness_trace)
     return payload
 
 

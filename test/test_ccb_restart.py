@@ -80,8 +80,12 @@ def _wait_for_socket(path: Path, timeout: float = 3.0) -> None:
     while time.time() < deadline:
         if path.exists():
             try:
-                CcbdClient(path, timeout_s=1.0).ping('ccbd')
-                return
+                payload = CcbdClient(path, timeout_s=1.0).ping('ccbd')
+                diagnostics = payload.get('diagnostics')
+                stage = diagnostics.get('startup_stage') if isinstance(diagnostics, dict) else None
+                if stage in {None, '', 'mounted'}:
+                    return
+                last_error = f'startup_stage={stage}'
             except CcbdClientError as exc:
                 last_error = str(exc)
         time.sleep(0.05)

@@ -1,7 +1,21 @@
 from __future__ import annotations
 
+from ccbd.services.ownership import OwnershipGuard
 
-def mark_inspected_lease_unmounted(manager, inspection):
+
+def mark_inspected_lease_unmounted(manager, inspection, *, ownership_guard=None):
+    guard = ownership_guard
+    if guard is None:
+        layout = getattr(manager, '_layout', None)
+        if layout is not None:
+            guard = OwnershipGuard(layout, manager)
+    if guard is not None:
+        with guard.startup_lock():
+            return _mark_inspected_lease_unmounted_locked(manager, inspection)
+    return _mark_inspected_lease_unmounted_locked(manager, inspection)
+
+
+def _mark_inspected_lease_unmounted_locked(manager, inspection):
     lease = getattr(inspection, 'lease', None)
     expected_pid = _expected_pid(lease)
     expected_daemon_instance_id = _expected_daemon_instance_id(lease)

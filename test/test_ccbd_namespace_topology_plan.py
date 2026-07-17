@@ -51,6 +51,22 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout(monkeypatc
     )
 
 
+def test_namespace_topology_plan_retains_legacy_cmd_as_a_distinct_topology_leaf() -> None:
+    config = ProjectConfig(
+        version=2,
+        default_agents=('agent1',),
+        agents={'agent1': _spec('agent1', 'codex')},
+        cmd_enabled=True,
+        layout_spec='cmd; agent1:codex',
+    )
+
+    plan = build_namespace_topology_plan(config)
+
+    assert plan.windows[0].user_layout == 'cmd; agent1:codex'
+    assert plan.windows[0].agent_names == ('agent1',)
+    assert plan.windows[0].realized_layout == 'sidebar; (cmd; agent1:codex)'
+
+
 def test_namespace_topology_plan_projects_right_sidebar_after_user_layout() -> None:
     config = ProjectConfig(
         version=2,

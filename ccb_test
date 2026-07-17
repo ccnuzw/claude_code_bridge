@@ -7,6 +7,10 @@ pointing the user's installed `ccb` or the source checkout itself at live state.
 
 from __future__ import annotations
 
+import time
+
+_CCB_TEST_PROCESS_ENTRY_NS = time.perf_counter_ns()
+
 import os
 import sys
 from pathlib import Path
@@ -14,6 +18,13 @@ from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 SOURCE_CCB = SCRIPT_ROOT / "ccb.py"
+_STARTUP_TRACE_ENV_KEYS = (
+    "CCB_STARTUP_TIMING_TRACE",
+    "CCB_STARTUP_TRACE_ID",
+    "CCB_STARTUP_TRACE_SPAWN_NS",
+    "CCB_STARTUP_TRACE_WRAPPER_ENTRY_NS",
+    "CCB_STARTUP_TRACE_WRAPPER_PRE_EXEC_NS",
+)
 
 
 def _is_diagnose(argv: list[str]) -> bool:
@@ -186,9 +197,41 @@ def main() -> int:
     env["CCB_SOURCE_ALLOWED_ROOTS"] = os.pathsep.join(str(root) for root in roots)
     env["CCB_TEST_ENTRYPOINT"] = "1"
     env.setdefault("CCB_SKIP_STARTUP_UPDATE_CHECK", "1")
+    if _valid_startup_trace_envelope(env):
+        env["CCB_STARTUP_TRACE_WRAPPER_ENTRY_NS"] = str(_CCB_TEST_PROCESS_ENTRY_NS)
+        env["CCB_STARTUP_TRACE_WRAPPER_PRE_EXEC_NS"] = str(time.perf_counter_ns())
+    else:
+        for key in _STARTUP_TRACE_ENV_KEYS:
+            env.pop(key, None)
 
     os.execvpe(sys.executable, [sys.executable, str(SOURCE_CCB), *argv], env)
     raise AssertionError("unreachable")
+
+
+def _valid_startup_trace_envelope(env: dict[str, str]) -> bool:
+    if env.get("CCB_STARTUP_TIMING_TRACE") != "1":
+        return False
+    trace_id = str(env.get("CCB_STARTUP_TRACE_ID") or "")
+    suffix = trace_id.removeprefix("trace_")
+    if not (
+        len(trace_id) == 38
+        and len(suffix) == 32
+        and all(character in "0123456789abcdef" for character in suffix)
+    ):
+        return False
+    try:
+        spawn_ns = int(str(env.get("CCB_STARTUP_TRACE_SPAWN_NS") or ""))
+    except ValueError:
+        return False
+    if spawn_ns <= 0 or spawn_ns > _CCB_TEST_PROCESS_ENTRY_NS:
+        return False
+    return not any(
+        env.get(key)
+        for key in (
+            "CCB_STARTUP_TRACE_WRAPPER_ENTRY_NS",
+            "CCB_STARTUP_TRACE_WRAPPER_PRE_EXEC_NS",
+        )
+    )
 
 
 if __name__ == "__main__":

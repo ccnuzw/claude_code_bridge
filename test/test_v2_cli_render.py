@@ -1152,6 +1152,13 @@ def test_render_start_and_kill_include_tmux_cleanup_summary() -> None:
         socket_path='/tmp/repo/.ccb/ccbd/ccbd.sock',
         started=('agent1', 'agent2'),
         cleanup_summaries=cleanup,
+        startup_run_id='start_' + 'a' * 32,
+        cli_timings_ms={'start_rpc': 12.5, 'cli_pre_rpc': 1.25},
+        process_bootstrap_trace_id='trace_' + 'b' * 32,
+        process_bootstrap_timings_ms={
+            'popen_begin_to_ccb_test_entry': 2.5,
+            'ccb_test_entry_to_pre_exec': 1.0,
+        },
     )
     kill = SimpleNamespace(
         project_id='proj-1',
@@ -1165,6 +1172,13 @@ def test_render_start_and_kill_include_tmux_cleanup_summary() -> None:
     kill_lines = render_kill(kill)
 
     assert 'agents: agent1, agent2' in start_lines
+    assert 'startup_run_id: start_' + 'a' * 32 in start_lines
+    assert 'startup_cli_timings_ms: {"cli_pre_rpc":1.25,"start_rpc":12.5}' in start_lines
+    assert 'startup_process_trace_id: trace_' + 'b' * 32 in start_lines
+    assert (
+        'startup_process_bootstrap_timings_ms: '
+        '{"ccb_test_entry_to_pre_exec":1.0,"popen_begin_to_ccb_test_entry":2.5}'
+    ) in start_lines
     assert 'tmux_cleanup: socket=<default> owned=%1,%2 active=%1 orphaned=%2 killed=%2' in start_lines
     assert 'kill_status: ok' in kill_lines
     assert 'tmux_cleanup: socket=<default> owned=%1,%2 active=%1 orphaned=%2 killed=%2' in kill_lines

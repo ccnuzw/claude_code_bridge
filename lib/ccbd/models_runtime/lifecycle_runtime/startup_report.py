@@ -23,6 +23,7 @@ class CcbdStartupReport:
     auto_permission: bool
     daemon_generation: int | None = None
     daemon_started: bool | None = None
+    startup_run_id: str | None = None
     config_signature: str | None = None
     inspection: dict[str, Any] | None = None
     socket_placement: dict[str, Any] | None = None
@@ -32,6 +33,8 @@ class CcbdStartupReport:
     agent_results: tuple[CcbdStartupAgentResult, ...] = ()
     failure_reason: str | None = None
     timings_ms: dict[str, float] | None = None
+    operation_counts: dict[str, int] | None = None
+    readiness_timeline: dict[str, Any] | None = None
     api_version: int = API_VERSION
 
     def __post_init__(self) -> None:
@@ -56,6 +59,7 @@ class CcbdStartupReport:
             'auto_permission': self.auto_permission,
             'daemon_generation': self.daemon_generation,
             'daemon_started': self.daemon_started,
+            'startup_run_id': self.startup_run_id,
             'config_signature': self.config_signature,
             'inspection': dict(self.inspection or {}),
             'socket_placement': dict(self.socket_placement or {}),
@@ -65,6 +69,8 @@ class CcbdStartupReport:
             'agent_results': [item.to_record() for item in self.agent_results],
             'failure_reason': self.failure_reason,
             'timings_ms': dict(self.timings_ms or {}),
+            'operation_counts': _clean_operation_counts(self.operation_counts),
+            'readiness_timeline': dict(self.readiness_timeline or {}),
         }
 
     def summary_fields(self) -> dict[str, Any]:
@@ -75,15 +81,23 @@ class CcbdStartupReport:
             'startup_last_status': self.status,
             'startup_last_generation': self.daemon_generation,
             'startup_last_daemon_started': self.daemon_started,
+            'startup_last_run_id': self.startup_run_id,
             'startup_last_requested_agents': list(self.requested_agents),
             'startup_last_desired_agents': list(self.desired_agents),
             'startup_last_actions': list(self.actions_taken),
             'startup_last_cleanup_killed': total_killed,
             'startup_last_failure_reason': self.failure_reason,
             'startup_last_timings_ms': dict(self.timings_ms or {}),
+            'startup_last_operation_counts': _clean_operation_counts(self.operation_counts),
+            'startup_last_readiness_timeline': dict(self.readiness_timeline or {}),
             'startup_last_provider_prepare_count': sum(
                 item.provider_prepare_count for item in self.agent_results
             ),
+            'startup_last_agent_timings_ms': {
+                item.agent_name: dict(item.timings_ms or {})
+                for item in self.agent_results
+                if item.timings_ms
+            },
             'startup_last_agent_results_text': 'none'
             if not self.agent_results
             else '; '.join(item.summary_token() for item in self.agent_results),
@@ -103,6 +117,7 @@ class CcbdStartupReport:
             auto_permission=bool(record.get('auto_permission')),
             daemon_generation=coerce_int(record.get('daemon_generation')),
             daemon_started=(bool(record['daemon_started']) if record.get('daemon_started') is not None else None),
+            startup_run_id=clean_text(record.get('startup_run_id')),
             config_signature=clean_text(record.get('config_signature')),
             inspection=dict(record.get('inspection') or {}),
             socket_placement=dict(record.get('socket_placement') or {}),
@@ -120,6 +135,12 @@ class CcbdStartupReport:
             ),
             failure_reason=clean_text(record.get('failure_reason')),
             timings_ms=_clean_timings(record.get('timings_ms')),
+            operation_counts=_clean_operation_counts(record.get('operation_counts')),
+            readiness_timeline=(
+                dict(record.get('readiness_timeline') or {})
+                if isinstance(record.get('readiness_timeline'), dict)
+                else {}
+            ),
             api_version=int(record.get('api_version', API_VERSION)),
         )
 
@@ -144,6 +165,30 @@ def _clean_timings(value: object) -> dict[str, float]:
             continue
         timings[str(key)] = max(0.0, parsed)
     return timings
+
+
+def _clean_operation_counts(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, raw_value in value.items():
+        if isinstance(raw_value, bool):
+            continue
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        try:
+            if float(raw_value) != float(parsed):
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if parsed < 0:
+            continue
+        name = str(key or '').strip()
+        if name:
+            counts[name] = parsed
+    return counts
 
 
 __all__ = ['CcbdStartupReport']

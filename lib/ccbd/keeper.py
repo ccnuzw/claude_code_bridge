@@ -83,91 +83,169 @@ class ProjectKeeper(KeeperAppStateMixin):
 
 
 def _spawn_daemon(app: ProjectKeeper, *, state: KeeperState, start_timeout_s: float) -> KeeperState:
-    now = app.clock()
-    inspection = app._ownership_guard.inspect()
-    lifecycle = app._lifecycle_store.load()
-    if lifecycle is None:
-        lifecycle = lifecycle_from_inspection(
-            project_id=compute_project_id(app.project_root),
-            inspection=inspection,
-            occurred_at=now,
-            keeper_pid=app.pid,
-        )
+    attempt_at = app.clock()
+    starting = None
+    startup_accepted_perf_counter_ns = None
     try:
         config = load_project_config(app.project_root).config
         config_signature = str(project_config_identity_payload(config)['config_signature'])
-        startup_id = uuid.uuid4().hex
-        deadline_at = _timestamp_plus_seconds(now, start_timeout_s)
-        starting = lifecycle.with_phase(
-            'starting',
-            occurred_at=now,
-            desired_state='running',
-            generation=max(int(lifecycle.generation), int(getattr(getattr(inspection, 'lease', None), 'generation', 0) or 0)) + 1,
-            startup_id=startup_id,
-            startup_stage='spawn_requested',
-            last_progress_at=now,
-            startup_deadline_at=deadline_at,
-            keeper_pid=app.pid,
-            owner_pid=None,
-            owner_daemon_instance_id=None,
-            config_signature=config_signature,
-            socket_path=str(app.paths.ccbd_socket_path),
-            socket_inode=None,
-            last_failure_reason=None,
-            shutdown_intent=None,
-        )
-        app._lifecycle_store.save(starting)
+        with app._ownership_guard.startup_lock():
+            now = app.clock()
+            inspection = app._ownership_guard.inspect()
+            lifecycle = app._lifecycle_store.load()
+            if lifecycle is None:
+                lifecycle = lifecycle_from_inspection(
+                    project_id=compute_project_id(app.project_root),
+                    inspection=inspection,
+                    occurred_at=now,
+                    keeper_pid=app.pid,
+                )
+            if lifecycle.desired_state != 'running' or not inspection.takeover_allowed:
+                return state
+            startup_id = uuid.uuid4().hex
+            deadline_at = _timestamp_plus_seconds(now, start_timeout_s)
+            starting = lifecycle.with_phase(
+                'starting',
+                occurred_at=now,
+                desired_state='running',
+                generation=max(
+                    int(lifecycle.generation),
+                    int(getattr(getattr(inspection, 'lease', None), 'generation', 0) or 0),
+                )
+                + 1,
+                startup_id=startup_id,
+                startup_stage='spawn_requested',
+                last_progress_at=now,
+                startup_deadline_at=deadline_at,
+                keeper_pid=app.pid,
+                owner_pid=None,
+                owner_daemon_instance_id=None,
+                config_signature=config_signature,
+                socket_path=str(app.paths.ccbd_socket_path),
+                socket_inode=None,
+                last_failure_reason=None,
+                shutdown_intent=None,
+            )
+            app._lifecycle_store.save(starting)
+            startup_accepted_perf_counter_ns = time.perf_counter_ns()
         app._spawn_ccbd_process(
             project_root=app.project_root,
             socket_path=app.paths.ccbd_socket_path,
             ccbd_dir=app.paths.ccbd_dir,
             timeout_s=start_timeout_s,
             keeper_pid=app.pid,
+            expected_startup_id=starting.startup_id,
+            expected_generation=starting.generation,
+            keeper_startup_accepted_perf_counter_ns=startup_accepted_perf_counter_ns,
         )
+        _record_daemon_start_success(
+            app,
+            starting=starting,
+            config_signature=config_signature,
+        )
+        return state.with_success(occurred_at=attempt_at)
+    except Exception as exc:
+        reason = exception_summary(exc)
+        suppression_reason = keeper_start_failure_suppression_reason(state, exc)
+        failure_reason = suppression_reason or reason
+        desired_state = 'stopped' if suppression_reason is not None else 'running'
+        try:
+            _record_daemon_start_failure(
+                app,
+                starting=starting,
+                desired_state=desired_state,
+                failure_reason=failure_reason,
+            )
+        except Exception:
+            pass
+        failed_state = state.with_failure(occurred_at=attempt_at, reason=failure_reason)
+        if suppression_reason is not None:
+            failed_state = failed_state.with_state('failed', occurred_at=attempt_at)
+        return failed_state
+
+
+def _record_daemon_start_success(
+    app: ProjectKeeper,
+    *,
+    starting,
+    config_signature: str,
+) -> None:
+    with app._ownership_guard.startup_lock():
+        current = app._lifecycle_store.load()
+        if not _same_startup_transaction(current, starting):
+            return
+        if current.desired_state != 'running' or current.phase == 'mounted':
+            return
+        if current.phase != 'starting':
+            return
         lease = app._mount_manager.load_state()
+        lease_generation = int(getattr(lease, 'generation', 0) or 0)
+        if lease_generation not in {0, int(starting.generation)}:
+            return
+        occurred_at = app.clock()
         app._lifecycle_store.save(
-            starting.with_phase(
+            current.with_phase(
                 'mounted',
-                occurred_at=app.clock(),
-                generation=int(getattr(lease, 'generation', 0) or starting.generation),
+                occurred_at=occurred_at,
+                generation=lease_generation or int(starting.generation),
                 owner_pid=int(getattr(lease, 'ccbd_pid', 0) or 0) or None,
                 owner_daemon_instance_id=str(getattr(lease, 'daemon_instance_id', '') or '').strip() or None,
                 config_signature=str(getattr(lease, 'config_signature', '') or '').strip() or config_signature,
                 socket_path=str(getattr(lease, 'socket_path', '') or app.paths.ccbd_socket_path),
                 socket_inode=current_socket_inode(getattr(lease, 'socket_path', app.paths.ccbd_socket_path)),
                 startup_stage='mounted',
-                last_progress_at=app.clock(),
+                last_progress_at=occurred_at,
                 startup_deadline_at=None,
                 last_failure_reason=None,
                 shutdown_intent=None,
             )
         )
-        return state.with_success(occurred_at=now)
-    except Exception as exc:
-        reason = exception_summary(exc)
-        suppression_reason = keeper_start_failure_suppression_reason(state, exc)
-        failure_reason = suppression_reason or reason
-        desired_state = 'stopped' if suppression_reason is not None else 'running'
-        failure_base = starting if 'starting' in locals() else lifecycle
-        if failure_base is not None:
-            app._lifecycle_store.save(
-                failure_base.with_phase(
-                    'failed',
-                    occurred_at=app.clock(),
-                    desired_state=desired_state,
-                    owner_pid=None,
-                    owner_daemon_instance_id=None,
-                    socket_inode=None,
-                    startup_stage='spawn_failed',
-                    last_progress_at=app.clock(),
-                    startup_deadline_at=None,
-                    last_failure_reason=failure_reason,
-                )
+
+
+def _record_daemon_start_failure(
+    app: ProjectKeeper,
+    *,
+    starting,
+    desired_state: str,
+    failure_reason: str,
+) -> None:
+    with app._ownership_guard.startup_lock():
+        current = app._lifecycle_store.load()
+        if current is None:
+            return
+        if starting is None:
+            if current.desired_state != 'running' or current.phase not in {'unmounted', 'failed'}:
+                return
+        elif not _same_startup_transaction(current, starting):
+            return
+        elif current.desired_state != 'running' or current.phase != 'starting':
+            return
+        occurred_at = app.clock()
+        app._lifecycle_store.save(
+            current.with_phase(
+                'failed',
+                occurred_at=occurred_at,
+                desired_state=desired_state,
+                owner_pid=None,
+                owner_daemon_instance_id=None,
+                socket_inode=None,
+                startup_stage='spawn_failed',
+                last_progress_at=occurred_at,
+                startup_deadline_at=None,
+                last_failure_reason=failure_reason,
             )
-        failed_state = state.with_failure(occurred_at=now, reason=failure_reason)
-        if suppression_reason is not None:
-            failed_state = failed_state.with_state('failed', occurred_at=now)
-        return failed_state
+        )
+
+
+def _same_startup_transaction(current, expected) -> bool:
+    if current is None or expected is None:
+        return False
+    return (
+        current.project_id == expected.project_id
+        and int(current.generation) == int(expected.generation)
+        and str(current.startup_id or '') == str(expected.startup_id or '')
+        and bool(current.startup_id)
+    )
 
 
 def _project_definition_missing(app: ProjectKeeper) -> bool:

@@ -4,6 +4,7 @@ from pathlib import Path
 import queue
 import threading
 
+from .bootstrap_probe import bootstrap_readiness_probe
 from .lifecycle import listen_server, shutdown_server
 from .loop import serve_forever as serve_forever_impl, stop_maintenance_worker, stop_worker
 from .protocol import handle_connection
@@ -40,6 +41,10 @@ class CcbdSocketServer:
         self._worker_thread: threading.Thread | None = None
         self._maintenance_thread: threading.Thread | None = None
         self._worker_error: BaseException | None = None
+        self._worker_error_lock = threading.Lock()
+        self._bootstrap_gate_lock = threading.RLock()
+        self._bootstrap_probe_active = False
+        self._runtime_bootstrap_active = False
         self._bound_socket_stat: tuple[int, int] | None = None
         self._maintenance_state_lock = threading.Lock()
         self._after_response_actions: list[callable] = []
@@ -62,8 +67,65 @@ class CcbdSocketServer:
     def listen(self) -> None:
         listen_server(self)
 
-    def serve_forever(self, *, poll_interval: float = 0.2, on_tick=None) -> None:
-        serve_forever_impl(self, poll_interval=poll_interval, on_tick=on_tick)
+    def serve_forever(
+        self,
+        *,
+        poll_interval: float = 0.2,
+        on_tick=None,
+        on_serving=None,
+    ) -> None:
+        serve_forever_impl(
+            self,
+            poll_interval=poll_interval,
+            on_tick=on_tick,
+            on_serving=on_serving,
+        )
+
+    def bootstrap_readiness_probe(self, *, timeout_s: float):
+        return bootstrap_readiness_probe(self, timeout_s=timeout_s)
+
+    def begin_runtime_bootstrap(self) -> None:
+        with self._bootstrap_gate_lock:
+            if self._server is None:
+                raise RuntimeError('ccbd runtime bootstrap requires a listening socket')
+            if self._stop_event.is_set():
+                raise RuntimeError('ccbd runtime bootstrap cannot begin while stopping')
+            if self._bootstrap_probe_active or self._runtime_bootstrap_active:
+                raise RuntimeError('ccbd runtime bootstrap is already active')
+            self._runtime_bootstrap_active = True
+
+    def finish_runtime_bootstrap(self, publish_ready) -> None:
+        if not callable(publish_ready):
+            raise TypeError('ccbd runtime bootstrap completion requires a publication callback')
+        with self._bootstrap_gate_lock:
+            try:
+                self._assert_runtime_bootstrap_can_finish_locked()
+                publish_ready()
+                self._assert_runtime_bootstrap_can_finish_locked()
+            except BaseException:
+                # Once final publication fails, even ping must fail closed.  In
+                # particular, an atomic replace followed by directory-fsync
+                # failure can leave a mounted record visible on disk; no RPC
+                # may treat that record as a successfully opened control plane.
+                self._stop_event.set()
+                raise
+            self._runtime_bootstrap_active = False
+
+    def _assert_runtime_bootstrap_can_finish_locked(self) -> None:
+        if not self._runtime_bootstrap_active:
+            raise RuntimeError('ccbd runtime bootstrap is not active')
+        if self._bootstrap_probe_active:
+            raise RuntimeError('ccbd bootstrap self-probe is still active')
+        if self._server is None:
+            raise RuntimeError('ccbd listening socket is unavailable')
+        if self._stop_event.is_set():
+            raise RuntimeError('ccbd request serving stopped during runtime bootstrap')
+        worker_error = self._peek_worker_error()
+        if worker_error is not None:
+            raise RuntimeError(f'ccbd request serving failed during runtime bootstrap: {worker_error}')
+        worker = self._worker_thread
+        if worker is None or not worker.is_alive():
+            raise RuntimeError('ccbd request worker is not running during runtime bootstrap')
 
     def request_shutdown(self) -> None:
         shutdown_server(self)
@@ -134,6 +196,25 @@ class CcbdSocketServer:
 
     def _handle_connection(self, conn) -> str | None:
         return handle_connection(self, conn)
+
+    def _reset_worker_error(self) -> None:
+        with self._worker_error_lock:
+            self._worker_error = None
+
+    def _record_worker_error(self, error: BaseException) -> None:
+        with self._worker_error_lock:
+            if self._worker_error is None:
+                self._worker_error = error
+
+    def _peek_worker_error(self) -> BaseException | None:
+        with self._worker_error_lock:
+            return self._worker_error
+
+    def _take_worker_error(self) -> BaseException | None:
+        with self._worker_error_lock:
+            error = self._worker_error
+            self._worker_error = None
+            return error
 
 
 __all__ = ['CcbdSocketServer']

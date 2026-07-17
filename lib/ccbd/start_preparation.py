@@ -8,9 +8,11 @@ import time
 from agents.policy import resolve_agent_launch_policy
 from agents.store import AgentRestoreStore, AgentSpecStore
 from cli.services.provider_hooks import prepare_provider_workspace, provider_workspace_path_for_prepare
+from cli.services.runtime_launch import effective_start_command
 from cli.services.runtime_launch_runtime import runtime_launcher
 from provider_backends.codex.session_runtime.live_identity import process_parent_snapshot
 from provider_profiles import validate_provider_runtime_home_uniqueness
+from runtime_observability import record_startup_operation, startup_operation_scope
 from workspace.binding import WorkspaceBindingStore
 from workspace.materializer import WorkspaceMaterializer
 from workspace.planner import WorkspacePlanner
@@ -29,6 +31,7 @@ class PreparedStartAgent:
     provider_prepared: bool = False
     provider_prepare_ms: float = 0.0
     binding_reject_reason: str | None = None
+    effective_command: object | None = None
 
 
 def prepare_start_agents(
@@ -154,29 +157,34 @@ def _prepare_provider_launch_set(prepared, *, paths, context) -> tuple[PreparedS
         if item.binding is not None:
             finalized.append(item)
             continue
+        launch_command = effective_start_command(context.command, item.spec)
         runtime_dir = paths.agent_provider_runtime_dir(item.agent_name, item.spec.provider)
         provider_workspace_path = provider_workspace_path_for_prepare(
-            command=context.command,
+            command=launch_command,
             spec=item.spec,
             plan=item.plan,
             runtime_dir=runtime_dir,
             launcher=runtime_launcher(item.spec.provider),
         )
         started_ns = time.monotonic_ns()
-        prepare_provider_workspace(
-            layout=paths,
-            spec=item.spec,
-            workspace_path=provider_workspace_path,
-            completion_dir=runtime_dir / 'completion',
-            agent_name=item.agent_name,
-            refresh_profile=True,
-            auto_permission=context.command.auto_permission,
-        )
+        record_startup_operation('provider_prepare_attempt_count')
+        with startup_operation_scope('provider_prepare'):
+            prepare_provider_workspace(
+                layout=paths,
+                spec=item.spec,
+                workspace_path=provider_workspace_path,
+                completion_dir=runtime_dir / 'completion',
+                agent_name=item.agent_name,
+                refresh_profile=True,
+                auto_permission=launch_command.auto_permission,
+            )
+        record_startup_operation('provider_prepare_count')
         finalized.append(
             replace(
                 item,
                 provider_prepared=True,
                 provider_prepare_ms=(time.monotonic_ns() - started_ns) / 1_000_000,
+                effective_command=launch_command,
             )
         )
     return tuple(finalized)

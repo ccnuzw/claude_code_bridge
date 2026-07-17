@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +15,7 @@ from ccbd.services.project_namespace_state import (
 )
 from storage.paths import PathLayout
 from agents.config_loader import load_project_config
+from agents.models import SidebarSpec
 
 
 def _clipboard_bind_call(key: str) -> tuple[list[str], bool]:
@@ -70,11 +71,16 @@ def test_project_namespace_state_store_round_trip(tmp_path: Path) -> None:
 
     store = ProjectNamespaceStateStore(layout)
     store.save(state)
+    first_stat = layout.ccbd_state_path.stat()
+    store.save(state)
+    second_stat = layout.ccbd_state_path.stat()
     loaded = store.load()
 
     assert loaded == state
     assert loaded is not None
     assert loaded.summary_fields()['namespace_tmux_socket_path'] == str(layout.ccbd_tmux_socket_path)
+    assert second_stat.st_ino == first_stat.st_ino
+    assert second_stat.st_mtime_ns == first_stat.st_mtime_ns
 
 
 def test_path_layout_normalizes_tmux_session_name_for_tmux_targets(tmp_path: Path) -> None:
@@ -219,16 +225,33 @@ class _FakeTmuxBackend:
         active = self.active_windows.get(session_name) == record['name'] and record['panes'][0] == pane_id
         values = {
             'session_name': session_name,
+            'window_id': str(record['id']),
             'window_name': str(record['name']),
             'window_width': str(int(record.get('width', 160) or 160)),
             'pane_id': pane_id,
+            'pane_dead': '0',
+            'pane_title': str(self.pane_titles.get(pane_id, '') or ''),
             'pane_width': str(int(self.pane_widths.get(pane_id, record.get('width', 160)) or 160)),
             'pane_active': '1' if active else '0',
         }
+        for option in (
+            '@ccb_role',
+            '@ccb_slot',
+            '@ccb_window',
+            '@ccb_sidebar_instance',
+            '@ccb_sidebar_helper_id',
+            '@ccb_project_id',
+            '@ccb_managed_by',
+            '@ccb_namespace_epoch',
+            '@ccb_agent',
+            '@ccb_label_style',
+            '@ccb_border_style',
+            '@ccb_active_border_style',
+            '@ccb_session_id',
+        ):
+            values[option] = str(options.get(option, '') or '')
         rendered = fmt
         for key, value in values.items():
-            rendered = rendered.replace(f'#{{{key}}}', value)
-        for key, value in options.items():
             rendered = rendered.replace(f'#{{{key}}}', value)
         return rendered
 
@@ -507,6 +530,78 @@ bottom_height = 20
     ]['pane-border-status'] == 'top'
     assert 'pane-border-format' in backend.window_options[f'{layout.ccbd_tmux_session_name}:main']
     assert 'pane-border-format' in backend.window_options[f'{layout.ccbd_tmux_session_name}:review']
+
+
+def test_legacy_cmd_and_sidebar_materialize_as_distinct_stable_panes(tmp_path: Path) -> None:
+    for position in ('left', 'right'):
+        project_root = tmp_path / f'repo-legacy-cmd-sidebar-{position}'
+        (project_root / '.ccb').mkdir(parents=True)
+        (project_root / '.ccb' / 'ccb.config').write_text(
+            f'''version = 2
+default_agents = ["agent1", "agent2"]
+cmd_enabled = true
+layout = "cmd; agent1, agent2"
+
+[agents.agent1]
+provider = "codex"
+target = "."
+workspace_mode = "inplace"
+restore = "auto"
+permission = "manual"
+
+[agents.agent2]
+provider = "codex"
+target = "."
+workspace_mode = "inplace"
+restore = "auto"
+permission = "manual"
+
+''',
+            encoding='utf-8',
+        )
+        config = load_project_config(project_root).config
+        if position == 'right':
+            config = replace(config, sidebar=SidebarSpec(position='right'))
+        layout = PathLayout(project_root)
+        backend = _FakeTmuxBackend()
+        controller = ProjectNamespaceController(
+            layout,
+            f'proj-legacy-{position}',
+            clock=lambda: '2026-07-16T12:00:00Z',
+            backend_factory=lambda socket_path=None: backend,
+        )
+        topology = build_namespace_topology_plan(
+            config,
+            ccbd_socket_path=str(layout.ccbd_socket_path),
+            project_root=str(project_root),
+        )
+
+        first = controller.ensure(topology_plan=topology)
+        roles: dict[str, list[str]] = {}
+        for pane_id, options in backend.pane_options.items():
+            roles.setdefault(options.get('@ccb_role', ''), []).append(pane_id)
+
+        assert len(roles['sidebar']) == 1
+        assert len(roles['cmd']) == 1
+        assert len(roles['agent']) == 2
+        assert len({*roles['sidebar'], *roles['cmd'], *roles['agent']}) == 4
+        assert roles['sidebar'][0] != roles['cmd'][0]
+        assert controller._last_materialized_cmd_pane == roles['cmd'][0]
+        assert backend.pane_options[roles['cmd'][0]]['@ccb_slot'] == 'cmd'
+        assert backend.pane_options[roles['cmd'][0]]['@ccb_window'] == 'main'
+        assert backend.pane_options[roles['sidebar'][0]]['@ccb_slot'] == 'sidebar:main'
+
+        second = controller.ensure(topology_plan=topology)
+
+        assert first.namespace_epoch == second.namespace_epoch == 1
+        assert second.created_this_call is False
+        assert controller._last_materialized_cmd_pane == roles['cmd'][0]
+        created_events = [
+            event
+            for event in ProjectNamespaceEventStore(layout).read_all()
+            if event.event_kind == 'namespace_created'
+        ]
+        assert len(created_events) == 1
 
 
 def test_project_namespace_controller_materializes_right_sidebar(tmp_path: Path) -> None:

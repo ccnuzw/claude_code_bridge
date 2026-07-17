@@ -151,7 +151,7 @@ pub struct AgentView {
     pub activity_color: Option<String>,
     #[serde(default)]
     pub current_job_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "activity_reason")]
     pub reason: Option<String>,
     #[serde(default)]
     pub queue_depth: u64,
@@ -324,6 +324,7 @@ mod tests {
               "provider": "codex",
               "window": "main",
               "activity_state": "idle",
+              "activity_reason": "provider_auth_revoked",
               "reload_drain": {"intent_kind": "unload", "phase": "draining", "status": "waiting"},
               "dispatch_blocked_by_reload_drain": true
             }],
@@ -347,6 +348,10 @@ mod tests {
 
         assert_eq!(response.cache.sequence, 7);
         assert_eq!(response.view.project.display_name, "repo");
+        assert_eq!(
+            response.view.agents[0].reason.as_deref(),
+            Some("provider_auth_revoked")
+        );
         assert_eq!(
             response.view.namespace.sidebar.view_error.as_deref(),
             Some("invalid TOML config")

@@ -109,6 +109,50 @@ class OwnershipGuard:
             f'ccbd lease is held by pid={current.ccbd_pid} generation={current.generation}: {inspection.reason}'
         )
 
+    def assert_expected_claim_allowed(
+        self,
+        *,
+        project_id: str,
+        pid: int,
+        socket_path: str | Path,
+        daemon_instance_id: str,
+        expected_generation: int,
+    ) -> None:
+        generation = int(expected_generation)
+        if generation <= 0:
+            raise OwnershipConflictError('expected ccbd generation must be positive')
+        current = self._mount_manager.load_state()
+        if current is None:
+            return
+        current_generation = int(current.generation)
+        same_instance = (
+            current.project_id == project_id
+            and current_generation == generation
+            and self._same_holder(current, pid=pid, socket_path=socket_path)
+            and str(current.daemon_instance_id or '') == str(daemon_instance_id or '')
+        )
+        if same_instance:
+            return
+        if current.project_id != project_id:
+            if current.mount_state is MountState.UNMOUNTED and current_generation < generation:
+                return
+            raise OwnershipConflictError(
+                'ccbd lease project_id mismatch for expected claim: '
+                f'expected {project_id}, found {current.project_id}'
+            )
+        if current_generation >= generation:
+            raise OwnershipConflictError(
+                'ccbd expected generation is already held or superseded: '
+                f'expected {generation}, found {current_generation}'
+            )
+        inspection = self.inspect(current)
+        if inspection.takeover_allowed:
+            return
+        raise OwnershipConflictError(
+            'ccbd predecessor lease does not allow expected claim: '
+            f'pid={current.ccbd_pid} generation={current_generation}: {inspection.reason}'
+        )
+
     def _heartbeat_is_fresh(self, lease: CcbdLease) -> bool:
         try:
             current = parse_utc_timestamp(self._clock())

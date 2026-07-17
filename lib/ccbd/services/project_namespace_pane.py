@@ -104,6 +104,53 @@ class ProjectNamespacePaneRecord:
             return self._matches_field(self.ccb_window, expected)
         return self._matches_field(self.window_name, expected)
 
+    def matches_authoritative_topology(
+        self,
+        *,
+        tmux_session_name: str | None,
+        project_id: str,
+        role: str | None = None,
+        slot_key: str | None = None,
+        window_name: str | None = None,
+        sidebar_instance: str | None = None,
+        managed_by: str = 'ccbd',
+        namespace_epoch: int | None = None,
+        require_alive: bool = True,
+    ) -> bool:
+        """Return whether this live pane belongs to the current topology authority.
+
+        Topology discovery is based on a server-wide ``list-panes -a`` snapshot,
+        so pane user options alone are not sufficient: another session can carry
+        an identical option set.  Session and epoch identity are therefore
+        fail-closed requirements for authoritative matching.
+        """
+
+        if not str(self.pane_id or '').strip().startswith('%'):
+            return False
+        if require_alive and not self.alive:
+            return False
+        expected_session = str(tmux_session_name or '').strip()
+        if not expected_session or not self._matches_field(self.session_name, expected_session):
+            return False
+        if not self._matches_field(self.project_id, project_id):
+            return False
+        if managed_by and not self._matches_field(self.managed_by, managed_by):
+            return False
+        if role is not None and not self._matches_field(self.role, role):
+            return False
+        if slot_key is not None and not self._matches_field(self.slot_key, slot_key):
+            return False
+        if window_name is not None and not self._matches_window_name(window_name):
+            return False
+        if sidebar_instance is not None and not self._matches_field(
+            self.sidebar_instance,
+            sidebar_instance,
+        ):
+            return False
+        if namespace_epoch is None or self.namespace_epoch != int(namespace_epoch):
+            return False
+        return True
+
 
 def inspect_project_namespace_pane(backend, pane_id: str) -> ProjectNamespacePaneRecord | None:
     pane_text = str(pane_id or '').strip()

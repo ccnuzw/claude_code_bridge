@@ -1,6 +1,6 @@
 # Parallel Roadmap Lanes And Planner Authority
 
-Date: 2026-07-10
+Date: 2026-07-15
 Status: Design accepted; implementation not started
 
 ## Purpose
@@ -245,29 +245,29 @@ The same `agentroles.ccb_planner` RolePack may support `portfolio` and `lane`
 activation modes. A new required role id is not needed until behavior or
 permissions prove materially different.
 
-## Plan Authority And Optimistic Writes
+## Global Plan Tree Control Prerequisite
 
-Planner reads revision `R`, produces a proposal, and imports it with
-`expected_revision=R`. Scripts apply atomically only when the revision and
-lease fence still match.
+Decision 031 owns global Plan Tree consistency. Planner reasoning runs without
+a lock and returns a proposal. One repository control holder validates typed
+authority refs, revisions, closure digest, generation/fence, and writer scope
+before the registered control workspace can publish the target ref. A lane's
+local `docs/plantree` checkout is a snapshot, not another writer.
 
-```text
-read revision 42
-  -> provider reasons without holding a lock
-  -> submit update expected_revision=42
-  -> apply as revision 43, or reject plan_revision_conflict
-```
+Locator election, holder handoff/takeover, task-store migration, proposal
+transactions, external contract refs, freshness, and integration recovery are
+defined only in
+[global-plan-tree-authority-and-cross-worktree-control.md](global-plan-tree-authority-and-cross-worktree-control.md).
+The legacy storage/projection cutover is isolated in
+[global-plan-tree-storage-and-projection-migration.md](global-plan-tree-storage-and-projection-migration.md).
 
-Global roadmap and architecture have one writer. Lane status dashboards should
-be generated from lane authority rather than repeatedly rewritten by every
-planner.
+Global roadmap and architecture retain one semantic writer by default. Lane
+status dashboards are derived from lane authority rather than rewritten by
+every planner.
 
-## Plan Control And Code Worktrees
+## Code Worktrees
 
-Planner instances do not need separate code worktrees. Plan Tree is one durable
-control plane with scoped document ownership. A production concurrent setup may
-use one shared plan-control checkout or worktree so the user's main checkout
-stays clean, but it must not create divergent Plan Tree copies per planner.
+Planner instances do not need code worktrees merely to reason. Executable
+Roadmap nodes use isolated workspaces:
 
 Executable lanes use code worktrees:
 
@@ -289,13 +289,16 @@ Lane-local pass means `implementation_done`, not global `done`.
 
 ```text
 lane A reviewed --+
-                  +-> merge queue -> integration worktree -> combined tests
-lane B reviewed --+                                      -> global done
+                  +-> hidden candidate -> combined tests -> target promotion
+lane B reviewed --+                                    -> published
 ```
 
-Integration is intentionally serialized for a shared target branch. The gate
-records merge commits, conflict handling, combined verification, accepted plan
-revision, and unresolved global impact.
+Integration is intentionally serialized for a shared target branch. Lane-local
+pass is not global completion. The gate records one integration id, hidden
+candidate, conflict handling, combined verification, target promotion, Plan
+Tree transition, publication, and unresolved global impact. Dependent nodes
+wait for `published`; exact saga and recovery semantics live in the global
+control protocol.
 
 ## Project Scheduler And Locks
 
@@ -334,38 +337,46 @@ ambiguity.
 0. Close and freeze the current single-lane real-provider workflow baseline;
    do not start multi-lane source changes before its visible end-to-end,
    recovery, freshness, authority, release, and repeatability gates pass.
-1. Add Roadmap Graph schema, validator, revision, and cycle checks.
-2. Add lane registry, identity propagation, planner lease, and fencing tokens.
-3. Add scope claims and deterministic conflict admission.
-4. Replace first-actionable selection with ready-frontier scheduling.
-5. Split project auto-runner lock into scheduler and lane locks.
-6. Add lane worktree and immutable execution-snapshot materialization.
-7. Add integration queue, integration worktree, and combined verification.
-8. Add lane-aware topology names, UI/sidebar projection, and capacity fairness.
-9. Prove two disjoint real lanes, then conflict, dependency, crash, stale
-   callback, capacity, and integration cases.
-10. Measure planner queue latency before enabling multiple planner writers.
+1. Complete the global control protocol's identity/election, fail-closed lock,
+   task-store migration, typed authority, transaction, and freshness slices;
+   pass acceptance-matrix sections A, B, and E.
+2. Add Roadmap Graph schema, cycle validation, and deterministic ready-frontier
+   input projection.
+3. Add the shared lane registry, immutable snapshots, identity propagation,
+   scope claims, and deterministic conflict admission.
+4. Replace first-actionable selection with ready-frontier scheduling and split
+   the project runner lock into short scheduler and per-lane locks.
+5. Add hidden integration candidates, combined verification, target promotion,
+   publication recovery, and dependent-admission fences.
+6. Add lane-aware topology names, UI/sidebar projection, and capacity fairness.
+7. Pass all fake and real rows in the cross-worktree acceptance matrix.
+8. Measure planner/control queue latency before enabling scoped semantic
+   planners; keep one physical authority commit stream.
 
 ## Acceptance Criteria
 
-- Two disjoint ready roadmap branches plan once and execute concurrently.
-- One global planner remains responsive while lane execution is active.
-- Same-scope write claims cannot run concurrently without an explicit plan.
-- No ask, callback, artifact, worktree change, or topology record crosses lane
-  identity.
-- A stale planner/provider reply is rejected by revision or fencing checks.
-- One lane failure does not stop an unrelated lane.
-- Parallel lane results cannot become globally done before the join gate and
-  combined verification pass.
-- Main checkout and Plan Tree authority remain inspectable while code changes
-  stay isolated in lane worktrees.
-- Dynamic agents release per lane without unloading another lane's active
-  agents.
+- Two disjoint ready branches execute concurrently while one lane failure does
+  not stop the other.
+- Same-scope writes cannot run concurrently without explicit conflict
+  resolution, and dependency edges cannot admit before predecessor publication.
+- No ask, callback, artifact, worktree change, topology record, integration, or
+  cleanup action crosses lane identity.
+- Stale authority, holder, task, provider, and integration writes fail closed.
+- Global completion requires the exact hidden candidate, combined verification,
+  target promotion, Plan Tree transition, event publication, and cleanup policy.
+
+The falsifiable case-by-case gate is
+[global-plan-tree-cross-worktree-acceptance-matrix.md](global-plan-tree-cross-worktree-acceptance-matrix.md);
+this summary cannot waive one of its forbidden states.
 
 ## Related
 
 - [../decisions/023-roadmap-graph-and-workflow-lanes.md](../decisions/023-roadmap-graph-and-workflow-lanes.md)
 - [../decisions/024-project-topology-controller-and-single-lane-first.md](../decisions/024-project-topology-controller-and-single-lane-first.md)
+- [../decisions/031-global-plan-tree-authority-across-worktrees.md](../decisions/031-global-plan-tree-authority-across-worktrees.md)
+- [global-plan-tree-authority-and-cross-worktree-control.md](global-plan-tree-authority-and-cross-worktree-control.md)
+- [global-plan-tree-storage-and-projection-migration.md](global-plan-tree-storage-and-projection-migration.md)
+- [global-plan-tree-cross-worktree-acceptance-matrix.md](global-plan-tree-cross-worktree-acceptance-matrix.md)
 - [planner-role-design.md](planner-role-design.md)
 - [state-and-script-contract.md](state-and-script-contract.md)
 - [plan-and-runtime-list-structure.md](plan-and-runtime-list-structure.md)

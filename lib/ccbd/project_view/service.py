@@ -780,6 +780,7 @@ def _agent_view(
         'runtime_state': _runtime_state(runtime),
         'runtime_health': getattr(runtime, 'health', None) if runtime is not None else None,
         'reconcile_state': getattr(runtime, 'reconcile_state', None) if runtime is not None else None,
+        'runtime_failure_reason': getattr(runtime, 'last_failure_reason', None) if runtime is not None else None,
         'workspace_path': getattr(runtime, 'workspace_path', None) if runtime is not None else None,
         'reload_drain': dict(reload_drain) if reload_drain is not None else None,
         'dispatch_blocked_by_reload_drain': reload_drain is not None,

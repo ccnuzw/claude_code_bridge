@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 
 from .common import cleanup_csv, render_tmux_cleanup_summaries
 from .ops_views_common import binding_line
@@ -92,6 +93,28 @@ def render_start(summary) -> tuple[str, ...]:
         f'socket_path: {summary.socket_path}',
         f'agents: {", ".join(summary.started)}',
     ]
+    startup_run_id = str(getattr(summary, 'startup_run_id', None) or '').strip()
+    if startup_run_id:
+        lines.append(f'startup_run_id: {startup_run_id}')
+    cli_timings_ms = getattr(summary, 'cli_timings_ms', None)
+    if isinstance(cli_timings_ms, Mapping):
+        lines.append(
+            'startup_cli_timings_ms: '
+            + json.dumps(dict(cli_timings_ms), ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+        )
+    process_trace_id = str(getattr(summary, 'process_bootstrap_trace_id', None) or '').strip()
+    process_timings_ms = getattr(summary, 'process_bootstrap_timings_ms', None)
+    if process_trace_id and isinstance(process_timings_ms, Mapping):
+        lines.append(f'startup_process_trace_id: {process_trace_id}')
+        lines.append(
+            'startup_process_bootstrap_timings_ms: '
+            + json.dumps(
+                dict(process_timings_ms),
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(',', ':'),
+            )
+        )
     heartbeat = getattr(summary, 'maintenance_heartbeat', None)
     if isinstance(heartbeat, Mapping):
         details = [

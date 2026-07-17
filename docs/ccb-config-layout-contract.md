@@ -263,6 +263,15 @@ Contract:
 - legacy compact and hybrid configs that do not declare `[windows]` remain
   single-window configs; they are mounted in the project workspace window and
   keep their existing `cmd` pane semantics
+- when a legacy layout has `cmd_enabled=true`, its normalized single-window
+  topology and topology signature retain the `cmd` leaf, while that window's
+  `agent_names` continues to contain only configured agents
+- the default managed sidebar is outside that complete legacy user layout;
+  sidebar, cmd, and agent leaves must materialize as distinct panes for both
+  left and right sidebar positions
+- topology consumers must resolve the unique managed cmd identity for the
+  current project/session/window/namespace epoch; physical pane order and the
+  first/root pane are not cmd authority
 - `[windows]` is the authority for layout, default agent traversal, per-window
   agent grouping, provider selection, default workspace mode, and the effective
   configured-agent set.

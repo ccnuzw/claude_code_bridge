@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import os
 from pathlib import Path
+import re
 import subprocess
 from types import SimpleNamespace
 
@@ -11,6 +14,16 @@ from ccbd.models import CcbdStartupReport
 from cli.context import CliContextBuilder
 from cli.models import ParsedStartCommand
 from cli.services.start import _refresh_running_sidebar_helpers, start_agents
+from cli.services.start_runtime import (
+    _readiness_trace_payload,
+    start_agents as start_agents_runtime,
+)
+from cli.startup_process_trace import (
+    capture_source_wrapper_trace,
+    consume_process_bootstrap_trace,
+    mark_ccb_main,
+)
+from cli.services.tmux_project_cleanup import ProjectTmuxCleanupSummary
 from project.resolver import bootstrap_project
 from storage.paths import PathLayout
 from workspace.materializer import WorkspaceMaterializer
@@ -70,15 +83,19 @@ def test_start_agents_calls_ccbd_start_with_cli_flags(tmp_path: Path, monkeypatc
 
     summary = start_agents(context, command)
 
+    startup_run_id = str(seen.pop('startup_run_id'))
+    assert re.fullmatch(r'start_[0-9a-f]{32}', startup_run_id)
     assert seen == {
         'agent_names': ('demo',),
         'restore': True,
         'auto_permission': True,
+        'daemon_started': True,
     }
     assert summary.project_root == str(project_root)
     assert summary.project_id == context.project.project_id
     assert summary.started == ('demo',)
     assert summary.daemon_started is True
+    assert summary.startup_run_id == startup_run_id
     assert summary.socket_path == str(context.paths.ccbd_socket_path)
 
 
@@ -87,7 +104,11 @@ def test_foreground_start_refreshes_sidebar_with_current_cli_when_daemon_is_reus
     monkeypatch,
 ) -> None:
     project_root = tmp_path / 'repo-start-sidebar-upgrade'
-    namespace = SimpleNamespace(tmux_socket_path=str(project_root / '.ccb' / 'ccbd' / 'tmux.sock'))
+    namespace = SimpleNamespace(
+        tmux_socket_path=str(project_root / '.ccb' / 'ccbd' / 'tmux.sock'),
+        tmux_session_name='ccb-project',
+        namespace_epoch=7,
+    )
     controller = SimpleNamespace(load=lambda: namespace)
     backend = object()
     topology_plan = object()
@@ -114,10 +135,19 @@ def test_foreground_start_refreshes_sidebar_with_current_cli_when_daemon_is_reus
         lambda *, socket_path: seen.setdefault('backend_socket', socket_path) and backend,
     )
 
-    def refresh(current_controller, current_backend, *, topology_plan):
+    def refresh(
+        current_controller,
+        current_backend,
+        *,
+        topology_plan,
+        tmux_session_name,
+        namespace_epoch,
+    ):
         seen['controller'] = current_controller
         seen['backend'] = current_backend
         seen['topology_plan'] = topology_plan
+        seen['tmux_session_name'] = tmux_session_name
+        seen['namespace_epoch'] = namespace_epoch
         return ('%7',)
 
     monkeypatch.setattr('cli.services.start.refresh_topology_sidebar_helpers', refresh)
@@ -130,6 +160,8 @@ def test_foreground_start_refreshes_sidebar_with_current_cli_when_daemon_is_reus
         'controller': controller,
         'backend': backend,
         'topology_plan': topology_plan,
+        'tmux_session_name': 'ccb-project',
+        'namespace_epoch': 7,
     }
 
 
@@ -202,6 +234,41 @@ def test_start_agents_uses_startup_transaction_timeout_for_start_rpc(tmp_path: P
     summary = start_agents(context, command)
 
     assert events == [('with_timeout', 12.5), ('start', 12.5)]
+    assert summary.started == ('demo',)
+
+
+def test_start_runtime_keeps_legacy_report_store_injection_without_using_it(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-start-legacy-report-injection'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    command = ParsedStartCommand(project=None, agent_names=('demo',), restore=False, auto_permission=False)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    class _FakeClient:
+        def start(self, **kwargs):
+            return {
+                'project_root': str(project_root),
+                'project_id': context.project.project_id,
+                'started': ['demo'],
+                'socket_path': str(context.paths.ccbd_socket_path),
+                'cleanup_summaries': [],
+                'startup_run_id': kwargs['startup_run_id'],
+            }
+
+    class _ExplodingLegacyStore:
+        def __init__(self, paths):
+            del paths
+            raise AssertionError('foreground CLI must not construct the startup report store')
+
+    summary = start_agents_runtime(
+        context,
+        command,
+        ensure_daemon_started_fn=lambda context: SimpleNamespace(client=_FakeClient(), started=False),
+        cleanup_summary_cls=ProjectTmuxCleanupSummary,
+        startup_report_store_cls=_ExplodingLegacyStore,
+    )
+
     assert summary.started == ('demo',)
 
 
@@ -282,7 +349,7 @@ def test_start_agents_parses_cleanup_summaries_from_ccbd_payload(tmp_path: Path,
     assert summary.cleanup_summaries[0].owned_panes == ('%44',)
 
 
-def test_start_agents_updates_startup_report_with_daemon_started_flag(tmp_path: Path, monkeypatch) -> None:
+def test_start_agents_does_not_rewrite_daemon_owned_startup_report_after_rpc(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'repo-start-report'
     (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
     (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
@@ -300,7 +367,8 @@ def test_start_agents_updates_startup_report_with_daemon_started_flag(tmp_path: 
             restore_requested=False,
             auto_permission=False,
             daemon_generation=1,
-            daemon_started=None,
+            daemon_started=False,
+            startup_run_id='start_' + 'b' * 32,
             config_signature='sig-1',
             inspection={},
             restore_summary={},
@@ -331,7 +399,168 @@ def test_start_agents_updates_startup_report_with_daemon_started_flag(tmp_path: 
 
     report = CcbdStartupReportStore(context.paths).load()
     assert report is not None
-    assert report.daemon_started is True
+    assert report.daemon_started is False
+    assert report.startup_run_id == 'start_' + 'b' * 32
+
+
+def test_start_agents_rejects_mismatched_rpc_correlation(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-start-report-mismatch'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    command = ParsedStartCommand(project=None, agent_names=('demo',), restore=False, auto_permission=False)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    class _FakeClient:
+        def start(self, **kwargs):
+            del kwargs
+            return {
+                'project_root': str(project_root),
+                'project_id': context.project.project_id,
+                'started': ['demo'],
+                'socket_path': str(context.paths.ccbd_socket_path),
+                'cleanup_summaries': [],
+                'startup_run_id': 'start_' + 'f' * 32,
+            }
+
+    monkeypatch.setattr(
+        'cli.services.start.ensure_daemon_started',
+        lambda context: SimpleNamespace(client=_FakeClient(), started=True),
+    )
+
+    with pytest.raises(RuntimeError, match='correlation mismatch'):
+        start_agents(context, command)
+
+
+def test_start_agents_reports_full_noninteractive_cli_timing_boundary(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-start-cli-timing'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    command = ParsedStartCommand(project=None, agent_names=('demo',), restore=False, auto_permission=False)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    class _FakeClient:
+        def start(self, **kwargs):
+            return {
+                'project_root': str(project_root),
+                'project_id': context.project.project_id,
+                'started': ['demo'],
+                'socket_path': str(context.paths.ccbd_socket_path),
+                'cleanup_summaries': [],
+                'startup_run_id': kwargs['startup_run_id'],
+            }
+
+    monkeypatch.setattr(
+        'cli.services.start.ensure_daemon_started',
+        lambda context: SimpleNamespace(client=_FakeClient(), started=False),
+    )
+    monkeypatch.setattr('cli.services.start._refresh_running_sidebar_helpers', lambda context: {'status': 'current'})
+    monkeypatch.setattr(
+        'cli.services.start._attach_start_layout_summary',
+        lambda context, summary: replace(summary, layout_summary={'layout_summary_status': 'ok'}),
+    )
+    monkeypatch.setattr('cli.services.start.startup_ensure_maintenance_heartbeat', lambda context: None)
+
+    summary = start_agents(context, command)
+
+    assert summary.cli_timings_ms is not None
+    assert set(summary.cli_timings_ms) == {
+        'cli_pre_rpc',
+        'daemon_ensure',
+        'start_rpc',
+        'cli_post_rpc',
+        'cli_total',
+        'sidebar_helper_refresh',
+        'layout_status',
+        'maintenance_heartbeat',
+    }
+    assert all(value >= 0 for value in summary.cli_timings_ms.values())
+    assert summary.cli_timings_ms['cli_total'] >= summary.cli_timings_ms['start_rpc']
+
+
+def test_startup_process_trace_is_monotonic_and_consumed(monkeypatch) -> None:
+    values = {
+        'CCB_STARTUP_TIMING_TRACE': '1',
+        'CCB_STARTUP_TRACE_ID': 'trace_' + 'a' * 32,
+        'CCB_STARTUP_TRACE_SPAWN_NS': '1000000',
+        'CCB_STARTUP_TRACE_WRAPPER_ENTRY_NS': '2000000',
+        'CCB_STARTUP_TRACE_WRAPPER_PRE_EXEC_NS': '4000000',
+        'CCB_TEST_ENTRYPOINT': '1',
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+    capture_source_wrapper_trace(7_000_000)
+    mark_ccb_main(11_000_000)
+    trace_id, timings, origin_ns = consume_process_bootstrap_trace(16_000_000)
+
+    assert trace_id == 'trace_' + 'a' * 32
+    assert origin_ns == 7_000_000
+    assert timings == {
+        'popen_begin_to_ccb_test_entry': 1.0,
+        'ccb_test_entry_to_pre_exec': 2.0,
+        'ccb_test_pre_exec_to_ccb_py_entry': 3.0,
+        'ccb_py_entry_to_main': 4.0,
+        'ccb_py_main_to_cli_start': 5.0,
+    }
+    assert all(key not in os.environ for key in values if key != 'CCB_TEST_ENTRYPOINT')
+
+
+def test_startup_process_trace_rejects_non_wrapper_envelope_and_consumes_raw_env(monkeypatch) -> None:
+    values = {
+        'CCB_STARTUP_TIMING_TRACE': '1',
+        'CCB_STARTUP_TRACE_ID': 'trace_' + 'b' * 32,
+        'CCB_STARTUP_TRACE_SPAWN_NS': '1000000',
+        'CCB_STARTUP_TRACE_WRAPPER_ENTRY_NS': '2000000',
+        'CCB_STARTUP_TRACE_WRAPPER_PRE_EXEC_NS': '3000000',
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+    capture_source_wrapper_trace(4_000_000)
+    trace_id, timings, origin_ns = consume_process_bootstrap_trace(5_000_000)
+
+    assert trace_id is None
+    assert timings is None
+    assert origin_ns is None
+    assert all(key not in os.environ for key in values)
+
+
+def test_readiness_trace_payload_uses_cli_entry_origin_and_mounted_generation() -> None:
+    payload = _readiness_trace_payload(
+        trace_id='trace_' + 'c' * 32,
+        origin_ns=1_000_000,
+        attach_mode='no_attach',
+        handle=SimpleNamespace(
+            started=False,
+            inspection=SimpleNamespace(generation=7, startup_id='keeper-startup-7'),
+        ),
+        control_plane_ready_ns=6_000_000,
+    )
+
+    assert payload is not None
+    assert payload['trace_id'] == 'trace_' + 'c' * 32
+    assert payload['origin_monotonic_ns'] == 1_000_000
+    assert payload['expected_daemon_generation'] == 7
+    assert payload['attach_mode'] == 'no_attach'
+    assert payload['T1_lifecycle_intent']['status'] == 'not_required_already_mounted'
+    assert payload['T2_control_plane_ready']['elapsed_ms'] == 5.0
+
+
+def test_readiness_trace_payload_requires_positive_mounted_generation() -> None:
+    payload = _readiness_trace_payload(
+        trace_id='trace_' + 'd' * 32,
+        origin_ns=1_000_000,
+        attach_mode='no_attach',
+        handle=SimpleNamespace(
+            started=False,
+            inspection=SimpleNamespace(generation=None, startup_id='keeper-startup-missing'),
+        ),
+        control_plane_ready_ns=6_000_000,
+    )
+
+    assert payload is None
 
 
 def test_start_agents_attaches_compact_layout_identity_summary(tmp_path: Path, monkeypatch) -> None:

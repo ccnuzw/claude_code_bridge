@@ -1712,8 +1712,27 @@ class _PatchFakeBackend:
         if active_border_style:
             self.set_pane_user_option(pane_id, 'pane-active-border-style', active_border_style)
 
+    def describe_pane(self, pane_id: str, *, user_options=()) -> dict[str, str]:
+        for session_name, windows in self.sessions.items():
+            for window in windows:
+                if pane_id not in window['panes']:
+                    continue
+                details = {
+                    'pane_id': pane_id,
+                    'session_name': session_name,
+                    'window_id': str(window['id']),
+                    'window_name': str(window['name']),
+                    'pane_dead': '0',
+                }
+                options = self.pane_options.get(pane_id, {})
+                details.update({name: options.get(name, '') for name in user_options})
+                return details
+        return {}
+
     def _tmux_run(self, args: list[str], *, check=False, capture=False, input_bytes=None, timeout=None):
         del check, capture, input_bytes, timeout
+        if args[:2] == ['display-message', '-p']:
+            return SimpleNamespace(returncode=1, stdout='', stderr='unsupported by fake backend')
         self.tmux_calls.append(tuple(args))
         if args[:2] == ['has-session', '-t']:
             return SimpleNamespace(returncode=0 if args[2] in self.sessions else 1, stdout='', stderr='')
@@ -1745,11 +1764,20 @@ class _PatchFakeBackend:
         return f'%{self.pane_counter}'
 
 
-def _seed_agent_pane(backend: _PatchFakeBackend, pane_id: str, *, project_id: str, window: str, agent: str) -> None:
+def _seed_agent_pane(
+    backend: _PatchFakeBackend,
+    pane_id: str,
+    *,
+    project_id: str,
+    window: str,
+    agent: str,
+    namespace_epoch: int = 3,
+) -> None:
     backend.pane_options[pane_id] = {
         '@ccb_project_id': project_id,
         '@ccb_role': 'agent',
         '@ccb_slot': agent,
         '@ccb_window': window,
         '@ccb_managed_by': 'ccbd',
+        '@ccb_namespace_epoch': str(namespace_epoch),
     }

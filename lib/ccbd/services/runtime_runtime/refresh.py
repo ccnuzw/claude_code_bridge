@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from agents.models import RuntimeBindingSource, normalize_runtime_binding_source
+from agents.models import AgentState, RuntimeBindingSource, normalize_runtime_binding_source
+from ccbd.services.runtime_recovery_policy import (
+    PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH,
+    PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTH,
+)
 
 from ..provider_runtime_facts import build_provider_runtime_facts, ensure_provider_pane, load_provider_session
 from ..project_namespace_runtime.slot_replacement import (
@@ -32,14 +37,70 @@ def _attach_missing_session(*, attach_runtime_fn, agent_name: str, workspace_pat
     )
 
 
-def _resolve_pane_id(session, *, recover: bool) -> str | None:
+@dataclass(frozen=True)
+class _PaneResolution:
+    pane_id: str | None
+    blocked_health: str | None = None
+    blocked_detail: str | None = None
+
+
+def _session_recovery_block(session) -> tuple[str, str] | None:
+    data = getattr(session, 'data', None)
+    if not isinstance(data, dict):
+        return None
+    block = data.get('pane_recovery_block')
+    if not isinstance(block, dict):
+        return None
+    reason = str(block.get('reason') or '').strip().lower()
+    detail = str(block.get('detail') or '').strip()
+    if not reason:
+        return None
+    block_pane_id = str(block.get('pane_id') or '').strip()
+    session_pane_id = str(getattr(session, 'pane_id', '') or '').strip()
+    if block_pane_id and session_pane_id and block_pane_id != session_pane_id:
+        return None
+    health = (
+        PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH
+        if reason == 'provider_auth_revoked'
+        else PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTH
+    )
+    if not detail:
+        detail = f'Provider recovery is blocked: {reason}; repair authentication and remount'
+    return health, detail
+
+
+def _resolve_pane(session, *, recover: bool) -> _PaneResolution:
     pane_id = str(getattr(session, 'pane_id', '') or '').strip()
     if not recover:
-        return pane_id or None
+        return _PaneResolution(pane_id or None)
     ok, pane_or_err = ensure_provider_pane(session)
     if not ok:
-        return None
-    return str(pane_or_err or '').strip() or None
+        block = _session_recovery_block(session)
+        if block is not None:
+            return _PaneResolution(None, blocked_health=block[0], blocked_detail=block[1])
+        return _PaneResolution(None)
+    return _PaneResolution(str(pane_or_err or '').strip() or None)
+
+
+def _patch_recovery_blocked_runtime(
+    *,
+    patch_runtime_state_fn,
+    runtime,
+    health: str,
+    detail: str,
+):
+    if not callable(patch_runtime_state_fn):
+        return runtime
+    return patch_runtime_state_fn(
+        runtime,
+        state=AgentState.DEGRADED,
+        health=health,
+        active_pane_id=None,
+        pane_state='dead',
+        reconcile_state='blocked',
+        last_failure_reason=detail,
+        lifecycle_state='degraded',
+    )
 
 
 def _attach_healthy_runtime(
@@ -88,6 +149,7 @@ def refresh_provider_binding(
     registry,
     session_bindings,
     attach_runtime_fn,
+    patch_runtime_state_fn=None,
     agent_name: str,
     recover: bool = False,
 ):
@@ -124,7 +186,15 @@ def refresh_provider_binding(
         )
 
     inject_project_slot_recovery_hints(session, replacement_context)
-    pane_id = _resolve_pane_id(session, recover=recover)
+    pane_resolution = _resolve_pane(session, recover=recover)
+    if recover and pane_resolution.blocked_health is not None:
+        return _patch_recovery_blocked_runtime(
+            patch_runtime_state_fn=patch_runtime_state_fn,
+            runtime=runtime,
+            health=pane_resolution.blocked_health,
+            detail=str(pane_resolution.blocked_detail or pane_resolution.blocked_health),
+        )
+    pane_id = pane_resolution.pane_id
     if recover and pane_id is None:
         return runtime
     if pane_id is not None:

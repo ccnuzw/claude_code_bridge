@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import json
 from pathlib import Path
 import threading
 import time
@@ -11,9 +13,10 @@ import ccbd.handlers.project_restart as project_restart
 from ccbd.handlers.project_restart import RESTART_PANES_REASON, build_project_restart_panes_handler
 from ccbd.lifecycle_report_store import CcbdStartupReportStore
 from ccbd.services.lifecycle import build_lifecycle
+from ccbd.startup_fence import StartupFenceError
 from ccbd.start_flow import StartFlowSummary
-from ccbd.start_flow_runtime.service_tmux import project_socket_active_panes
-from ccbd.socket_client import CcbdClient
+from ccbd.start_flow_runtime.service_tmux import project_socket_active_panes, tmux_namespace_runtime
+from ccbd.socket_client import CcbdClient, CcbdClientError
 from cli.services.provider_binding import AgentBinding
 from cli.services.runtime_launch import RuntimeLaunchResult
 from cli.services.tmux_project_cleanup import ProjectTmuxCleanupSummary
@@ -26,9 +29,34 @@ def _wait_for(path: Path, timeout: float = 2.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if path.exists():
-            return
+            if path.suffix != '.sock':
+                return
+            try:
+                payload = CcbdClient(path, timeout_s=0.5).ping('ccbd')
+                diagnostics = payload.get('diagnostics')
+                stage = diagnostics.get('startup_stage') if isinstance(diagnostics, dict) else None
+                if stage in {None, '', 'mounted'}:
+                    return
+            except Exception:
+                pass
         time.sleep(0.02)
     raise AssertionError(f'timed out waiting for {path}')
+
+
+class _TrackedGateLock:
+    def __init__(self, contention_event: threading.Event) -> None:
+        self._lock = threading.RLock()
+        self._contention_event = contention_event
+
+    def __enter__(self):
+        if not self._lock.acquire(blocking=False):
+            self._contention_event.set()
+            self._lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+        self._lock.release()
 
 
 class _FakeNamespaceTmuxBackend:
@@ -54,6 +82,46 @@ def test_project_socket_active_panes_preserves_namespace_root_without_cmd() -> N
 
     assert active_panes == ['%0']
     assert cmd_pane_id is None
+
+
+def test_topology_start_uses_only_the_authoritative_cmd_pane() -> None:
+    calls: list[list[str]] = []
+
+    class Backend:
+        def __init__(self, *, socket_path: str | None = None):
+            self.socket_path = socket_path
+
+        def _tmux_run(self, args, **kwargs):
+            del kwargs
+            calls.append(list(args))
+            raise AssertionError('topology cmd selection must not rescan or infer the first pane')
+
+    backend, cmd_pane = tmux_namespace_runtime(
+        SimpleNamespace(tmux_backend_cls=Backend),
+        tmux_socket_path='/tmp/ccb.sock',
+        tmux_session_name='ccb-project',
+        tmux_workspace_window_name='main',
+        namespace_cmd_pane='%7',
+        namespace_topology_managed=True,
+        cmd_enabled=True,
+    )
+
+    assert backend.socket_path == '/tmp/ccb.sock'
+    assert cmd_pane == '%7'
+    assert calls == []
+
+
+def test_topology_start_fails_closed_when_cmd_authority_is_missing() -> None:
+    with pytest.raises(RuntimeError, match='authoritative topology cmd pane is missing'):
+        tmux_namespace_runtime(
+            SimpleNamespace(tmux_backend_cls=_FakeNamespaceTmuxBackend),
+            tmux_socket_path='/tmp/ccb.sock',
+            tmux_session_name='ccb-project',
+            tmux_workspace_window_name='main',
+            namespace_cmd_pane=None,
+            namespace_topology_managed=True,
+            cmd_enabled=True,
+        )
 
 
 def test_tmux_layout_for_start_uses_namespace_agent_panes_when_provided() -> None:
@@ -216,11 +284,46 @@ def test_ccbd_start_flow_writes_runtime_authority_via_rpc(tmp_path: Path, monkey
     _wait_for(app.paths.ccbd_socket_path)
 
     client = CcbdClient(app.paths.ccbd_socket_path)
-    payload = client.start(agent_names=('demo',), restore=False, auto_permission=False)
+    readiness_origin_ns = time.perf_counter_ns() - 5_000_000
+    payload = client.start(
+        agent_names=('demo',),
+        restore=False,
+        auto_permission=False,
+        readiness_trace={
+            'schema_version': 1,
+            'trace_id': 'trace_' + 'a' * 32,
+            'origin_monotonic_ns': readiness_origin_ns,
+            'attach_mode': 'no_attach',
+            'expected_daemon_generation': int(app.lease.generation),
+            'keeper_startup_id': None,
+            'T1_lifecycle_intent': {
+                'status': 'not_required_already_mounted',
+                'elapsed_ms': None,
+                'source': 'test_existing_generation',
+            },
+            'T2_control_plane_ready': {
+                'status': 'reached',
+                'elapsed_ms': 1.0,
+                'source': 'test_control_plane',
+            },
+        },
+    )
     runtime = app.registry.get('demo')
+    report = CcbdStartupReportStore(app.paths).load()
 
     assert payload['started'] == ['demo']
     assert payload['project_id'] == app.project_id
+    assert str(payload['startup_run_id']).startswith('start_')
+    assert report is not None
+    assert report.startup_run_id == payload['startup_run_id']
+    assert report.readiness_timeline is not None
+    assert report.readiness_timeline['timeline_complete'] is True
+    assert report.readiness_timeline['generation_correlation'] == 'matched'
+    assert report.readiness_timeline['points']['T3_namespace_attachable']['status'] == 'reached'
+    assert report.readiness_timeline['points']['T4_requested_agents_ready']['status'] == 'reached'
+    assert report.readiness_timeline['points']['T5_foreground_attached']['status'] == 'not_applicable_no_attach'
+    assert report.readiness_timeline['points']['T6_fully_warm']['status'] == 'reached'
+    assert 'origin_monotonic_ns' not in json.dumps(report.readiness_timeline, sort_keys=True)
     assert runtime is not None
     assert runtime.runtime_ref == 'tmux:%901'
     assert runtime.session_ref == 'session-901'
@@ -368,6 +471,8 @@ def test_runtime_supervisor_start_persists_startup_report(tmp_path: Path, monkey
         auto_permission=False,
         cleanup_tmux_orphans=False,
         interactive_tmux_layout=False,
+        startup_run_id='start_' + 'd' * 32,
+        daemon_started=True,
     )
     report = CcbdStartupReportStore(app.paths).load()
 
@@ -377,7 +482,8 @@ def test_runtime_supervisor_start_persists_startup_report(tmp_path: Path, monkey
     assert report.status == 'ok'
     assert report.daemon_generation == 3
     assert report.requested_agents == ('demo',)
-    assert report.daemon_started is None
+    assert report.daemon_started is True
+    assert report.startup_run_id == 'start_' + 'd' * 32
     assert report.socket_placement is not None
     assert report.socket_placement['effective_socket_path'] == str(app.paths.ccbd_socket_path)
     assert report.socket_placement['socket_root_kind'] == app.paths.ccbd_socket_placement.root_kind
@@ -392,10 +498,143 @@ def test_runtime_supervisor_start_persists_startup_report(tmp_path: Path, monkey
     assert report.agent_results[0].action == 'launched'
     assert report.agent_results[0].provider_prepare_count == 1
     assert report.agent_results[0].duration_ms is not None
+    assert report.agent_results[0].timings_ms is not None
+    assert set(report.agent_results[0].timings_ms) == {
+        'prepare_launch_context',
+        'build_start_cmd',
+        'tmux_respawn',
+        'pane_identity',
+        'session_write',
+        'provider_post_launch',
+        'binding_resolve',
+        'pane_and_runtime_facts',
+        'authority_commit',
+        'restore_bookkeeping',
+        'unattributed',
+    }
+    assert sum(report.agent_results[0].timings_ms.values()) == pytest.approx(
+        report.agent_results[0].duration_ms
+    )
     assert report.timings_ms is not None
     assert report.timings_ms['namespace_ensure'] >= 0
     assert report.timings_ms['agent_prepare_and_classify'] >= 0
+    assert report.timings_ms['agent_runtime_duration_sum'] >= 0
+    assert report.timings_ms['agent_runtime_prepare_launch_context'] >= 0
+    assert report.timings_ms['agent_runtime_build_start_cmd'] >= 0
+    assert report.timings_ms['agent_runtime_tmux_respawn'] >= 0
+    assert report.timings_ms['agent_runtime_pane_identity'] >= 0
+    assert report.timings_ms['agent_runtime_session_write'] >= 0
+    assert report.timings_ms['agent_runtime_provider_post_launch'] >= 0
+    assert report.timings_ms['agent_runtime_binding_resolve'] >= 0
+    assert report.timings_ms['agent_runtime_pane_and_runtime_facts'] >= 0
+    assert report.timings_ms['agent_runtime_authority_commit'] >= 0
+    assert report.timings_ms['agent_runtime_restore_bookkeeping'] >= 0
+    assert report.timings_ms['agent_runtime_unattributed'] >= 0
+    assert report.timings_ms['agent_runtime_loop_overhead'] >= 0
     assert report.timings_ms['supervisor_total'] >= 0
+
+
+def test_runtime_supervisor_failure_report_preserves_start_correlation(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-ccbd-start-failed-report'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    app.runtime_supervisor._project_namespace = None
+
+    def fail_start(**kwargs):
+        del kwargs
+        raise RuntimeError('planned start failure')
+
+    monkeypatch.setattr('ccbd.supervisor.run_start_flow', fail_start)
+
+    with pytest.raises(RuntimeError, match='planned start failure'):
+        app.runtime_supervisor.start(
+            agent_names=('demo',),
+            restore=False,
+            auto_permission=False,
+            cleanup_tmux_orphans=False,
+            interactive_tmux_layout=False,
+            startup_run_id='start_' + 'e' * 32,
+            daemon_started=False,
+        )
+
+    report = CcbdStartupReportStore(app.paths).load()
+    assert report is not None
+    assert report.status == 'failed'
+    assert report.failure_reason == 'planned start failure'
+    assert report.startup_run_id == 'start_' + 'e' * 32
+    assert report.daemon_started is False
+
+
+def test_runtime_supervisor_failure_report_preserves_structured_agent_timing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-agent-launch-failed-report'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('cmd; demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    monkeypatch.setattr(
+        app.project_namespace,
+        'ensure',
+        lambda: SimpleNamespace(
+            tmux_socket_path=str(app.paths.ccbd_tmux_socket_path),
+            tmux_session_name=app.paths.ccbd_tmux_session_name,
+            namespace_epoch=7,
+        ),
+    )
+    monkeypatch.setattr('ccbd.start_flow.TmuxBackend', _FakeNamespaceTmuxBackend)
+    monkeypatch.setattr('ccbd.start_flow.set_tmux_ui_active', lambda active: None)
+    monkeypatch.setattr(
+        'ccbd.start_flow.prepare_tmux_start_layout',
+        lambda context, config, targets, **kwargs: SimpleNamespace(cmd_pane_id=None, agent_panes={}),
+    )
+    monkeypatch.setattr('ccbd.start_flow.cleanup_project_tmux_orphans_by_socket', lambda **kwargs: ())
+    monkeypatch.setattr(
+        'ccbd.start_flow.TmuxCleanupHistoryStore',
+        lambda paths: SimpleNamespace(append=lambda event: None),
+    )
+    monkeypatch.setattr('ccbd.start_flow.resolve_agent_binding', lambda **kwargs: None)
+    original_error = RuntimeError('planned agent launch failure')
+
+    def fail_launch(*args, **kwargs):
+        del args, kwargs
+        time.sleep(0.01)
+        setattr(original_error, 'ccb_startup_timings_ms', {'build_start_cmd': 5.0})
+        raise original_error
+
+    monkeypatch.setattr('ccbd.start_flow.ensure_agent_runtime', fail_launch)
+
+    with pytest.raises(RuntimeError, match='planned agent launch failure') as captured:
+        app.runtime_supervisor.start(
+            agent_names=('demo',),
+            restore=False,
+            auto_permission=False,
+            cleanup_tmux_orphans=False,
+            interactive_tmux_layout=False,
+            startup_run_id='start_' + 'f' * 32,
+            daemon_started=False,
+        )
+
+    assert captured.value is original_error
+    report = CcbdStartupReportStore(app.paths).load()
+    assert report is not None
+    assert report.status == 'failed'
+    assert report.failure_reason == 'planned agent launch failure'
+    assert report.startup_run_id == 'start_' + 'f' * 32
+    assert len(report.agent_results) == 1
+    failed = report.agent_results[0]
+    assert failed.agent_name == 'demo'
+    assert failed.provider == 'codex'
+    assert failed.action == 'failed'
+    assert failed.health == 'failed'
+    assert failed.failure_reason == 'planned agent launch failure'
+    assert failed.duration_ms is not None
+    assert failed.timings_ms is not None
+    assert failed.timings_ms['build_start_cmd'] == 5.0
+    assert sum(failed.timings_ms.values()) <= failed.duration_ms
 
 
 def test_runtime_supervisor_start_passes_visible_layout_signature_to_namespace(tmp_path: Path, monkeypatch) -> None:
@@ -1275,33 +1514,472 @@ def test_runtime_supervisor_project_namespace_start_does_not_preheal_dead_bindin
     assert 'prepare_tmux_layout:demo' in summary.actions_taken
 
 
-def test_ccbd_start_marks_project_mounted_before_socket_listen(tmp_path: Path, monkeypatch) -> None:
+def test_ccbd_start_listens_and_self_probes_before_mounted_publish(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     project_root = tmp_path / 'repo-ccbd-start-order'
     (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
     (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
     bootstrap_project(project_root)
     app = CcbdApp(project_root)
-    observed: dict[str, object] = {}
+    observed: dict[str, object] = {'events': []}
     original_listen = app.socket_server.listen
+    original_probe = app.socket_server.bootstrap_readiness_probe
 
     def fake_listen() -> None:
+        observed['events'].append('listen')
         observed['lease_during_listen'] = app.mount_manager.load_state()
+        lifecycle = app.lifecycle_store.load()
+        observed['phase_during_listen'] = lifecycle.phase if lifecycle is not None else None
         original_listen()
 
+    @contextmanager
+    def tracked_probe(*, timeout_s: float):
+        observed['events'].append('probe_enter')
+        observed['lease_before_probe'] = app.mount_manager.load_state()
+        lifecycle = app.lifecycle_store.load()
+        observed['phase_before_probe'] = lifecycle.phase if lifecycle is not None else None
+        with original_probe(timeout_s=timeout_s) as payload:
+            observed['events'].append('probe_verified')
+            observed['lease_after_probe'] = app.mount_manager.load_state()
+            lifecycle = app.lifecycle_store.load()
+            observed['phase_after_probe'] = lifecycle.phase if lifecycle is not None else None
+            yield payload
+            observed['events'].append('mounted_publish')
+            observed['lease_after_publish'] = app.mount_manager.load_state()
+            lifecycle = app.lifecycle_store.load()
+            observed['phase_after_publish'] = lifecycle.phase if lifecycle is not None else None
+            observed['stage_after_publish'] = lifecycle.startup_stage if lifecycle is not None else None
+
     monkeypatch.setattr(app.socket_server, 'listen', fake_listen)
+    monkeypatch.setattr(app.socket_server, 'bootstrap_readiness_probe', tracked_probe)
     monkeypatch.setattr(app.dispatcher, 'restore_running_jobs', lambda: None)
     monkeypatch.setattr(app.dispatcher, 'last_restore_report', lambda **kwargs: None)
     monkeypatch.setattr(app.restore_report_store, 'save', lambda report: None)
 
     lease = app.start()
-    mounted_during_listen = observed.get('lease_during_listen')
+    mounted = observed.get('lease_after_publish')
+    thread_errors: list[BaseException] = []
 
-    assert mounted_during_listen is not None
-    assert mounted_during_listen.mount_state.value == 'mounted'
-    assert mounted_during_listen.generation == lease.generation
+    assert observed['events'] == ['listen', 'probe_enter', 'probe_verified', 'mounted_publish']
+    assert observed['lease_during_listen'] is None
+    assert observed['phase_during_listen'] is None
+    assert observed['lease_before_probe'] is None
+    assert observed['phase_before_probe'] == 'starting'
+    assert observed['lease_after_probe'] is None
+    assert observed['phase_after_probe'] == 'starting'
+    assert mounted is not None
+    assert mounted.mount_state.value == 'mounted'
+    assert mounted.generation == lease.generation
+    assert observed['phase_after_publish'] == 'starting'
+    assert observed['stage_after_publish'] == 'runtime_bootstrap'
     assert app.mount_manager.load_state().mount_state.value == 'mounted'
+    lifecycle = app.lifecycle_store.load()
+    assert lifecycle is not None
+    assert lifecycle.phase == 'starting'
+    assert lifecycle.startup_stage == 'runtime_bootstrap'
+    with pytest.raises(CcbdClientError, match='timed out'):
+        CcbdClient(app.paths.ccbd_socket_path, timeout_s=0.1).ping('ccbd')
+
+    def run_server() -> None:
+        try:
+            app.serve_forever(poll_interval=0.01)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    try:
+        _wait_for(app.paths.ccbd_socket_path)
+        lifecycle = app.lifecycle_store.load()
+        assert lifecycle is not None
+        assert lifecycle.phase == 'mounted'
+        assert lifecycle.startup_stage == 'mounted'
+    finally:
+        app.request_shutdown()
+        server_thread.join(timeout=3.0)
+
+    assert server_thread.is_alive() is False
+    assert thread_errors == []
+
+
+def test_ccbd_release_unlinks_owned_socket_inside_startup_lock(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-release-socket-lock'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    app.start()
+    original_lock = app.ownership_guard.startup_lock
+    original_request_shutdown = app.socket_server.request_shutdown
+    lock_active = False
+    calls: list[tuple[bool, tuple[int, int] | None]] = []
+
+    @contextmanager
+    def tracked_lock():
+        nonlocal lock_active
+        with original_lock():
+            lock_active = True
+            try:
+                yield
+            finally:
+                lock_active = False
+
+    def tracked_request_shutdown() -> None:
+        calls.append((lock_active, app.socket_server._bound_socket_stat))
+        original_request_shutdown()
+
+    monkeypatch.setattr(app.ownership_guard, 'startup_lock', tracked_lock)
+    monkeypatch.setattr(app.socket_server, 'request_shutdown', tracked_request_shutdown)
 
     app.request_shutdown()
+
+    assert calls
+    assert all(active for active, identity in calls if identity is not None)
+    assert not app.paths.ccbd_socket_path.exists()
+
+
+def test_ccbd_same_process_restart_advances_unmounted_predecessor_generation(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-same-process-restart'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    errors: list[BaseException] = []
+
+    def serve(app: CcbdApp) -> threading.Thread:
+        def run() -> None:
+            try:
+                app.serve_forever(poll_interval=0.01)
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        _wait_for(app.paths.ccbd_socket_path)
+        return thread
+
+    first = CcbdApp(project_root)
+    first_thread = serve(first)
+    first_lease = first.mount_manager.load_state()
+    assert first_lease is not None
+    first.request_shutdown()
+    first_thread.join(timeout=3.0)
+
+    second = CcbdApp(project_root)
+    assert second.pid == first.pid
+    assert second.daemon_instance_id != first.daemon_instance_id
+    second_thread = serve(second)
+    try:
+        second_lease = second.mount_manager.load_state()
+        lifecycle = second.lifecycle_store.load()
+        assert second_lease is not None
+        assert second_lease.generation == first_lease.generation + 1
+        assert lifecycle is not None
+        assert lifecycle.phase == 'mounted'
+        assert lifecycle.startup_stage == 'mounted'
+        assert lifecycle.generation == second_lease.generation
+    finally:
+        second.request_shutdown()
+        second_thread.join(timeout=3.0)
+
+    assert first_thread.is_alive() is False
+    assert second_thread.is_alive() is False
+    assert errors == []
+
+
+def test_ccbd_serve_forever_accepts_ping_while_runtime_bootstrap_is_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-continuous-accept'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    restore_entered = threading.Event()
+    release_restore = threading.Event()
+    thread_errors: list[BaseException] = []
+
+    def blocked_restore() -> None:
+        restore_entered.set()
+        if not release_restore.wait(timeout=3.0):
+            raise TimeoutError('test did not release runtime bootstrap')
+
+    def run_server() -> None:
+        try:
+            app.serve_forever(poll_interval=0.05)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    monkeypatch.setattr(app.dispatcher, 'restore_running_jobs', blocked_restore)
+    monkeypatch.setattr('ccbd.app_runtime.lifecycle.maybe_start_runtime_accelerator', lambda root: None)
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    try:
+        assert restore_entered.wait(timeout=2.0)
+        lifecycle = app.lifecycle_store.load()
+        lease = app.mount_manager.load_state()
+        assert lifecycle is not None
+        assert lifecycle.phase == 'starting'
+        assert lifecycle.startup_stage == 'runtime_bootstrap'
+        assert lease is not None
+        assert lease.mount_state.value == 'mounted'
+
+        payload = CcbdClient(app.paths.ccbd_socket_path, timeout_s=1.0).ping('ccbd')
+        assert payload['mount_state'] == 'starting'
+        assert payload['diagnostics']['startup_stage'] == 'runtime_bootstrap'
+
+        release_restore.set()
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            lifecycle = app.lifecycle_store.load()
+            if lifecycle is not None and lifecycle.startup_stage == 'mounted':
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError('runtime bootstrap did not publish final mounted stage')
+
+        payload = CcbdClient(app.paths.ccbd_socket_path, timeout_s=1.0).ping('ccbd')
+        assert app.socket_server._runtime_bootstrap_active is False
+        assert payload['diagnostics']['startup_stage'] == 'mounted'
+    finally:
+        release_restore.set()
+        app.request_shutdown()
+        server_thread.join(timeout=3.0)
+
+    assert server_thread.is_alive() is False
+    assert thread_errors == []
+
+
+def test_ccbd_final_mounted_publish_opens_request_gate_atomically(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-atomic-mounted-gate'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    mounted_persisted = threading.Event()
+    allow_gate_open = threading.Event()
+    request_waiting_on_gate = threading.Event()
+    thread_errors: list[BaseException] = []
+    request_results: list[dict] = []
+    original_save = app.lifecycle_store.save
+
+    def block_after_mounted_persist(lifecycle) -> None:
+        original_save(lifecycle)
+        if lifecycle.phase == 'mounted' and lifecycle.startup_stage == 'mounted':
+            mounted_persisted.set()
+            if not allow_gate_open.wait(timeout=3.0):
+                raise TimeoutError('test did not release final readiness publication')
+
+    def run_server() -> None:
+        try:
+            app.serve_forever(poll_interval=0.01)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    def request_ready() -> None:
+        try:
+            request_results.append(
+                CcbdClient(app.paths.ccbd_socket_path, timeout_s=2.0).request('test-ready')
+            )
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    app.socket_server._bootstrap_gate_lock = _TrackedGateLock(request_waiting_on_gate)
+    app.socket_server.register_handler('test-ready', lambda payload: {'ready': True})
+    monkeypatch.setattr(app.lifecycle_store, 'save', block_after_mounted_persist)
+    monkeypatch.setattr('ccbd.app_runtime.lifecycle.maybe_start_runtime_accelerator', lambda root: None)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    request_thread = None
+    try:
+        assert mounted_persisted.wait(timeout=2.0)
+        lifecycle = app.lifecycle_store.load()
+        assert lifecycle is not None
+        assert lifecycle.phase == 'mounted'
+        assert lifecycle.startup_stage == 'mounted'
+        assert app.socket_server._runtime_bootstrap_active is True
+
+        request_thread = threading.Thread(target=request_ready, daemon=True)
+        request_thread.start()
+        assert request_waiting_on_gate.wait(timeout=2.0)
+        assert request_thread.is_alive() is True
+        assert request_results == []
+
+        allow_gate_open.set()
+        request_thread.join(timeout=2.0)
+        assert request_thread.is_alive() is False
+        assert request_results == [{'ready': True}]
+        assert app.socket_server._runtime_bootstrap_active is False
+    finally:
+        allow_gate_open.set()
+        if request_thread is not None:
+            request_thread.join(timeout=2.0)
+        app.request_shutdown()
+        server_thread.join(timeout=3.0)
+
+    assert server_thread.is_alive() is False
+    assert thread_errors == []
+
+
+def test_ccbd_failed_final_publish_never_opens_request_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-failed-mounted-gate'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    mounted_replaced = threading.Event()
+    allow_publish_failure = threading.Event()
+    request_waiting_on_gate = threading.Event()
+    handler_calls: list[dict] = []
+    server_errors: list[BaseException] = []
+    request_errors: list[BaseException] = []
+    original_save = app.lifecycle_store.save
+
+    def fail_after_mounted_replace(lifecycle) -> None:
+        original_save(lifecycle)
+        if lifecycle.phase == 'mounted' and lifecycle.startup_stage == 'mounted':
+            mounted_replaced.set()
+            if not allow_publish_failure.wait(timeout=3.0):
+                raise TimeoutError('test did not release failed readiness publication')
+            raise OSError('planned directory fsync failure after mounted replace')
+
+    def run_server() -> None:
+        try:
+            app.serve_forever(poll_interval=0.01)
+        except BaseException as exc:
+            server_errors.append(exc)
+
+    def request_ready() -> None:
+        try:
+            CcbdClient(app.paths.ccbd_socket_path, timeout_s=3.0).request('test-ready')
+        except BaseException as exc:
+            request_errors.append(exc)
+
+    def handle_ready(payload: dict) -> dict:
+        handler_calls.append(payload)
+        return {'ready': True}
+
+    app.socket_server._bootstrap_gate_lock = _TrackedGateLock(request_waiting_on_gate)
+    app.socket_server.register_handler('test-ready', handle_ready)
+    monkeypatch.setattr(app.lifecycle_store, 'save', fail_after_mounted_replace)
+    monkeypatch.setattr('ccbd.app_runtime.lifecycle.maybe_start_runtime_accelerator', lambda root: None)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    request_thread = None
+    try:
+        assert mounted_replaced.wait(timeout=2.0)
+        lifecycle = app.lifecycle_store.load()
+        assert lifecycle is not None
+        assert lifecycle.phase == 'mounted'
+        assert lifecycle.startup_stage == 'mounted'
+
+        request_thread = threading.Thread(target=request_ready, daemon=True)
+        request_thread.start()
+        assert request_waiting_on_gate.wait(timeout=2.0)
+        assert request_thread.is_alive() is True
+        assert handler_calls == []
+
+        allow_publish_failure.set()
+        request_thread.join(timeout=3.0)
+        server_thread.join(timeout=3.0)
+    finally:
+        allow_publish_failure.set()
+        if request_thread is not None:
+            request_thread.join(timeout=3.0)
+        if server_thread.is_alive():
+            app.request_shutdown()
+            server_thread.join(timeout=3.0)
+
+    assert request_thread is not None
+    assert request_thread.is_alive() is False
+    assert server_thread.is_alive() is False
+    assert handler_calls == []
+    assert len(request_errors) == 1
+    assert isinstance(request_errors[0], CcbdClientError)
+    assert 'stopping' in str(request_errors[0])
+    assert any(
+        'planned directory fsync failure after mounted replace' in str(error)
+        for error in server_errors
+    )
+    lifecycle = app.lifecycle_store.load()
+    assert lifecycle is not None
+    assert lifecycle.phase == 'failed'
+    assert app.socket_server._stop_event.is_set()
+    assert app.socket_server._runtime_bootstrap_active is False
+
+
+def test_second_starting_child_cannot_unlink_first_child_socket(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-starting-owner-race'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    first = CcbdApp(project_root)
+    second = CcbdApp(project_root)
+    probe_verified = threading.Event()
+    allow_publish = threading.Event()
+    thread_errors: list[BaseException] = []
+    original_probe = first.socket_server.bootstrap_readiness_probe
+
+    @contextmanager
+    def delayed_probe(*, timeout_s: float):
+        with original_probe(timeout_s=timeout_s) as payload:
+            probe_verified.set()
+            if not allow_publish.wait(timeout=3.0):
+                raise TimeoutError('test did not release mounted publication')
+            yield payload
+
+    def run_first() -> None:
+        try:
+            first.start()
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    monkeypatch.setattr(first.socket_server, 'bootstrap_readiness_probe', delayed_probe)
+    monkeypatch.setattr(first.dispatcher, 'restore_running_jobs', lambda: None)
+    monkeypatch.setattr(first.dispatcher, 'last_restore_report', lambda **kwargs: None)
+    monkeypatch.setattr('ccbd.app_runtime.lifecycle.maybe_start_runtime_accelerator', lambda root: None)
+    first_thread = threading.Thread(target=run_first, daemon=True)
+    first_thread.start()
+    try:
+        assert probe_verified.wait(timeout=2.0)
+        before = first.paths.ccbd_socket_path.stat()
+        before_identity = (int(before.st_dev), int(before.st_ino))
+
+        with pytest.raises(StartupFenceError, match='already claimed by another child'):
+            second.start()
+
+        after = first.paths.ccbd_socket_path.stat()
+        assert (int(after.st_dev), int(after.st_ino)) == before_identity
+        lifecycle = first.lifecycle_store.load()
+        assert lifecycle is not None
+        assert lifecycle.phase == 'starting'
+        assert lifecycle.owner_daemon_instance_id == first.daemon_instance_id
+    finally:
+        allow_publish.set()
+        first_thread.join(timeout=3.0)
+        if first.lease is not None:
+            first.request_shutdown()
+
+    assert first_thread.is_alive() is False
+    assert thread_errors == []
 
 
 def test_ccbd_start_rolls_back_mount_when_restore_fails(tmp_path: Path, monkeypatch) -> None:
@@ -1313,11 +1991,15 @@ def test_ccbd_start_rolls_back_mount_when_restore_fails(tmp_path: Path, monkeypa
     monkeypatch.setattr(app.dispatcher, 'restore_running_jobs', lambda: (_ for _ in ()).throw(RuntimeError('boom')))
 
     with pytest.raises(RuntimeError, match='boom'):
-        app.start()
+        app.serve_forever(poll_interval=0.01)
 
     lease = app.mount_manager.load_state()
+    lifecycle = app.lifecycle_store.load()
     assert lease is not None
     assert lease.mount_state.value == 'unmounted'
+    assert lifecycle is not None
+    assert lifecycle.phase == 'failed'
+    assert lifecycle.last_failure_reason == 'boom'
     assert not app.paths.ccbd_socket_path.exists()
 
 
@@ -1364,18 +2046,137 @@ def test_ccbd_start_daemon_boot_adopts_existing_runtime_authority(tmp_path: Path
     monkeypatch.setattr(app.restore_report_store, 'save', lambda report: None)
 
     lease = app.start()
+    thread_errors: list[BaseException] = []
+
+    def run_server() -> None:
+        try:
+            app.serve_forever(poll_interval=0.01)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    try:
+        _wait_for(app.paths.ccbd_socket_path)
+        updated = app.registry.get('demo')
+        helper = load_helper_manifest(app.paths.agent_helper_path('demo'))
+
+        assert lease.generation == 6
+        assert updated is not None
+        assert updated.binding_generation == 6
+        assert updated.runtime_generation == 6
+        assert updated.daemon_generation == 6
+        assert updated.started_at != old_started_at
+        assert helper is not None
+        assert helper.runtime_generation == 6
+        assert helper.owner_daemon_generation == 6
+        assert helper.started_at == updated.started_at
+    finally:
+        app.request_shutdown()
+        server_thread.join(timeout=3.0)
+
+    assert server_thread.is_alive() is False
+    assert thread_errors == []
+
+
+def test_ccbd_probe_failure_does_not_adopt_unmounted_runtime_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-probe-failure-no-adopt'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    runtime_root = app.paths.agent_provider_runtime_dir('demo', 'codex')
+    old_started_at = '2026-04-20T00:00:00Z'
+    app.registry.upsert(
+        AgentRuntime(
+            agent_name='demo',
+            state=AgentState.IDLE,
+            pid=123,
+            started_at=old_started_at,
+            last_seen_at=old_started_at,
+            runtime_ref='tmux:%1',
+            session_ref='session-1',
+            workspace_path=str(app.paths.workspace_path('demo')),
+            project_id=app.project_id,
+            backend_type='pane-backed',
+            queue_depth=0,
+            socket_path=None,
+            health='healthy',
+            provider='codex',
+            runtime_root=str(runtime_root),
+            runtime_pid=123,
+            terminal_backend='tmux',
+            pane_id='%1',
+            active_pane_id='%1',
+            pane_state='alive',
+            binding_generation=5,
+            runtime_generation=5,
+            daemon_generation=5,
+        )
+    )
+    restore_calls = []
+
+    @contextmanager
+    def invalid_probe(*, timeout_s: float):
+        del timeout_s
+        yield {'project_id': 'wrong-project'}
+
+    monkeypatch.setattr(app.ownership_guard, 'verify_or_takeover', lambda **kwargs: 6)
+    monkeypatch.setattr(app.socket_server, 'bootstrap_readiness_probe', invalid_probe)
+    monkeypatch.setattr(app.dispatcher, 'restore_running_jobs', lambda: restore_calls.append(True))
+
+    with pytest.raises(RuntimeError, match='project_id mismatch'):
+        app.start()
+
     updated = app.registry.get('demo')
-    helper = load_helper_manifest(app.paths.agent_helper_path('demo'))
-
-    assert lease.generation == 6
+    lifecycle = app.lifecycle_store.load()
     assert updated is not None
-    assert updated.binding_generation == 6
-    assert updated.runtime_generation == 6
-    assert updated.daemon_generation == 6
-    assert updated.started_at != old_started_at
-    assert helper is not None
-    assert helper.runtime_generation == 6
-    assert helper.owner_daemon_generation == 6
-    assert helper.started_at == updated.started_at
+    assert updated.binding_generation == 5
+    assert updated.runtime_generation == 5
+    assert updated.daemon_generation == 5
+    assert updated.started_at == old_started_at
+    assert load_helper_manifest(app.paths.agent_helper_path('demo')) is None
+    assert restore_calls == []
+    assert app.mount_manager.load_state() is None
+    assert lifecycle is not None
+    assert lifecycle.phase == 'failed'
+    assert not app.paths.ccbd_socket_path.exists()
 
-    app.request_shutdown()
+
+def test_ccbd_mounted_lifecycle_write_failure_unmounts_new_lease(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-ccbd-mounted-write-failure'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    app = CcbdApp(project_root)
+    original_save = app.lifecycle_store.save
+
+    def fail_mounted_save(lifecycle) -> None:
+        if lifecycle.phase == 'mounted':
+            raise OSError('planned mounted lifecycle write failure')
+        original_save(lifecycle)
+
+    monkeypatch.setattr(app.lifecycle_store, 'save', fail_mounted_save)
+
+    with pytest.raises(OSError, match='planned mounted lifecycle write failure'):
+        app.serve_forever(poll_interval=0.01)
+
+    lease = app.mount_manager.load_state()
+    lifecycle = app.lifecycle_store.load()
+    assert lease is not None
+    assert lease.mount_state.value == 'unmounted'
+    assert lease.ccbd_pid == app.pid
+    assert lease.daemon_instance_id == app.daemon_instance_id
+    assert lifecycle is not None
+    assert lifecycle.phase == 'failed'
+    assert lifecycle.owner_pid is None
+    assert lifecycle.owner_daemon_instance_id is None
+    assert app.socket_server._worker_thread is None
+    assert app.socket_server._runtime_bootstrap_active is False
+    assert not app.paths.ccbd_socket_path.exists()

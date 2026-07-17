@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ccbd.lifecycle_report_store import CcbdShutdownReportStore, CcbdStartupReportStore
-from ccbd.models import CcbdShutdownReport, CcbdStartupReport
+from ccbd.models import CcbdShutdownReport, CcbdStartupAgentResult, CcbdStartupReport
 from ccbd.services.project_namespace_state import ProjectNamespaceEvent, ProjectNamespaceEventStore, ProjectNamespaceState, ProjectNamespaceStateStore
 from cli.context import CliContextBuilder
 from cli.models import ParsedDoctorCommand
@@ -593,14 +593,28 @@ def test_doctor_summary_includes_startup_and_shutdown_report_fields(tmp_path: Pa
             auto_permission=False,
             daemon_generation=2,
             daemon_started=True,
+            startup_run_id='start_' + 'c' * 32,
             config_signature='sig-1',
             inspection={},
             restore_summary={},
             actions_taken=('launch_runtime:demo',),
             cleanup_summaries=(),
-            agent_results=(),
+            agent_results=(
+                CcbdStartupAgentResult(
+                    agent_name='demo',
+                    provider='codex',
+                    action='launched',
+                    health='healthy',
+                    workspace_path=str(project_root),
+                    timings_ms={
+                        'build_start_cmd': 8.0,
+                        'authority_commit': 1.0,
+                    },
+                ),
+            ),
             failure_reason=None,
             timings_ms={'flow_total': 12.5},
+            operation_counts={'tmux_backend_command_count': 4},
         )
     )
     CcbdShutdownReportStore(context.paths).save(
@@ -626,8 +640,18 @@ def test_doctor_summary_includes_startup_and_shutdown_report_fields(tmp_path: Pa
     assert payload['ccbd']['startup_last_trigger'] == 'start_command'
     assert payload['ccbd']['startup_last_status'] == 'ok'
     assert payload['ccbd']['startup_last_daemon_started'] is True
+    assert payload['ccbd']['startup_last_run_id'] == 'start_' + 'c' * 32
     assert payload['ccbd']['startup_last_timings_ms'] == {'flow_total': 12.5}
+    assert payload['ccbd']['startup_last_operation_counts'] == {
+        'tmux_backend_command_count': 4,
+    }
     assert payload['ccbd']['startup_last_provider_prepare_count'] == 0
+    assert payload['ccbd']['startup_last_agent_timings_ms'] == {
+        'demo': {
+            'build_start_cmd': 8.0,
+            'authority_commit': 1.0,
+        }
+    }
     assert payload['ccbd']['shutdown_last_trigger'] == 'kill'
     assert payload['ccbd']['shutdown_last_status'] == 'ok'
     assert payload['ccbd']['shutdown_last_reason'] == 'kill'

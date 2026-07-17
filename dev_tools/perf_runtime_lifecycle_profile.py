@@ -402,10 +402,19 @@ def _aggregate_phase(samples: list[ProcessSample]) -> dict[str, Any]:
 
 
 def _summarize_command(command: str, *, limit: int = 240) -> str:
+    del limit
     text = ' '.join(str(command or '').split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + '...'
+    if not text:
+        return 'executable:<unknown>'
+    if text.lower().startswith('tmux: server'):
+        return 'executable:tmux-server'
+    tokens = text.split()
+    executable = Path(tokens[0].strip("'\"")).name or '<unknown>'
+    if executable.startswith('python') and len(tokens) > 1:
+        script = Path(tokens[1].strip("'\"")).name
+        if script and not script.startswith('-'):
+            return f'executable:{executable}:{script}'
+    return f'executable:{executable}'
 
 
 def _top_bucket_commands(
@@ -476,7 +485,11 @@ def _run_startup_phase(options: LifecycleProfileOptions, *, project_root: Path, 
     elapsed = round(time.perf_counter() - start, 6)
     timed_out = elapsed >= command_timeout_s
     summary = _aggregate_phase(samples)
-    summary['command'] = {'kind': 'startup_subprocess', 'argv': list(command)}
+    summary['command'] = {
+        'kind': 'startup_subprocess',
+        'executable': Path(command[0]).name if command else None,
+        'argv_persisted': False,
+    }
     summary['metadata'] = {
         'samples_requested': max(1, options.startup_samples),
         'sample_interval_s': options.sample_interval_s,
@@ -565,7 +578,8 @@ def _run_load_phase_with_storm(options: LifecycleProfileOptions, *, project_root
         'ask_count': options.ask_count,
         'ask_concurrency': options.ask_concurrency,
         'ask_agent': options.ask_agent,
-        'message': options.ask_message,
+        'message_bytes': len(options.ask_message.encode('utf-8')),
+        'message_persisted': False,
     }
     summary['metadata'] = {
         'samples_requested': max(1, options.load_samples),
@@ -615,7 +629,11 @@ def _run_load_phase_with_command(
 
     elapsed = round(time.perf_counter() - start, 6)
     summary = _aggregate_phase(samples)
-    summary['command'] = {'kind': 'load_subprocess', 'argv': list(options.load_command)}
+    summary['command'] = {
+        'kind': 'load_subprocess',
+        'executable': Path(options.load_command[0]).name if options.load_command else None,
+        'argv_persisted': False,
+    }
     summary['metadata'] = {
         'samples_requested': max(1, options.load_samples),
         'sample_interval_s': options.sample_interval_s,
@@ -672,7 +690,8 @@ def run_lifecycle_profile(options: LifecycleProfileOptions) -> dict[str, Any]:
             'ask_count': options.ask_count,
             'ask_concurrency': options.ask_concurrency,
             'ask_agent': options.ask_agent,
-            'ask_message': options.ask_message,
+            'ask_message_bytes': len(options.ask_message.encode('utf-8')),
+            'ask_message_persisted': False,
             'skip_startup': options.skip_startup,
             'skip_load': options.skip_load,
             'startup_command_timeout_s': options.startup_command_timeout_s,

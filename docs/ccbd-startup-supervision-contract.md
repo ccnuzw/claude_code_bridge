@@ -292,6 +292,9 @@ Managed provider startup mutation rules:
     preparation because no provider process is being launched
   - a missing or rejected binding performs exactly one
     `prepare_provider_workspace` pass before its launch or relaunch
+  - startup must resolve one canonical effective start command before provider
+    run-cwd resolution and preparation; that same resolved command must govern
+    permission projection and the later launch without policy recomputation
   - the launch path must consume that prepared state and must not repeat profile
     materialization or provider-home projection
 - content-addressable generated records and projections must not be replaced or
@@ -386,12 +389,125 @@ Startup must be a single project-scoped transaction:
 11. commit startup actions
 12. emit startup result and persist startup report
 
+Lifecycle startup mutation rules:
+
+- durable atomic replacement prevents partial JSON, but it does not make a
+  lifecycle `load -> modify -> save` sequence transactional.  CLI running
+  intent, keeper lifecycle initialization, and keeper startup transaction
+  creation must therefore serialize through the project `startup.lock` and
+  reload lifecycle plus lease inspection after acquiring it
+- a CLI start may transition `desired_state=stopped` to `running`; when the
+  current desired state is already `running`, it must not rewrite the complete
+  lifecycle record, clear keeper/daemon observations, or project a newer disk
+  config signature into an already accepted generation
+- keeper must allocate `startup_id` and generation and durably publish
+  `phase=starting` inside that short locked transaction, then release the lock
+  before spawning or waiting for the child because the child acquires the same
+  lock while claiming backend ownership
+- keeper success and failure finalization must reload lifecycle under the lock
+  and compare both `startup_id` and generation.  A stale transaction must not
+  overwrite a newer startup, a concurrent stop, or fields already published by
+  the child; a matching child-published `mounted` record is already final and
+  must not be redundantly rebuilt from the pre-spawn `starting` snapshot
+- every lifecycle or lease read-modify-write that can overlap start, stop,
+  heartbeat, keeper observation, reload-signature handoff, or namespace-epoch
+  publication must use that same `startup.lock`, reload current authority after
+  acquiring it, and revalidate desired state, generation, startup identity, and
+  lease holder before saving.  An atomic file replace is not a substitute for
+  this cross-process transaction rule
+- keeper passes its exact `startup_id + generation` to the child through a
+  one-shot environment fence.  The child consumes the fence, rejects a missing
+  or contradictory lifecycle before claiming the lease, and must use the
+  keeper-assigned generation even when an earlier failed generation never
+  created `lease.json`
+- an unfenced compatibility child must reject a keeper-owned `phase=starting`
+  record with a startup id.  It may not reinterpret that transaction as a
+  legacy direct start, reset its generation, or overwrite its latest report
+- immediately after the durable `phase=starting` save returns, keeper samples
+  the host monotonic performance counter while still inside the short startup
+  transaction and may carry that diagnostics-only value in the same one-shot
+  child environment.  The child consumes and removes it at process entry; a
+  missing or malformed value must not block startup and must never become
+  lifecycle, lease, or report authority
+- child progress, mounted publication, failure cleanup, unmount, heartbeat,
+  and latest daemon-boot report publication are generation-fenced.  Once a
+  stop or newer startup supersedes the transaction, the old child may exit but
+  must not rewrite lifecycle, lease, socket authority, or the latest startup
+  report
+- child startup order is bind/listen, durable starting-owner claim, ping-only
+  self-probe through the normal request worker, mounted lease publication,
+  fenced runtime restore/adopt, and finally lifecycle `phase=mounted` with
+  `startup_stage=mounted`.  The self-probe and runtime bootstrap do not hold
+  `startup.lock`; every authority transition reacquires the short lock and
+  revalidates generation, owner PID, daemon instance, socket path, and startup
+  id when present
+- the normal accept loop must be active while the post-probe runtime bootstrap
+  runs.  During that bounded interval lifecycle remains
+  `phase=starting/startup_stage=runtime_bootstrap`; ping is serviceable but
+  non-ping RPC remains gated.  Runtime restore, handoff recovery, and runtime
+  adoption recheck authority between recoverable units, and only the child may
+  promote this active transaction.  Keeper steady-state observation must not
+  synthesize mounted from the interim mounted lease.  That suppression applies
+  only when lifecycle generation, owner PID, daemon instance, and socket path
+  match the observed mounted lease; a stale child stage must not mask a live
+  replacement generation
+- direct `CcbdApp.start()` prepares only through the self-probe, interim mounted
+  lease, and `starting/runtime_bootstrap`.  It must not publish final mounted
+  without continuous accept.  A later `serve_forever()` detects that prepared
+  transaction, starts the accept/maintenance loops, completes fenced runtime
+  bootstrap, and only then publishes `mounted/mounted`
+- final `mounted/mounted` persistence and opening the normal-RPC bootstrap gate
+  are one request-dispatch transaction.  The socket gate remains closed while
+  the durable lifecycle save runs; a request that observed the socket in that
+  interval waits at the gate and may enter its handler only after publication
+  succeeds.  Request dispatch must distinguish `_stop_event` from a ready gate:
+  shutdown may clear per-attempt bootstrap flags for cleanup, but it must never
+  make an accepted request runnable after serving has stopped
+- runtime-bootstrap completion requires an explicit publication callback and
+  validates the listening socket, active bootstrap state, stop state, sticky
+  worker error, and live request worker both before and after that callback.
+  Any callback or validation failure sets the serving stop event while the gate
+  is still held.  This includes a durable write that completed `replace` but
+  failed its directory `fsync`: neither ping nor a normal RPC may interpret the
+  visible mounted record as successful readiness
+- an unfenced same-process restart may reuse the OS PID but not the daemon
+  instance.  Once its next generation has been allocated, mounted publication
+  validates that exact generation and new daemon instance rather than
+  recomputing ownership from PID/socket equality
+- shutdown intent and `desired_state=stopped` are one locked transaction.
+  Delayed shutdown finalization must confirm that the same project still has a
+  live shutdown intent and remains stopped; it is a no-op after a later start
+  has cleared the intent or published a running transaction
+- keeper readiness accepts a child only when the ping comes from the exact
+  spawned PID and daemon instance and the response independently reports the
+  expected lease generation plus a matching `mounted/running` lifecycle,
+  startup id, and mounted startup stage.  The ping itself is linearly ordered
+  after the final publication gate opens; serving-process memory or a mounted
+  file observed while that gate is held is not sufficient authority
+- if readiness waiting fails or times out, keeper must terminate and reap only
+  the independently spawned child process group before recording the failed
+  attempt; a late child must not remain able to publish authority
+- config loading, process creation, ping/readiness waiting, and other unbounded
+  work must remain outside the startup lock
+
+Each foreground start command owns one `startup_run_id`. The CLI sends that
+identity with the scoped start RPC, the daemon persists it while still holding
+the start transaction lock, and the RPC response echoes it. The daemon is the
+only authority that writes the `start_command` startup report; foreground code
+must never perform a post-RPC read-modify-write of the latest report because a
+later serialized start may already have replaced it.
+
 Startup critical-path rules:
 
 - one existing-namespace validation pass should reuse one tmux pane snapshot
   for topology validation, active-pane discovery, and binding membership; a
   failed snapshot may fall back to direct inspection without weakening identity
   checks
+- because that snapshot is server-wide, authoritative topology matching must
+  reject panes outside the project session, panes owned by another project,
+  stale namespace epochs, and dead panes before cmd, agent, sidebar, or tool
+  cardinality is evaluated; duplicate identities in sibling sessions must not
+  force recreation of an otherwise valid current namespace
 - Codex live-process validation for one startup batch must lazily reuse one
   `/proc` parent-map snapshot; the snapshot scope must end before post-launch
   validation so newly launched processes cannot be hidden by stale data
@@ -403,20 +519,81 @@ Startup critical-path rules:
 - startup reports must expose stage and per-agent timings so optimization and
   regressions can be evaluated from persisted evidence rather than inferred
   from foreground attach latency
+- reuse of an already accepted binding preserves its existing successful
+  `healthy` or `restored` runtime health. Startup reporting must read the final
+  post-restore runtime authority, so a no-op warm start neither reports a
+  pre-restore classification nor rewrites restored provenance as healthy
+- non-interactive foreground start observations must separately expose real
+  CLI phase timings for pre-RPC workspace reconciliation, daemon ensure, the
+  start RPC, and all synchronous post-RPC work through `start_agents` return;
+  rendering and interactive attach remain outside that measurement boundary
+
+Startup readiness diagnostics:
+
+- readiness evidence is a correlated diagnostics timeline, not lifecycle
+  authority and not a second startup state machine
+- T0 is current `ccb.py` entry; source-wrapper/Python bootstrap before T0 is
+  measured separately and must not be folded into a daemon milestone
+- T1 is the keeper's acceptance of the correlated startup intent/startup id.
+  For a cold start, the exact diagnostics checkpoint is the host monotonic
+  sample taken immediately after the durable `phase=starting` save returns.
+  It may replace the CLI observation upper bound only when startup id,
+  generation, current daemon lease identity, and
+  `T0 <= T1 <= T2 <= RPC` all match.  Otherwise the later CLI observation
+  remains `observed_upper_bound`, never exact T1
+- T2 is the compatible current-generation control-plane handle; T3 is the
+  current project namespace/session becoming attachable; T4 is authority
+  commit for the effective requested Agent set; T6 is authority commit for
+  the full desired Agent set
+- T5 is actual foreground attach/first-frame readiness.  A `--no-attach`
+  measurement records `not_applicable_no_attach` and must not estimate T5
+- the absolute host monotonic origin and keeper-acceptance counter may cross
+  local process/RPC boundaries only as transient diagnostics input.  Startup
+  reports persist relative durations, trace/run/generation correlation,
+  status, source provenance, and Agent scopes, but never either raw counter
+- successful cold no-attach evidence with an exact checkpoint is ordered
+  `T0 <= T1 <= T2 <= RPC <= T3 <= T4 <= T6`; the provisional fallback uses
+  `T1-upper-bound == T2`.  T4 must name exactly the effective requested set and
+  T6 exactly the configured desired set
+- malformed readiness input, provenance mismatch, missing positive generation,
+  a clock observation before the origin, or a repeated later observation must
+  be ignored or rejected without changing startup behavior.  The first valid
+  observation for a milestone wins
+- a structurally complete timeline that still contains a cold T1 upper bound
+  is provisional measurement evidence and must not satisfy the exact keeper
+  checkpoint gate.  A warm already-mounted start records
+  `not_required_already_mounted` and must not reuse the daemon boot checkpoint
 
 Startup waiter rules:
 
-- lifecycle `phase=mounted` publishes backend control-plane readiness only
+- lifecycle `phase=mounted` with `startup_stage=mounted` publishes backend
+  control-plane readiness only; `phase=starting/startup_stage=runtime_bootstrap`
+  is observable progress and is not caller-ready
 - control-plane readiness means:
   - the current authoritative generation bound the project socket
   - the current authoritative generation answers the minimal control-plane readiness probe for that socket
   - the current authoritative generation published the matching current lease authority
+- the child self-probe must traverse the normal request worker and validate a
+  one-time nonce plus project/generation/PID/daemon-instance/startup identity.
+  Connections already waiting before the self-client are deferred so a slow
+  half-request cannot consume the self-probe budget; deferred mutations remain
+  behind the bootstrap gate
 - the socket server must keep accepting control-plane connections even when an earlier client connects but does not send a complete request:
   - accepted connections must have a bounded request-read timeout
   - accept and request handling must be decoupled so the kernel listen queue is not consumed by one bad or slow client
   - request handlers and heartbeat/reconcile ticks must still execute serially in one worker lane, preserving current runtime-file write ordering
   - mutating-operation post-request ticks, including the double tick after `submit`, must remain synchronous with the handled request in that worker lane
-  - worker-lane heartbeat/reconcile failures must terminate the serving loop and release backend ownership; the server must not remain accept-only with a dead worker lane
+- worker-lane heartbeat/reconcile failures must terminate the serving loop and release backend ownership; the server must not remain accept-only with a dead worker lane:
+  - the first request/maintenance worker failure in one bound-socket generation
+    is sticky until the serving loop observes and raises it.  Starting the other
+    worker or entering `serve_forever()` must not clear an error recorded after
+    the self-probe; error state is reset only when a fresh socket generation is
+    successfully bound
+- the bootstrap gate covers the readiness decision through handler start.  It
+  is not released between checking bootstrap/stop state and selecting a normal
+  handler.  This preserves fail-closed shutdown semantics without adding a
+  second request lane; the steady-state cost is one uncontended in-process lock
+  per parsed RPC
 - clients may retry transient connect failures such as `ENOENT`, `ECONNREFUSED`, and `EAGAIN` inside the caller's existing RPC timeout budget, but must not retry after a request has been sent
 - commands that only need control-plane RPC, including `ccb ask`, `ping`, `pend`, `watch`, `queue`, and similar daemon callers, must stop waiting at control-plane readiness
 - those non-foreground callers must not wait for project-namespace attachability or full desired-agent recovery before submitting work
@@ -525,11 +702,35 @@ Project namespace compatibility:
 
 - namespace `layout_version` covers visible pane topology and project-socket tmux UI contract, not just split geometry
 - project namespace state must also persist the current visible layout signature produced from `.ccb/ccb.config` after foreground pruning
+- for legacy `layout` configurations, the topology projection and signature
+  must retain the `cmd` leaf when `cmd_enabled=true`; `cmd` remains excluded
+  from `WindowSpec.agent_names` because it is a namespace slot, not an agent
 - when stored namespace `layout_version` differs from the current code contract, startup must recreate the project namespace rather than trying to mutate a stale session in place
 - when the stored visible layout signature differs from the desired visible layout signature for the current foreground start, startup must recreate the project namespace rather than incrementally splitting an old pane tree
 - when startup creates a fresh project namespace session, the root pane must begin as a silent placeholder process rather than an interactive shell
 - when startup creates a fresh project namespace session for an interactive foreground `ccb`, the initial tmux session size should come from that foreground terminal-size hint rather than a detached fixed-size default
-- for a fresh namespace, the `cmd` pane bootstrap happens only after layout finalization and must replace that silent placeholder in place
+- for a fresh namespace, the `cmd` pane bootstrap happens only after layout
+  finalization and must replace the unique authoritative `role=cmd,slot=cmd`
+  silent placeholder in place
+- topology materialization must allocate and label `cmd`, sidebar, agent, and
+  tool panes as distinct slots; startup must carry the exact authoritative cmd
+  pane id from the current session/project/window/namespace-epoch snapshot and
+  must never infer cmd from the first or physical root pane in a window
+- project topology validation must distinguish structural slot ownership from
+  process liveness.  An Agent pane that still has the exact current
+  session/project/role/slot/logical-window/managed-by/namespace-epoch identity
+  remains the structural owner of that slot even when `pane_dead=1`; it must be
+  assigned back to the normal target-only respawn path rather than interpreted
+  as whole-topology loss.  Active-pane, binding-reuse, focus, and UI decisions
+  remain live-only
+- logical-window existence is structural as well: a window containing only an
+  exact current dead Agent pane still exists.  Missing, duplicate, foreign,
+  wrong-session, wrong-project, wrong-window, or wrong-epoch slots remain
+  fail-closed and must not be accepted as current topology
+- a topology-managed `cmd` project with a missing or duplicate authoritative
+  cmd pane must fail closed or recreate with reason
+  `topology_cmd_panes_changed`; it must not respawn a sidebar or agent pane as
+  cmd
 - project-namespace bootstrap must create the authoritative silent-placeholder session as its first tmux mutation:
   - startup must not issue a standalone `start-server` before `new-session`, because a tmux server with no session may exit immediately
   - `new-session` must establish the server and authoritative project session in one operation
@@ -595,11 +796,13 @@ For `cmd`-enabled projects:
 
 - `cmd` is a project-namespace slot, not an entry in `AgentRegistry`
 - `cmd` supervision must therefore happen at the namespace layer, not by pretending `cmd` is a provider runtime
-- a healthy `cmd` slot means the authoritative workspace root pane still matches:
+- a healthy `cmd` slot means exactly one authoritative pane in the configured
+  workspace window still matches (the physical root pane may be a sidebar):
   - `role=cmd`
   - `slot_key=cmd`
   - `managed_by=ccbd`
-  - current authoritative workspace `window_id`
+  - current project session and `namespace_epoch`
+  - current authoritative logical workspace window
 
 ### 5.7 Pane Death Recovery Contract
 
@@ -621,6 +824,15 @@ Important rule:
 - when `cmd` is enabled, pane death or slot drift for `cmd` must also be detected and repaired on heartbeat even if no user command is running in that pane
 - `cmd` recovery must first try session-preserving local slot replacement inside the current workspace window before escalating to project reflow
 - ordinary `pane-dead` / `pane-missing` recovery must not use project-server destruction as the first-line path
+- a provider-declared terminal recovery block is not ordinary pane death. For
+  revoked Codex auth, runtime authority must transition to degraded health
+  `provider-auth-revoked` with `reconcile_state=blocked`, preserve the
+  actionable login/remount reason, and stop heartbeat recovery, replacement
+  pane creation, dispatcher starts, and further `restart_count` increments
+  until an explicit remount repairs or replaces that authority
+- a still-present, exact-owned `pane-dead` Agent leaf is not a namespace
+  recreate reason.  Namespace identity and healthy peer runtime identity must
+  remain unchanged while the dead target alone is prepared and respawned
 - pane-backed runtime authority must carry `slot_key`, current logical-window
   `window_id`, logical window name when explicit, and `workspace_epoch`; pane id
   is evidence, not identity
@@ -661,11 +873,24 @@ Manual pane restart:
 Project-socket cleanup rules:
 
 - startup must compute the authoritative active pane set for the current project-owned tmux socket
+- the protected active set contains only one live exact match for each pane
+  identity expected by the current topology.  A same-session/project/epoch pane
+  with an unknown or removed role/slot/window identity is residue, not active
+  authority, and must remain outside that set so ordinary orphan cleanup can
+  remove it without forcing a namespace rebuild
 - same-socket pane/session residue is evidence only; it must not be silently tolerated just because it lives on the project socket
 - startup must clean project-owned orphan panes on the project socket during the startup transaction, not wait for a later manual cleanup path
 - UNIX-socket cleanup must be identity-safe:
   - a daemon may unlink the project socket path only if the current filesystem entry is still the exact socket inode it bound
   - startup must not blind-unlink an existing project socket path merely because the path exists; it must first prove that the current inode belongs to the same authoritative generation or to a fully invalidated predecessor
+  - a live existing UNIX socket or a non-socket filesystem entry must fail
+    closed and remain untouched; only an unconnectable socket whose inode is
+    unchanged across the stale check may be removed
+  - bind/listen/timeout setup is one local resource transaction: any failure
+    closes the new fd and unlinks only the inode created by that attempt
+  - closing the owned fd, checking/unlinking its path, and releasing lease/
+    lifecycle authority must run under the same project `startup.lock` used by
+    bind.  Worker joins run after releasing that lock
   - shutting down an old daemon must never remove a newer daemon's replacement socket path
 
 ### 5.8 Daemon Must Not Stay Dead
@@ -743,6 +968,9 @@ That means:
 - lease writes that transition backend authority to `unmounted` must be holder-safe:
   - daemon-local shutdown paths may only unmount the lease they still own
   - CLI or keeper cleanup paths acting on an inspected lease must not overwrite a newer holder that took over after inspection
+  - a holder mismatch is not equivalent to a missing lease.  Lifecycle-only
+    fallback cleanup is allowed only after a fresh locked read proves no lease
+    exists; a foreign mounted lease leaves lifecycle authority untouched
 - long-lived provider helper groups must also be cleaned as part of the same authoritative shutdown transaction:
   - helper cleanup must be keyed by slot ownership and runtime generation, not by blind global process-name scans
   - helper orphan sweeping is a safety fuse, not the normal meaning of `ccb kill`
@@ -756,6 +984,7 @@ At minimum, the supervision model must distinguish these states:
 - `healthy`
 - `recovering`
 - `degraded`
+- `blocked`
 - `stopped`
 - `failed`
 
@@ -765,6 +994,9 @@ For desired agents, `recovering` and `degraded` are not the same:
   - daemon currently owns a live reconcile attempt
 - `degraded`
   - agent is not healthy and no active recovery has yet succeeded
+- `blocked`
+  - recovery reached a terminal provider condition requiring explicit user
+    action; daemon heartbeat must preserve the reason without retrying
 
 The current code already records `degraded`, but the target contract requires a distinct supervised recovery state.
 
@@ -877,7 +1109,10 @@ Required write semantics:
   `runtime.json`; daemon-owned mount start, attach, success finalize, and
   failure finalize must all compare against that token before writing authority
 - if an external attach supersedes a daemon-owned mount attempt, older attach or
-  finalize paths may emit diagnostics evidence but must not retake authority
+  finalize paths may emit diagnostics evidence but must not retake authority;
+  a foreground start whose attempt-scoped attach is rejected must fail closed
+  before restore bookkeeping and must not report the superseded launch as
+  mounted
 - runtime authority writes must go through the explicit agent-authority path (`attach` / authority-adopt / authority-mutate equivalents), not through generic outer-layer state patching
 - generic runtime state patching may update operational fields such as `state`, `health`, queue/reconcile markers, and last-seen timestamps, but must not mutate epoch/binding ownership fields
 - registry persistence must reject non-authority writes that attempt to change authority-owned fields for an existing runtime record

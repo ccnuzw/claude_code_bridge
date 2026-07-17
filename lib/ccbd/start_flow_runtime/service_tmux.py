@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from cli.services.tmux_start_layout import TmuxStartLayout
+from runtime_observability import record_startup_operation
 
 from .binding import bootstrap_project_namespace_cmd_pane
 from .layout import cleanup_start_tmux_orphans, prepare_start_layout, session_root_pane
@@ -12,10 +13,18 @@ def tmux_namespace_runtime(
     tmux_socket_path: str | None,
     tmux_session_name: str | None,
     tmux_workspace_window_name: str | None,
+    namespace_cmd_pane: str | None = None,
+    namespace_topology_managed: bool = False,
+    cmd_enabled: bool = False,
 ):
     tmux_backend = deps.tmux_backend_cls(socket_path=tmux_socket_path) if tmux_socket_path is not None else None
     if tmux_backend is None or not tmux_session_name:
         return tmux_backend, None
+    if namespace_topology_managed:
+        cmd_pane = str(namespace_cmd_pane or '').strip()
+        if cmd_enabled and not cmd_pane.startswith('%'):
+            raise RuntimeError('authoritative topology cmd pane is missing')
+        return tmux_backend, cmd_pane if cmd_pane.startswith('%') else None
     return tmux_backend, session_root_pane(
         deps,
         tmux_backend,
@@ -89,7 +98,7 @@ def project_socket_active_panes(
         pane_text = str(pane_id or '').strip()
         if pane_text.startswith('%') and pane_text not in active_panes:
             active_panes.append(pane_text)
-    if root_pane_id and tmux_socket_path is not None:
+    if root_pane_id and tmux_socket_path is not None and root_pane_id not in active_panes:
         active_panes.append(root_pane_id)
     cmd_pane_id = tmux_layout.cmd_pane_id
     if cmd_pane_id is None and tmux_socket_path is not None and bool(getattr(config, 'cmd_enabled', False)):
@@ -149,7 +158,9 @@ def cleanup_tmux_orphans_if_needed(
     actions_taken: list[str],
 ) -> tuple[object, ...]:
     if not cleanup_tmux_orphans:
+        record_startup_operation('orphan_cleanup_skip_count')
         return ()
+    record_startup_operation('orphan_cleanup_pass_count')
     cleanup_summaries = cleanup_start_tmux_orphans(
         deps,
         project_id=project_id,

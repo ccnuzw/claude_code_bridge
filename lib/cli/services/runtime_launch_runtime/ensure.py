@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import shutil
+from time import monotonic_ns
 
 from agents.models import RuntimeMode
 from provider_core.registry import CORE_PROVIDER_NAMES, OPTIONAL_PROVIDER_NAMES, build_default_runtime_launcher_map
@@ -45,23 +47,54 @@ def ensure_agent_runtime(
     )
     cleanup_stale_tmux_binding_fn(binding)
 
-    launch_tmux_runtime_fn(
-        context,
-        command,
-        spec,
-        plan,
-        launcher,
-        assigned_pane_id=assigned_pane_id,
-        style_index=style_index,
-        tmux_socket_path=tmux_socket_path,
+    timings_ms: dict[str, float] = {}
+    launch_started_ns = monotonic_ns()
+    try:
+        launch_timings = launch_tmux_runtime_fn(
+            context,
+            command,
+            spec,
+            plan,
+            launcher,
+            assigned_pane_id=assigned_pane_id,
+            style_index=style_index,
+            tmux_socket_path=tmux_socket_path,
+        )
+    except Exception as exc:
+        launch_elapsed_ms = _elapsed_ms(launch_started_ns)
+        _merge_launch_timings(
+            timings_ms,
+            getattr(exc, 'ccb_startup_timings_ms', None),
+            enclosing_elapsed_ms=launch_elapsed_ms,
+        )
+        _attach_startup_timings(exc, timings_ms)
+        raise
+    launch_elapsed_ms = _elapsed_ms(launch_started_ns)
+    _merge_launch_timings(
+        timings_ms,
+        launch_timings,
+        enclosing_elapsed_ms=launch_elapsed_ms,
     )
-    refreshed = _resolve_refreshed_binding(
-        context=context,
-        spec=spec,
-        plan=plan,
-        resolve_agent_binding_fn=resolve_agent_binding_fn,
+
+    binding_started_ns = monotonic_ns()
+    try:
+        refreshed = _resolve_refreshed_binding(
+            context=context,
+            spec=spec,
+            plan=plan,
+            resolve_agent_binding_fn=resolve_agent_binding_fn,
+        )
+    except Exception as exc:
+        _record_elapsed_ms(timings_ms, 'binding_resolve', binding_started_ns)
+        _attach_startup_timings(exc, timings_ms)
+        raise
+    _record_elapsed_ms(timings_ms, 'binding_resolve', binding_started_ns)
+    return _runtime_launch_result(
+        runtime_launch_result_cls,
+        launched=True,
+        binding=refreshed,
+        timings_ms=timings_ms,
     )
-    return runtime_launch_result_cls(launched=True, binding=refreshed)
 
 
 def _pane_backed_launcher(spec):
@@ -104,6 +137,68 @@ def _resolve_refreshed_binding(*, context, spec, plan, resolve_agent_binding_fn)
     raise RuntimeError(
         f'failed to resolve usable binding for {spec.name} after {spec.provider} launch'
     )
+
+
+def _runtime_launch_result(
+    result_cls,
+    *,
+    launched: bool,
+    binding,
+    timings_ms: dict[str, float],
+):
+    try:
+        return result_cls(
+            launched=launched,
+            binding=binding,
+            timings_ms=dict(timings_ms),
+        )
+    except TypeError as exc:
+        # Test doubles and third-party callers may still expose the historical
+        # two-field result constructor. Only fall back for the additive field.
+        if 'timings_ms' not in str(exc):
+            raise
+        return result_cls(launched=launched, binding=binding)
+
+
+def _merge_launch_timings(
+    target: dict[str, float],
+    value: object,
+    *,
+    enclosing_elapsed_ms: float,
+) -> None:
+    clean: dict[str, float] = {}
+    if isinstance(value, dict):
+        for key, raw_value in value.items():
+            try:
+                parsed = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(parsed) or parsed < 0:
+                continue
+            clean[str(key)] = parsed
+    measured_ms = sum(clean.values())
+    if measured_ms > enclosing_elapsed_ms:
+        clean = {}
+        measured_ms = 0.0
+    for field_name, elapsed_ms in clean.items():
+        target[field_name] = target.get(field_name, 0.0) + elapsed_ms
+    residual_ms = max(0.0, enclosing_elapsed_ms - measured_ms)
+    target['unattributed'] = target.get('unattributed', 0.0) + residual_ms
+
+
+def _record_elapsed_ms(timings_ms: dict[str, float], field_name: str, started_ns: int) -> None:
+    timings_ms[field_name] = timings_ms.get(field_name, 0.0) + _elapsed_ms(started_ns)
+
+
+def _elapsed_ms(started_ns: int) -> float:
+    return max(0.0, (monotonic_ns() - started_ns) / 1_000_000)
+
+
+def _attach_startup_timings(exc: Exception, timings_ms: dict[str, float]) -> None:
+    try:
+        setattr(exc, 'ccb_startup_timings_ms', dict(timings_ms))
+    except Exception:
+        return
 
 
 __all__ = ['ensure_agent_runtime', 'runtime_launcher']

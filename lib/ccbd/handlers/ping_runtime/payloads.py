@@ -22,6 +22,10 @@ def build_agent_payload(*, project_id: str, agent_name: str, registry, inspectio
             'ccbd_generation': inspection.generation,
             'last_heartbeat_at': inspection.lease.last_heartbeat_at if inspection.lease else None,
             'desired_state': _inspection_desired_state(inspection),
+            'reconcile_state': getattr(runtime, 'reconcile_state', None) if runtime is not None else None,
+            'restart_count': getattr(runtime, 'restart_count', 0) if runtime is not None else 0,
+            'last_reconcile_at': getattr(runtime, 'last_reconcile_at', None) if runtime is not None else None,
+            'last_failure_reason': getattr(runtime, 'last_failure_reason', None) if runtime is not None else None,
             **capability,
         },
     }
@@ -39,12 +43,14 @@ def build_ccbd_payload(
     namespace_event_summary: dict,
     start_policy_summary: dict,
     control_plane_metrics=None,
+    serving_identity: dict[str, object] | None = None,
 ) -> dict:
     identity = project_config_identity_payload(config)
     socket_path = inspection.socket_path if hasattr(inspection, 'socket_path') else None
     if socket_path is None and inspection.lease is not None:
         socket_path = inspection.lease.socket_path
     process_metrics = _process_metrics(control_plane_metrics)
+    serving = dict(serving_identity or {})
     return {
         'project_id': project_id,
         'mount_state': _inspection_phase(inspection),
@@ -58,6 +64,11 @@ def build_ccbd_payload(
         **socket_placement_payload(paths.ccbd_tmux_socket_placement, prefix='tmux'),
         'known_agents': list(identity['known_agents']),
         'config_signature': identity['config_signature'],
+        'serving_pid': serving.get('serving_pid'),
+        'serving_daemon_instance_id': serving.get('serving_daemon_instance_id'),
+        'serving_lease_generation': serving.get('serving_lease_generation'),
+        'serving_startup_generation': serving.get('serving_startup_generation'),
+        'accepted_startup_id': serving.get('accepted_startup_id'),
         **namespace_summary,
         **namespace_event_summary,
         **start_policy_summary,

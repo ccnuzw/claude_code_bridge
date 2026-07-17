@@ -1461,6 +1461,7 @@ fn window_row(window: &WindowView) -> ListItem<'static> {
 fn agent_row(agent: &AgentView, theme: SidebarTheme) -> ListItem<'static> {
     let drain_label = reload_drain_label(agent);
     let draining = drain_label.is_some();
+    let auth_blocked = !draining && agent.reason.as_deref() == Some("provider_auth_revoked");
     let state = if draining {
         "pending"
     } else if agent.activity_state.is_empty() {
@@ -1490,8 +1491,12 @@ fn agent_row(agent: &AgentView, theme: SidebarTheme) -> ListItem<'static> {
         ),
         Span::raw(format!("{active} ")),
         Span::raw(agent.name.clone()),
-        Span::raw(format!(" [{}]", agent.provider)),
     ];
+    if auth_blocked {
+        spans.push(Span::styled(" [login]", Style::default().fg(theme.danger)));
+    } else {
+        spans.push(Span::raw(format!(" [{}]", agent.provider)));
+    }
     if let Some(label) = drain_label {
         spans.push(Span::styled(
             format!(" {label}"),
@@ -2206,6 +2211,24 @@ mod tests {
             .find(|cell| cell.symbol() == "⌫")
             .expect("clear action should render");
         assert_eq!(clear_cell.fg, Color::Cyan);
+    }
+
+    #[test]
+    fn renders_provider_auth_recovery_action() {
+        let mut response = sample_response();
+        response.view.agents[0].activity_state = "failed".into();
+        response.view.agents[0].activity_symbol = Some("✕".into());
+        response.view.agents[0].activity_color = Some("red".into());
+        response.view.agents[0].reason = Some("provider_auth_revoked".into());
+        let mut app = SidebarApp::new("main".into());
+        app.apply_response(response);
+
+        let backend = TestBackend::new(80, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains("✕* agent1 [login]"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -250,3 +251,19 @@ def test_ccb_test_diagnose_reports_explicit_allowed_root(tmp_path: Path) -> None
     assert f"env_CCB_TEST_ROOTS: {tmp_path}" in proc.stdout
     assert f"checked_paths: {project}" in proc.stdout
     assert "allowed_source_test_project: yes" in proc.stdout
+
+
+def test_ccb_test_accepts_only_fresh_well_formed_benchmark_trace_envelope() -> None:
+    namespace = runpy.run_path(str(CCB_TEST))
+    entry_ns = namespace["_CCB_TEST_PROCESS_ENTRY_NS"]
+    validate = namespace["_valid_startup_trace_envelope"]
+    valid = {
+        "CCB_STARTUP_TIMING_TRACE": "1",
+        "CCB_STARTUP_TRACE_ID": "trace_" + "a" * 32,
+        "CCB_STARTUP_TRACE_SPAWN_NS": str(entry_ns - 1),
+    }
+
+    assert validate(valid) is True
+    assert validate({**valid, "CCB_STARTUP_TRACE_ID": "trace_invalid"}) is False
+    assert validate({**valid, "CCB_STARTUP_TRACE_SPAWN_NS": str(entry_ns + 1)}) is False
+    assert validate({**valid, "CCB_STARTUP_TRACE_WRAPPER_ENTRY_NS": "1"}) is False

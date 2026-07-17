@@ -9,7 +9,10 @@ from agents.models import layout_tool_alias_command, layout_tool_alias_label, pa
 from terminal_runtime.placeholders import pane_placeholder_cmd
 from terminal_runtime.tmux_identity import apply_ccb_pane_identity
 from terminal_runtime.tmux_theme import tmux_theme_profile
-from ccbd.services.project_namespace_pane import ProjectNamespacePaneRecord
+from ccbd.services.project_namespace_pane import (
+    ProjectNamespacePaneRecord,
+    inspect_project_namespace_pane,
+)
 
 from .backend import (
     create_session,
@@ -41,13 +44,17 @@ def refresh_topology_ui_for_project(
     timeout_s: float | None = None,
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
     refresh_sidebar_helpers: bool = True,
+    namespace_epoch: int | None = None,
 ) -> None:
+    resolved_epoch = _authoritative_namespace_epoch(context, explicit=namespace_epoch)
     if refresh_sidebar_helpers:
         refresh_topology_sidebar_helpers(
             controller,
             context.backend,
             topology_plan=topology_plan,
             pane_records=pane_records,
+            tmux_session_name=context.desired_session_name,
+            namespace_epoch=resolved_epoch,
         )
     apply_project_tmux_ui(
         tmux_socket_path=context.desired_socket_path,
@@ -61,6 +68,7 @@ def refresh_topology_ui_for_project(
         topology_plan=topology_plan,
         timeout_s=timeout_s,
         pane_records=pane_records,
+        namespace_epoch=resolved_epoch,
     )
 
 
@@ -71,9 +79,16 @@ def sync_topology_sidebar_widths(
     session_name: str,
     topology_plan,
     timeout_s: float | None = None,
+    namespace_epoch: int | None = None,
 ) -> None:
     context = SimpleNamespace(backend=backend, desired_session_name=session_name)
-    _sync_topology_sidebar_widths(controller, context, topology_plan=topology_plan, timeout_s=timeout_s)
+    _sync_topology_sidebar_widths(
+        controller,
+        context,
+        topology_plan=topology_plan,
+        timeout_s=timeout_s,
+        namespace_epoch=namespace_epoch,
+    )
 
 
 def materialize_topology(
@@ -160,6 +175,7 @@ def materialize_topology(
         topology_plan=topology_plan,
         timeout_s=timeout_s,
         refresh_sidebar_helpers=False,
+        namespace_epoch=epoch,
     )
     select_window(
         context.backend,
@@ -174,7 +190,11 @@ def existing_topology_agent_panes(
     *,
     topology_plan,
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    namespace_epoch: int | None = None,
+    include_dead: bool = False,
 ) -> dict[str, str]:
+    resolved_epoch = _authoritative_namespace_epoch(context, explicit=namespace_epoch)
+    resolved_session = _authoritative_tmux_session_name(context)
     agent_panes: dict[str, str] = {}
     for window in tuple(getattr(topology_plan, 'windows', ()) or ()):
         for agent_name in tuple(getattr(window, 'agent_names', ()) or ()):
@@ -189,10 +209,41 @@ def existing_topology_agent_panes(
                 pane_records,
                 context.backend,
                 expected,
+                tmux_session_name=resolved_session,
+                namespace_epoch=resolved_epoch,
+                require_alive=not include_dead,
             )
             if len(matches) == 1:
                 agent_panes[str(agent_name)] = matches[0]
     return agent_panes
+
+
+def existing_topology_cmd_pane(
+    controller,
+    context,
+    *,
+    topology_plan,
+    pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    namespace_epoch: int | None = None,
+) -> str | None:
+    cmd_windows = _expected_cmd_windows(tuple(getattr(topology_plan, 'windows', ()) or ()))
+    if len(cmd_windows) != 1:
+        return None
+    resolved_epoch = _authoritative_namespace_epoch(context, explicit=namespace_epoch)
+    matches = _matching_pane_ids(
+        pane_records,
+        context.backend,
+        {
+            '@ccb_project_id': controller._project_id,
+            '@ccb_role': 'cmd',
+            '@ccb_slot': 'cmd',
+            '@ccb_window': cmd_windows[0],
+            '@ccb_managed_by': 'ccbd',
+        },
+        tmux_session_name=_authoritative_tmux_session_name(context),
+        namespace_epoch=resolved_epoch,
+    )
+    return matches[0] if len(matches) == 1 else None
 
 
 def topology_active_panes(
@@ -201,33 +252,83 @@ def topology_active_panes(
     *,
     topology_plan,
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    namespace_epoch: int | None = None,
 ) -> tuple[str, ...]:
-    expected_windows = {str(window.name) for window in tuple(getattr(topology_plan, 'windows', ()) or ())}
-    panes: list[str] = []
-    for role in ('sidebar', 'agent', 'tool'):
-        matches = _matching_pane_ids(
-            pane_records,
+    resolved_epoch = _authoritative_namespace_epoch(context, explicit=namespace_epoch)
+    resolved_session = _authoritative_tmux_session_name(context)
+    topology_windows = tuple(getattr(topology_plan, 'windows', ()) or ())
+    resolved_records = pane_records
+    if resolved_records is None:
+        candidate_ids = _list_panes_by_user_options(
             context.backend,
             {
                 '@ccb_project_id': controller._project_id,
-                '@ccb_role': role,
                 '@ccb_managed_by': 'ccbd',
+                '@ccb_namespace_epoch': str(resolved_epoch or ''),
             },
         )
-        for pane_id in matches:
-            record = pane_records.get(pane_id) if pane_records is not None else None
-            window_name = (
-                str(getattr(record, 'ccb_window', '') or '').strip()
-                if record is not None
-                else _pane_option(context.backend, pane_id, '@ccb_window')
+        resolved_records = {}
+        for pane_id in dict.fromkeys(candidate_ids):
+            record = inspect_project_namespace_pane(context.backend, pane_id)
+            if record is not None:
+                resolved_records[pane_id] = record
+    expected: list[dict[str, str]] = []
+    if bool(getattr(topology_plan, 'sidebar_enabled', False)):
+        for window in topology_windows:
+            window_name = str(window.name)
+            expected.append(
+                {
+                    '@ccb_project_id': controller._project_id,
+                    '@ccb_role': 'sidebar',
+                    '@ccb_slot': f'sidebar:{window_name}',
+                    '@ccb_window': window_name,
+                    '@ccb_sidebar_instance': window_name,
+                    '@ccb_managed_by': 'ccbd',
+                }
             )
-            sidebar_instance = (
-                str(getattr(record, 'sidebar_instance', '') or '').strip()
-                if record is not None
-                else _pane_option(context.backend, pane_id, '@ccb_sidebar_instance')
+    for window_name in _expected_cmd_windows(topology_windows):
+        expected.append(
+            {
+                '@ccb_project_id': controller._project_id,
+                '@ccb_role': 'cmd',
+                '@ccb_slot': 'cmd',
+                '@ccb_window': window_name,
+                '@ccb_managed_by': 'ccbd',
+            }
+        )
+    for window in topology_windows:
+        for agent_name in tuple(getattr(window, 'agent_names', ()) or ()):
+            expected.append(
+                {
+                    '@ccb_project_id': controller._project_id,
+                    '@ccb_role': 'agent',
+                    '@ccb_slot': str(agent_name),
+                    '@ccb_window': str(window.name),
+                    '@ccb_managed_by': 'ccbd',
+                }
             )
-            if (window_name in expected_windows) or (sidebar_instance in expected_windows):
-                panes.append(pane_id)
+    for window_name, slot_key in sorted(_expected_tool_slots(topology_windows)):
+        expected.append(
+            {
+                '@ccb_project_id': controller._project_id,
+                '@ccb_role': 'tool',
+                '@ccb_slot': slot_key,
+                '@ccb_window': window_name,
+                '@ccb_managed_by': 'ccbd',
+            }
+        )
+
+    panes: list[str] = []
+    for identity in expected:
+        matches = _matching_pane_ids(
+            resolved_records,
+            context.backend,
+            identity,
+            tmux_session_name=resolved_session,
+            namespace_epoch=resolved_epoch,
+        )
+        if len(matches) == 1:
+            panes.append(matches[0])
     return tuple(dict.fromkeys(panes))
 
 
@@ -237,7 +338,10 @@ def topology_recreate_reason(
     *,
     topology_plan,
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    namespace_epoch: int | None = None,
 ) -> str | None:
+    resolved_epoch = _authoritative_namespace_epoch(context, explicit=namespace_epoch)
+    resolved_session = _authoritative_tmux_session_name(context)
     if context.current is not None:
         current_workspace = str(getattr(context.current, 'workspace_window_name', '') or '').strip()
         if current_workspace and current_workspace != context.desired_workspace_window_name:
@@ -249,6 +353,9 @@ def topology_recreate_reason(
             str(record.window_name or '').strip()
             for record in pane_records.values()
             if str(record.session_name or '').strip() == context.desired_session_name
+            and str(record.project_id or '').strip() == controller._project_id
+            and str(record.managed_by or '').strip() == 'ccbd'
+            and record.namespace_epoch == resolved_epoch
         }
         for window in windows:
             if str(window.name) not in observed_windows:
@@ -269,6 +376,8 @@ def topology_recreate_reason(
             context,
             topology_plan=topology_plan,
             pane_records=pane_records,
+            namespace_epoch=resolved_epoch,
+            include_dead=True,
         )
     ) != expected_agents:
         return 'topology_agent_panes_changed'
@@ -281,12 +390,32 @@ def topology_recreate_reason(
                 {
                     '@ccb_project_id': controller._project_id,
                     '@ccb_role': 'sidebar',
+                    '@ccb_slot': f'sidebar:{window.name}',
+                    '@ccb_window': str(window.name),
                     '@ccb_sidebar_instance': str(window.name),
                     '@ccb_managed_by': 'ccbd',
                 },
+                tmux_session_name=resolved_session,
+                namespace_epoch=resolved_epoch,
             )
             if len(matches) != 1:
                 return 'topology_sidebar_panes_changed'
+    for window_name in _expected_cmd_windows(windows):
+        matches = _matching_pane_ids(
+            pane_records,
+            context.backend,
+            {
+                '@ccb_project_id': controller._project_id,
+                '@ccb_role': 'cmd',
+                '@ccb_slot': 'cmd',
+                '@ccb_window': window_name,
+                '@ccb_managed_by': 'ccbd',
+            },
+            tmux_session_name=resolved_session,
+            namespace_epoch=resolved_epoch,
+        )
+        if len(matches) != 1:
+            return 'topology_cmd_panes_changed'
     expected_tools = _expected_tool_slots(windows)
     for window_name, slot_key in expected_tools:
         matches = _matching_pane_ids(
@@ -299,6 +428,8 @@ def topology_recreate_reason(
                 '@ccb_window': window_name,
                 '@ccb_managed_by': 'ccbd',
             },
+            tmux_session_name=resolved_session,
+            namespace_epoch=resolved_epoch,
         )
         if len(matches) != 1:
             return 'topology_tool_panes_changed'
@@ -415,6 +546,8 @@ def refresh_topology_sidebar_helpers(
     *,
     topology_plan,
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    tmux_session_name: str | None = None,
+    namespace_epoch: int | None = None,
 ) -> tuple[str, ...]:
     desired_identity = sidebar_helper_fingerprint()
     if not desired_identity:
@@ -430,9 +563,13 @@ def refresh_topology_sidebar_helpers(
             {
                 '@ccb_project_id': controller._project_id,
                 '@ccb_role': 'sidebar',
+                '@ccb_slot': f'sidebar:{window.name}',
+                '@ccb_window': str(window.name),
                 '@ccb_sidebar_instance': str(window.name),
                 '@ccb_managed_by': 'ccbd',
             },
+            tmux_session_name=tmux_session_name,
+            namespace_epoch=namespace_epoch,
         )
         if len(matches) != 1:
             continue
@@ -482,6 +619,19 @@ def _materialize_agent_layout(
 
     def assign_leaf(item: str, pane_id: str) -> None:
         if item == 'cmd':
+            apply_ccb_pane_identity(
+                context.backend,
+                pane_id,
+                title='cmd',
+                agent_label='cmd',
+                project_id=controller._project_id,
+                is_cmd=True,
+                role='cmd',
+                slot_key='cmd',
+                window_name=window.name,
+                namespace_epoch=epoch,
+                managed_by='ccbd',
+            )
             return
         item_tool = str(item or '').strip().lower()
         if item_tool in tool_names:
@@ -591,6 +741,20 @@ def _expected_tool_slots(windows: tuple[object, ...]) -> set[tuple[str, str]]:
     return expected
 
 
+def _expected_cmd_windows(windows: tuple[object, ...]) -> tuple[str, ...]:
+    expected: list[str] = []
+    for window in windows:
+        if str(getattr(window, 'kind', '') or '') == 'tool':
+            continue
+        layout_text = str(getattr(window, 'user_layout', '') or '').strip()
+        if not layout_text:
+            continue
+        layout = parse_layout_spec(layout_text)
+        if any(str(leaf.name or '').strip().lower() == 'cmd' for leaf in layout.iter_leaves()):
+            expected.append(str(window.name))
+    return tuple(expected)
+
+
 def _get_specified_percent(node: Any) -> int | None:
     if node.kind == 'leaf':
         assert node.leaf is not None
@@ -677,6 +841,7 @@ def _sync_topology_sidebar_widths(
     topology_plan,
     timeout_s: float | None = None,
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    namespace_epoch: int | None = None,
 ) -> None:
     if topology_plan is None or not bool(getattr(topology_plan, 'sidebar_enabled', False)):
         return
@@ -700,6 +865,7 @@ def _sync_topology_sidebar_widths(
             session_name=context.desired_session_name,
             project_id=project_id,
             pane_records=pane_records,
+            namespace_epoch=namespace_epoch,
         ):
             configured_width = width_override or width_by_window.get(record['sidebar_instance'])
             if configured_width is None:
@@ -721,15 +887,24 @@ def _list_sidebar_geometry_records(
     session_name: str,
     project_id: str = '',
     pane_records: dict[str, ProjectNamespacePaneRecord] | None = None,
+    namespace_epoch: int | None = None,
 ) -> list[dict[str, str]]:
     if pane_records is not None:
         records: list[dict[str, str]] = []
         for pane_id, record in pane_records.items():
-            if str(record.session_name or '').strip() != session_name:
+            if project_id and not record.matches_authoritative_topology(
+                tmux_session_name=session_name,
+                project_id=project_id,
+                role='sidebar',
+                namespace_epoch=namespace_epoch,
+            ):
                 continue
-            if record.role != 'sidebar' or record.managed_by != 'ccbd':
-                continue
-            if project_id and record.project_id != project_id:
+            if not project_id and (
+                str(record.session_name or '').strip() != session_name
+                or record.role != 'sidebar'
+                or record.managed_by != 'ccbd'
+                or not record.alive
+            ):
                 continue
             sidebar_instance = str(record.sidebar_instance or '').strip()
             if not pane_id.startswith('%') or not sidebar_instance:
@@ -941,14 +1116,77 @@ def _matching_pane_ids(
     pane_records: dict[str, ProjectNamespacePaneRecord] | None,
     backend,
     expected: dict[str, str],
+    *,
+    tmux_session_name: str | None,
+    namespace_epoch: int | None,
+    require_alive: bool = True,
 ) -> list[str]:
+    project_id = str(expected.get('@ccb_project_id', '') or '').strip()
+    resolved_session = str(tmux_session_name or '').strip()
+    if not project_id or not resolved_session or namespace_epoch is None:
+        return []
+    candidate_expected = dict(expected)
+    if namespace_epoch is not None:
+        candidate_expected['@ccb_namespace_epoch'] = str(namespace_epoch)
     if pane_records is None:
-        return _list_panes_by_user_options(backend, expected)
+        candidate_ids = _list_panes_by_user_options(backend, candidate_expected)
+        candidates = (
+            (pane_id, inspect_project_namespace_pane(backend, pane_id))
+            for pane_id in candidate_ids
+        )
+    else:
+        candidates = pane_records.items()
     matches: list[str] = []
-    for pane_id, record in pane_records.items():
-        if all(_pane_record_option(record, option) == value for option, value in expected.items()):
+    for pane_id, record in candidates:
+        if record is None:
+            continue
+        if not record.matches_authoritative_topology(
+            tmux_session_name=resolved_session,
+            project_id=project_id,
+            role=expected.get('@ccb_role'),
+            slot_key=expected.get('@ccb_slot'),
+            window_name=expected.get('@ccb_window'),
+            sidebar_instance=expected.get('@ccb_sidebar_instance'),
+            managed_by=str(expected.get('@ccb_managed_by', 'ccbd') or 'ccbd'),
+            namespace_epoch=namespace_epoch,
+            require_alive=require_alive,
+        ):
+            continue
+        if all(
+            option
+            in {
+                '@ccb_project_id',
+                '@ccb_role',
+                '@ccb_slot',
+                '@ccb_window',
+                '@ccb_sidebar_instance',
+                '@ccb_managed_by',
+                '@ccb_namespace_epoch',
+            }
+            or _pane_record_option(record, option) == value
+            for option, value in expected.items()
+        ):
             matches.append(pane_id)
     return matches
+
+
+def _authoritative_namespace_epoch(context, *, explicit: int | None = None) -> int | None:
+    candidate = explicit
+    if candidate is None:
+        candidate = getattr(getattr(context, 'current', None), 'namespace_epoch', None)
+    try:
+        value = int(candidate)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _authoritative_tmux_session_name(context) -> str | None:
+    candidate = getattr(context, 'desired_session_name', None)
+    if candidate is None:
+        candidate = getattr(getattr(context, 'current', None), 'tmux_session_name', None)
+    value = str(candidate or '').strip()
+    return value or None
 
 
 def _pane_record_option(record: ProjectNamespacePaneRecord, option: str) -> str:
@@ -1005,6 +1243,7 @@ def _respawn_sidebar(backend, pane_id: str, launch_args: tuple[str, ...], *, cwd
 
 
 __all__ = [
+    'existing_topology_cmd_pane',
     'existing_topology_agent_panes',
     'materialize_topology',
     'refresh_topology_sidebar_helpers',

@@ -4,6 +4,7 @@ import time
 
 from ccbd.daemon_process import CcbdProcessError, spawn_ccbd_process
 from ccbd.models import LeaseHealth
+from ccbd.services.ownership import OwnershipGuard
 from cli.kill_runtime.processes import is_pid_alive, kill_pid
 
 from .lease import mark_inspected_lease_unmounted
@@ -32,6 +33,7 @@ def restart_unreachable_daemon(
         return
     pid = lease_pid(lease)
     manager = manager_factory(context.paths)
+    guard = OwnershipGuard(context.paths, manager)
 
     if pid > 0 and inspection.pid_alive:
         kill_pid_fn(pid, force=False)
@@ -40,7 +42,7 @@ def restart_unreachable_daemon(
             timeout_s=shutdown_timeout_s,
             inspect_daemon_fn=inspect_daemon_fn,
         ):
-            mark_inspected_lease_unmounted(manager, inspection)
+            mark_inspected_lease_unmounted(manager, inspection, ownership_guard=guard)
             return
         kill_pid_fn(pid, force=True)
         if wait_for_daemon_release(
@@ -48,7 +50,7 @@ def restart_unreachable_daemon(
             timeout_s=shutdown_timeout_s,
             inspect_daemon_fn=inspect_daemon_fn,
         ):
-            mark_inspected_lease_unmounted(manager, inspection)
+            mark_inspected_lease_unmounted(manager, inspection, ownership_guard=guard)
             return
         raise CcbdServiceError(
             f'ccbd is unavailable: {inspection.reason}; pid {pid} did not exit'

@@ -10,10 +10,18 @@ _WORKER_JOIN_TIMEOUT_S = 2.0
 _MAX_QUEUED_CONNECTION_AGE_S = 1.0
 
 
-def serve_forever(server, *, poll_interval: float = 0.2, on_tick=None) -> None:
+def serve_forever(
+    server,
+    *,
+    poll_interval: float = 0.2,
+    on_tick=None,
+    on_serving=None,
+) -> None:
     server.listen()
     interval = max(0.0, float(poll_interval))
     start_worker(server, interval=interval, on_tick=on_tick)
+    if callable(on_serving):
+        server.queue_after_response_action(on_serving)
     start_maintenance_worker(server, interval=interval, on_tick=on_tick)
     try:
         while not server._stop_event.is_set():
@@ -33,8 +41,7 @@ def serve_forever(server, *, poll_interval: float = 0.2, on_tick=None) -> None:
     finally:
         stop_worker(server)
         stop_maintenance_worker(server)
-    worker_error = getattr(server, '_worker_error', None)
-    server._worker_error = None
+    worker_error = server._take_worker_error()
     if worker_error is not None:
         raise worker_error
 
@@ -50,7 +57,6 @@ def start_worker(server, *, interval: float, on_tick) -> None:
         name='ccbd-socket-worker',
         daemon=True,
     )
-    server._worker_error = None
     server._worker_thread = worker
     worker.start()
 
@@ -66,7 +72,6 @@ def start_maintenance_worker(server, *, interval: float, on_tick) -> None:
         name='ccbd-maintenance-worker',
         daemon=True,
     )
-    server._worker_error = None
     server._maintenance_thread = worker
     worker.start()
 
@@ -175,7 +180,7 @@ def worker_loop(server, *, interval: float, on_tick) -> None:
                 continue
             server.queue_post_request_maintenance(handled_op)
     except Exception as exc:
-        server._worker_error = exc
+        server._record_worker_error(exc)
         server._stop_event.set()
 
 
@@ -205,7 +210,7 @@ def maintenance_worker_loop(server, *, interval: float, on_tick) -> None:
                 interval=interval,
             )
     except Exception as exc:
-        server._worker_error = exc
+        server._record_worker_error(exc)
         server._stop_event.set()
 
 
@@ -290,7 +295,7 @@ def run_after_response_actions(server) -> None:
         try:
             action()
         except Exception as exc:
-            server._worker_error = exc
+            server._record_worker_error(exc)
             server._stop_event.set()
             break
 

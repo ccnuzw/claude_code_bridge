@@ -320,6 +320,12 @@ Runtime pane reuse is a separate proof obligation from session-file binding:
 - a blocked dead pane must persist `pane_recovery_block` in the managed session
   record so heartbeat does not repeatedly capture the same crash or retry the
   same credential; a successful live pane or a normal remount clears the block
+- ccbd must project `provider_auth_revoked` as runtime health
+  `provider-auth-revoked` with `reconcile_state=blocked`, preserve the
+  actionable login/remount detail in `last_failure_reason`, and stop both
+  background recovery and dispatcher start attempts until an explicit remount
+  replaces that authority; repeated heartbeat must not increase
+  `restart_count`
 - `inherit_auth=false` and explicit API authority must preserve their existing
   agent-local credential boundary and must not be overwritten from global auth
 - when the current explicit agent-local Codex provider authority differs from

@@ -5,12 +5,20 @@ Supports Claude + Codex / Claude + Gemini / all three simultaneously
 Uses tmux as the project UI backend
 """
 
+import time
+
+_CCB_PROCESS_ENTRY_NS = time.perf_counter_ns()
+
 import sys
 import os
 from pathlib import Path
 
 script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir / "lib"))
+from cli.startup_process_trace import capture_source_wrapper_trace, mark_ccb_main
+
+capture_source_wrapper_trace(_CCB_PROCESS_ENTRY_NS)
+
 from stdio_runtime import setup_windows_encoding
 from terminal_runtime.backend_env import get_backend_env
 from cli.entrypoint import run_cli_entrypoint
@@ -115,6 +123,7 @@ def _source_runtime_allowed(root: Path, cwd: Path, argv: list[str]) -> tuple[boo
 
 
 def main():
+    mark_ccb_main(time.perf_counter_ns())
     allowed, reason = _source_runtime_allowed(script_dir, Path.cwd(), sys.argv[1:])
     if not allowed:
         print(reason, file=sys.stderr)

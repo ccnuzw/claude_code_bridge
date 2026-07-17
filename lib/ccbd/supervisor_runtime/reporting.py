@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ccbd.models import CcbdShutdownReport, CcbdStartupReport, cleanup_summaries_from_objects
 from ccbd.stop_flow import build_shutdown_runtime_snapshots
+from runtime_observability import record_startup_operation, startup_operation_counts
 from storage.path_helpers import socket_placement_payload
 
 
@@ -17,9 +18,24 @@ def record_startup_report(
     agent_results,
     failure_reason: str | None,
     timings_ms: dict[str, float] | None = None,
+    startup_run_id: str | None = None,
+    daemon_started: bool | None = None,
+    readiness_recorder=None,
 ) -> None:
     try:
+        # The enclosing report write is intentionally represented only by this
+        # attempt marker. Its atomic write cannot be added to the same payload
+        # without recursively rewriting the report.
+        record_startup_operation('startup_report_write_attempt_count')
         inspection = supervisor._ownership_guard.inspect()
+        readiness_timeline = (
+            readiness_recorder.to_record(
+                startup_run_id=startup_run_id,
+                daemon_generation=inspection.generation,
+            )
+            if readiness_recorder is not None
+            else {}
+        )
         report = CcbdStartupReport(
             project_id=supervisor._project_id,
             generated_at=supervisor._clock(),
@@ -30,7 +46,8 @@ def record_startup_report(
             restore_requested=restore,
             auto_permission=auto_permission,
             daemon_generation=inspection.generation,
-            daemon_started=None,
+            daemon_started=daemon_started,
+            startup_run_id=startup_run_id,
             config_signature=str(supervisor._config_identity.get('config_signature') or '').strip() or None,
             inspection=inspection.to_record(),
             socket_placement={
@@ -44,6 +61,8 @@ def record_startup_report(
             agent_results=tuple(agent_results),
             failure_reason=failure_reason,
             timings_ms=dict(timings_ms or {}),
+            operation_counts=startup_operation_counts(),
+            readiness_timeline=dict(readiness_timeline or {}),
         )
         supervisor._startup_report_store.save(report)
     except Exception:

@@ -3,7 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from agents.models import AgentRuntime, AgentState, RuntimeBindingSource
+import pytest
+
+from agents.models import (
+    AgentRuntime,
+    AgentSpec,
+    AgentState,
+    PermissionMode,
+    QueuePolicy,
+    RestoreMode,
+    RuntimeBindingSource,
+    RuntimeMode,
+    WorkspaceMode,
+)
+from agents.store import AgentRuntimeStore
+import ccbd.start_runtime.agent_runtime as agent_runtime_module
+import ccbd.start_runtime.agent_runtime_binding as agent_runtime_binding_module
+from ccbd.services.registry import AgentRegistry
+from ccbd.services.runtime import RuntimeService
 from ccbd.services.project_namespace_pane import ProjectNamespacePaneRecord
 from ccbd.start_runtime.agent_runtime import start_agent_runtime
 from cli.services.provider_binding import AgentBinding
@@ -238,6 +255,168 @@ def test_start_agent_runtime_reuses_binding_without_restore_bookkeeping() -> Non
     assert execution.agent_result.duration_ms is not None
 
 
+def test_start_agent_runtime_preserves_restored_health_on_reuse() -> None:
+    runtime_service = _RuntimeService()
+    runtime_service._registry = _Registry(
+        _runtime(
+            state=AgentState.IDLE,
+            health='restored',
+            reconcile_state='steady',
+            mount_attempt_id=None,
+        )
+    )
+    binding = _binding()
+
+    execution = start_agent_runtime(
+        context=object(),
+        command=SimpleNamespace(restore=True),
+        runtime_service=runtime_service,
+        agent_name='agent1',
+        spec=SimpleNamespace(provider='codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+        plan=SimpleNamespace(workspace_path='/tmp/ws'),
+        binding=binding,
+        raw_binding=binding,
+        stale_binding=False,
+        assigned_pane_id=None,
+        style_index=1,
+        project_id='proj-1',
+        tmux_socket_path='/tmp/ccb.sock',
+        namespace_epoch=3,
+        ensure_agent_runtime_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('should not relaunch')
+        ),
+        launch_binding_hint_fn=lambda **kwargs: None,
+        relabel_project_namespace_pane_fn=lambda **kwargs: '%5',
+        same_tmux_socket_path_fn=lambda left, right: left == right,
+        window_name='main',
+    )
+
+    assert execution.agent_result.action == 'attached'
+    assert runtime_service.attach_calls[-1]['health'] is None
+    assert runtime_service.restore_calls == []
+
+
+def test_start_agent_runtime_reports_final_restored_authority() -> None:
+    class RestoringRuntimeService(_RuntimeService):
+        def attach(self, **kwargs):
+            attached = super().attach(**kwargs)
+            attached.health = kwargs['health'] or 'healthy'
+            self._registry._runtime = attached
+            return attached
+
+        def restore(self, agent_name: str):
+            super().restore(agent_name)
+            current = self._registry.get(agent_name)
+            values = vars(current).copy()
+            values['health'] = 'restored'
+            self._registry._runtime = SimpleNamespace(**values)
+
+    runtime_service = RestoringRuntimeService()
+    launched_binding = _binding()
+
+    execution = start_agent_runtime(
+        context=object(),
+        command=SimpleNamespace(restore=True),
+        runtime_service=runtime_service,
+        agent_name='agent1',
+        spec=SimpleNamespace(provider='codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+        plan=SimpleNamespace(workspace_path='/tmp/ws'),
+        binding=None,
+        raw_binding=None,
+        stale_binding=False,
+        assigned_pane_id='%5',
+        style_index=0,
+        project_id='proj-1',
+        tmux_socket_path='/tmp/ccb.sock',
+        namespace_epoch=3,
+        ensure_agent_runtime_fn=lambda *args, **kwargs: RuntimeLaunchResult(
+            launched=True,
+            binding=launched_binding,
+        ),
+        launch_binding_hint_fn=lambda **kwargs: None,
+        relabel_project_namespace_pane_fn=lambda **kwargs: '%5',
+        same_tmux_socket_path_fn=lambda left, right: left == right,
+        window_name='main',
+    )
+
+    assert execution.agent_result.action == 'launched'
+    assert execution.agent_result.health == 'restored'
+    assert runtime_service._registry.get('agent1').health == 'restored'
+
+
+def test_real_runtime_service_warm_reuse_preserves_restored_without_store_write(
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path)
+    spec = AgentSpec(
+        name='agent1',
+        provider='codex',
+        target='.',
+        workspace_mode=WorkspaceMode.INPLACE,
+        workspace_root=None,
+        runtime_mode=RuntimeMode.PANE_BACKED,
+        restore_default=RestoreMode.AUTO,
+        permission_default=PermissionMode.AUTO,
+        queue_policy=QueuePolicy.SERIAL_PER_AGENT,
+    )
+    config = SimpleNamespace(agents={'agent1': spec})
+    runtime_store = AgentRuntimeStore(layout)
+    existing = _runtime(
+        state=AgentState.IDLE,
+        pid=55,
+        health='restored',
+        desired_state='mounted',
+        reconcile_state='steady',
+        lifecycle_state='idle',
+        mount_attempt_id=None,
+        tmux_socket_name='sock-a',
+        tmux_socket_path='/tmp/ccb.sock',
+        session_file='/tmp/session.json',
+        session_id='session-5',
+        slot_key='agent1',
+    )
+    runtime_store.save(existing)
+    registry = AgentRegistry(layout, config, runtime_store=runtime_store)
+    service = RuntimeService(
+        layout,
+        registry,
+        'proj-1',
+        clock=lambda: existing.last_seen_at,
+    )
+    writes_before = runtime_store.save_count
+    binding = _binding()
+
+    execution = start_agent_runtime(
+        context=object(),
+        command=SimpleNamespace(restore=True),
+        runtime_service=service,
+        agent_name='agent1',
+        spec=spec,
+        plan=SimpleNamespace(workspace_path=Path('/tmp/ws')),
+        binding=binding,
+        raw_binding=binding,
+        stale_binding=False,
+        assigned_pane_id=None,
+        style_index=0,
+        project_id='proj-1',
+        tmux_socket_path='/tmp/ccb.sock',
+        namespace_epoch=3,
+        ensure_agent_runtime_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('should not relaunch')
+        ),
+        launch_binding_hint_fn=lambda **kwargs: None,
+        relabel_project_namespace_pane_fn=lambda **kwargs: None,
+        same_tmux_socket_path_fn=lambda left, right: left == right,
+    )
+
+    persisted = registry.get('agent1')
+    assert execution.agent_result.action == 'attached'
+    assert execution.agent_result.health == 'restored'
+    assert persisted is not None and persisted.health == 'restored'
+    assert runtime_store.save_count == writes_before
+    assert 'restore_runtime:agent1' not in execution.actions_taken
+
+
 def test_start_agent_runtime_skips_current_reused_pane_identity() -> None:
     runtime_service = _RuntimeService()
     binding = _binding()
@@ -337,6 +516,262 @@ def test_start_agent_runtime_relaunches_and_tracks_project_socket_pane() -> None
     assert execution.agent_result.provider_prepare_count == 1
     assert execution.agent_result.provider_prepare_ms == 12.5
     assert execution.agent_result.binding_reject_reason == 'namespace_epoch_mismatch'
+
+
+def test_start_agent_runtime_records_exact_boundary_timings(monkeypatch) -> None:
+    now_ns = 0
+
+    def monotonic_ns() -> int:
+        return now_ns
+
+    def advance_ms(value: int) -> None:
+        nonlocal now_ns
+        now_ns += value * 1_000_000
+
+    monkeypatch.setattr(agent_runtime_module, 'monotonic_ns', monotonic_ns)
+    monkeypatch.setattr(agent_runtime_binding_module, 'monotonic_ns', monotonic_ns)
+
+    runtime_service = _RuntimeService()
+    original_attach = runtime_service.attach
+    original_restore = runtime_service.restore
+
+    def attach(**kwargs):
+        advance_ms(5)
+        return original_attach(**kwargs)
+
+    def restore(agent_name: str):
+        advance_ms(7)
+        return original_restore(agent_name)
+
+    runtime_service.attach = attach
+    runtime_service.restore = restore
+    launched_binding = _binding(runtime_ref='tmux:%7', pane_id='%7', active_pane_id='%7')
+
+    def ensure_agent_runtime(*args, **kwargs):
+        advance_ms(11)
+        return RuntimeLaunchResult(
+            launched=True,
+            binding=launched_binding,
+            timings_ms={
+                'build_start_cmd': 4.0,
+                'binding_resolve': 3.0,
+                'unattributed': 4.0,
+            },
+        )
+
+    def relabel_project_namespace_pane(**kwargs):
+        advance_ms(2)
+        return '%7'
+
+    def same_tmux_socket_path(left, right):
+        advance_ms(3)
+        return left == right
+
+    execution = start_agent_runtime(
+        context=object(),
+        command=SimpleNamespace(restore=True),
+        runtime_service=runtime_service,
+        agent_name='agent1',
+        spec=SimpleNamespace(provider='codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+        plan=SimpleNamespace(workspace_path='/tmp/ws'),
+        binding=None,
+        raw_binding=None,
+        stale_binding=False,
+        assigned_pane_id='%7',
+        style_index=0,
+        project_id='proj-1',
+        tmux_socket_path='/tmp/ccb.sock',
+        namespace_epoch=1,
+        ensure_agent_runtime_fn=ensure_agent_runtime,
+        launch_binding_hint_fn=lambda **kwargs: None,
+        relabel_project_namespace_pane_fn=relabel_project_namespace_pane,
+        same_tmux_socket_path_fn=same_tmux_socket_path,
+    )
+
+    assert execution.agent_result.duration_ms == 28.0
+    assert execution.agent_result.timings_ms == {
+        'prepare_launch_context': 0.0,
+        'pane_and_runtime_facts': 5.0,
+        'build_start_cmd': 4.0,
+        'tmux_respawn': 0.0,
+        'pane_identity': 0.0,
+        'session_write': 0.0,
+        'provider_post_launch': 0.0,
+        'binding_resolve': 3.0,
+        'unattributed': 4.0,
+        'authority_commit': 5.0,
+        'restore_bookkeeping': 7.0,
+    }
+    record = execution.agent_result.to_record()
+    assert type(execution.agent_result).from_record(record).timings_ms == execution.agent_result.timings_ms
+    record.pop('timings_ms')
+    assert type(execution.agent_result).from_record(record).timings_ms == {}
+
+
+def test_start_agent_runtime_attaches_structured_failure_without_wrapping(monkeypatch) -> None:
+    now_ns = 0
+
+    def monotonic_ns() -> int:
+        return now_ns
+
+    def advance_ms(value: int) -> None:
+        nonlocal now_ns
+        now_ns += value * 1_000_000
+
+    monkeypatch.setattr(agent_runtime_module, 'monotonic_ns', monotonic_ns)
+    monkeypatch.setattr(agent_runtime_binding_module, 'monotonic_ns', monotonic_ns)
+    original_error = RuntimeError('provider launch failed')
+
+    def ensure_agent_runtime(*args, **kwargs):
+        del args, kwargs
+        advance_ms(11)
+        setattr(
+            original_error,
+            'ccb_startup_timings_ms',
+            {'build_start_cmd': 4.0, 'unattributed': 7.0},
+        )
+        raise original_error
+
+    with pytest.raises(RuntimeError, match='provider launch failed') as captured:
+        start_agent_runtime(
+            context=object(),
+            command=SimpleNamespace(restore=False),
+            runtime_service=_RuntimeService(),
+            agent_name='agent1',
+            spec=SimpleNamespace(provider='codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+            plan=SimpleNamespace(workspace_path='/tmp/ws'),
+            binding=None,
+            raw_binding=None,
+            stale_binding=False,
+            assigned_pane_id='%7',
+            style_index=0,
+            project_id='proj-1',
+            tmux_socket_path='/tmp/ccb.sock',
+            namespace_epoch=1,
+            ensure_agent_runtime_fn=ensure_agent_runtime,
+            launch_binding_hint_fn=lambda **kwargs: None,
+            relabel_project_namespace_pane_fn=lambda **kwargs: None,
+            same_tmux_socket_path_fn=lambda left, right: left == right,
+            provider_prepared=True,
+            provider_prepare_ms=2.0,
+        )
+
+    assert captured.value is original_error
+    failed = getattr(original_error, 'ccb_startup_agent_result')
+    assert failed.agent_name == 'agent1'
+    assert failed.provider == 'codex'
+    assert failed.action == 'failed'
+    assert failed.health == 'failed'
+    assert failed.failure_reason == 'provider launch failed'
+    assert failed.provider_prepare_count == 1
+    assert failed.provider_prepare_ms == 2.0
+    assert failed.duration_ms == 11.0
+    assert failed.timings_ms == {
+        'prepare_launch_context': 0.0,
+        'pane_and_runtime_facts': 0.0,
+        'build_start_cmd': 4.0,
+        'tmux_respawn': 0.0,
+        'pane_identity': 0.0,
+        'session_write': 0.0,
+        'provider_post_launch': 0.0,
+        'binding_resolve': 0.0,
+        'authority_commit': 0.0,
+        'restore_bookkeeping': 0.0,
+        'unattributed': 7.0,
+    }
+    assert sum(failed.timings_ms.values()) <= failed.duration_ms
+
+
+@pytest.mark.parametrize(
+    ('failure_kind', 'timing_field', 'expected_duration'),
+    (
+        ('authority_commit', 'authority_commit', 5.0),
+        ('mount_attempt_authority', 'authority_commit', 5.0),
+        ('restore_bookkeeping', 'restore_bookkeeping', 7.0),
+    ),
+)
+def test_start_agent_runtime_keeps_structured_failure_after_launch(
+    monkeypatch,
+    failure_kind: str,
+    timing_field: str,
+    expected_duration: float,
+) -> None:
+    now_ns = 0
+
+    def monotonic_ns() -> int:
+        return now_ns
+
+    def advance_ms(value: int) -> None:
+        nonlocal now_ns
+        now_ns += value * 1_000_000
+
+    monkeypatch.setattr(agent_runtime_module, 'monotonic_ns', monotonic_ns)
+    monkeypatch.setattr(agent_runtime_binding_module, 'monotonic_ns', monotonic_ns)
+    runtime_service = _RuntimeService()
+    original_error = RuntimeError(f'{failure_kind} failed')
+    if failure_kind == 'authority_commit':
+        def attach(**_kwargs):
+            advance_ms(5)
+            raise original_error
+
+        runtime_service.attach = attach
+        restore = False
+    elif failure_kind == 'mount_attempt_authority':
+        runtime_service._registry = _Registry(_runtime())
+
+        def attach_mount_attempt_authority(**_kwargs):
+            advance_ms(5)
+            raise original_error
+
+        runtime_service.attach_mount_attempt_authority = attach_mount_attempt_authority
+        restore = False
+    else:
+        def restore_agent(_agent_name: str):
+            advance_ms(7)
+            raise original_error
+
+        runtime_service.restore = restore_agent
+        restore = True
+
+    launched_binding = _binding(
+        runtime_ref='tmux:%7',
+        session_ref='session-7',
+        pane_id='%7',
+        active_pane_id='%7',
+    )
+    with pytest.raises(RuntimeError, match=failure_kind) as captured:
+        start_agent_runtime(
+            context=object(),
+            command=SimpleNamespace(restore=restore),
+            runtime_service=runtime_service,
+            agent_name='agent1',
+            spec=SimpleNamespace(provider='codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+            plan=SimpleNamespace(workspace_path='/tmp/ws'),
+            binding=None,
+            raw_binding=None,
+            stale_binding=False,
+            assigned_pane_id='%7',
+            style_index=0,
+            project_id='proj-1',
+            tmux_socket_path='/tmp/ccb.sock',
+            namespace_epoch=1,
+            ensure_agent_runtime_fn=lambda *args, **kwargs: RuntimeLaunchResult(
+                launched=True,
+                binding=launched_binding,
+            ),
+            launch_binding_hint_fn=lambda **kwargs: None,
+            relabel_project_namespace_pane_fn=lambda **kwargs: '%7',
+            same_tmux_socket_path_fn=lambda left, right: left == right,
+        )
+
+    assert captured.value is original_error
+    failed = getattr(original_error, 'ccb_startup_agent_result')
+    assert failed.action == 'failed'
+    assert failed.health == 'failed'
+    assert failed.failure_reason == f'{failure_kind} failed'
+    assert failed.duration_ms == expected_duration
+    assert failed.timings_ms[timing_field] == expected_duration
+    assert sum(failed.timings_ms.values()) <= failed.duration_ms
 
 
 def test_start_agent_runtime_uses_runtime_service_for_helper_ownership(tmp_path: Path) -> None:
@@ -448,3 +883,50 @@ def test_start_agent_runtime_uses_mount_attempt_scoped_attach_during_supervision
             'binding_source': 'provider-session',
         }
     ]
+
+
+def test_start_agent_runtime_fails_closed_when_mount_attempt_is_superseded() -> None:
+    runtime_service = _RuntimeService()
+    current = _runtime()
+    runtime_service._registry = _Registry(current)
+
+    def superseded(**_kwargs):
+        return current, False
+
+    runtime_service.attach_mount_attempt_authority = superseded
+    launched_binding = _binding(
+        runtime_ref='tmux:%7',
+        session_ref='session-7',
+        pane_id='%7',
+        active_pane_id='%7',
+    )
+
+    with pytest.raises(RuntimeError, match='mount attempt authority was superseded') as captured:
+        start_agent_runtime(
+            context=object(),
+            command=SimpleNamespace(restore=True),
+            runtime_service=runtime_service,
+            agent_name='agent1',
+            spec=SimpleNamespace(provider='codex', runtime_mode=SimpleNamespace(value='pane-backed')),
+            plan=SimpleNamespace(workspace_path='/tmp/ws'),
+            binding=None,
+            raw_binding=None,
+            stale_binding=False,
+            assigned_pane_id='%7',
+            style_index=0,
+            project_id='proj-1',
+            tmux_socket_path='/tmp/ccb.sock',
+            namespace_epoch=1,
+            ensure_agent_runtime_fn=lambda *args, **kwargs: RuntimeLaunchResult(
+                launched=True,
+                binding=launched_binding,
+            ),
+            launch_binding_hint_fn=lambda **kwargs: None,
+            relabel_project_namespace_pane_fn=lambda **kwargs: '%7',
+            same_tmux_socket_path_fn=lambda left, right: left == right,
+        )
+
+    assert runtime_service.restore_calls == []
+    failed = getattr(captured.value, 'ccb_startup_agent_result')
+    assert failed.action == 'failed'
+    assert failed.failure_reason == 'startup mount attempt authority was superseded for agent1'

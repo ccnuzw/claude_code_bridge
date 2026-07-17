@@ -4,7 +4,7 @@ from pathlib import Path
 
 from agents.config_identity import project_config_identity_payload
 from agents.config_loader import load_project_config
-from ccbd.models import LeaseHealth
+from ccbd.models import LeaseHealth, MountState
 from ccbd.reload_handoff import reload_handoff_allows_signature_mismatch
 from ccbd.services.project_namespace_state import ProjectNamespaceStateStore
 from ccbd.services.lifecycle import current_socket_inode, lifecycle_from_inspection
@@ -106,49 +106,50 @@ def shutdown_requested(app, *, project_id: str) -> bool:
 
 def ensure_project_lifecycle(app, *, inspection, now: str):
     lifecycle = app._lifecycle_store.load()
-    if lifecycle is None:
-        lifecycle = lifecycle_from_inspection(
-            project_id=compute_project_id(app.project_root),
-            inspection=inspection,
-            occurred_at=now,
-            config_signature=current_config_signature(app),
-            keeper_pid=app.pid,
-        )
+    if lifecycle is not None and lifecycle.keeper_pid == app.pid:
+        return lifecycle
+    with app._ownership_guard.startup_lock():
+        lifecycle = app._lifecycle_store.load()
+        if lifecycle is None:
+            lifecycle = lifecycle_from_inspection(
+                project_id=compute_project_id(app.project_root),
+                inspection=app._ownership_guard.inspect(),
+                occurred_at=app.clock(),
+                config_signature=current_config_signature(app),
+                keeper_pid=app.pid,
+            )
+            app._lifecycle_store.save(lifecycle)
+            return lifecycle
+        if lifecycle.keeper_pid == app.pid:
+            return lifecycle
+        lifecycle = lifecycle.with_updates(keeper_pid=app.pid)
         app._lifecycle_store.save(lifecycle)
         return lifecycle
-    if lifecycle.keeper_pid == app.pid:
-        return lifecycle
-    lifecycle = lifecycle.with_updates(keeper_pid=app.pid)
-    app._lifecycle_store.save(lifecycle)
-    return lifecycle
 
 
 def reconcile_connectable_daemon(app, *, state: KeeperState, inspection, lifecycle, now: str) -> KeeperState | None:
     if not inspection.socket_connectable:
         return None
+    # The spawned child exclusively owns promotion of its in-flight startup
+    # transaction.  A mounted lease plus a connectable ping during
+    # `starting/runtime_bootstrap` is progress evidence, not permission for the
+    # keeper's steady-state reconciliation path to synthesize mounted early.
+    if _startup_promotion_owned_by_child(lifecycle, inspection.lease):
+        return state
     try:
         if daemon_matches_project_config(app):
             mounted_kwargs = _mounted_lifecycle_kwargs(app, lifecycle=lifecycle, inspection=inspection)
             if _mounted_lifecycle_is_current(lifecycle, mounted_kwargs):
                 return state.with_success(occurred_at=now)
-            app._lifecycle_store.save(
-                lifecycle.with_phase(
-                    'mounted',
-                    occurred_at=now,
-                    **mounted_kwargs,
-                    last_failure_reason=None,
-                    shutdown_intent=None,
-                )
+            return _record_connectable_mounted(
+                app,
+                state=state,
+                observed_inspection=inspection,
             )
-            return state.with_success(occurred_at=now)
         request_shutdown(app)
-        app._lifecycle_store.save(
-            lifecycle.with_phase(
-                'stopping',
-                occurred_at=now,
-                desired_state='running',
-                last_failure_reason=None,
-            )
+        _record_connectable_restart(
+            app,
+            observed_inspection=inspection,
         )
         return state.with_restart_attempt(occurred_at=now)
     except Exception as exc:
@@ -269,43 +270,156 @@ def _record_connectable_observation_failure(
     now: str,
     failure_reason: str,
 ) -> None:
-    if inspection.lease is None or not inspection.socket_connectable:
-        app._lifecycle_store.save(
-            lifecycle.with_phase(
-                'failed',
-                occurred_at=now,
-                desired_state='running',
-                last_failure_reason=failure_reason,
+    del lifecycle, now
+    with app._ownership_guard.startup_lock():
+        current = app._lifecycle_store.load()
+        if current is None or current.desired_state != 'running':
+            return
+        current_inspection = app._ownership_guard.inspect()
+        current_lease = current_inspection.lease
+        if not _same_observed_lease(current_lease, inspection.lease):
+            return
+        occurred_at = app.clock()
+        if current_lease is None or not current_inspection.socket_connectable:
+            if current.phase == 'starting':
+                return
+            app._lifecycle_store.save(
+                current.with_phase(
+                    'failed',
+                    occurred_at=occurred_at,
+                    desired_state='running',
+                    last_failure_reason=failure_reason,
+                )
             )
-        )
-        return
-    mounted_kwargs = _mounted_lifecycle_kwargs(app, lifecycle=lifecycle, inspection=inspection)
-    generation = int(mounted_kwargs['generation'])
-    if lifecycle.phase == 'mounted' and int(lifecycle.generation) == generation:
+            return
+        if int(current.generation) != int(current_lease.generation):
+            return
+        mounted_kwargs = _mounted_lifecycle_kwargs(app, lifecycle=current, inspection=current_inspection)
+        if current.phase == 'mounted':
+            app._lifecycle_store.save(
+                current.with_updates(
+                    desired_state='running',
+                    keeper_pid=mounted_kwargs['keeper_pid'],
+                    owner_pid=mounted_kwargs['owner_pid'],
+                    owner_daemon_instance_id=mounted_kwargs['owner_daemon_instance_id'],
+                    config_signature=mounted_kwargs['config_signature'],
+                    socket_path=mounted_kwargs['socket_path'],
+                    socket_inode=mounted_kwargs['socket_inode'],
+                    namespace_epoch=mounted_kwargs['namespace_epoch'],
+                    last_failure_reason=failure_reason,
+                    shutdown_intent=None,
+                )
+            )
+            return
         app._lifecycle_store.save(
-            lifecycle.with_updates(
-                desired_state='running',
-                keeper_pid=mounted_kwargs['keeper_pid'],
-                owner_pid=mounted_kwargs['owner_pid'],
-                owner_daemon_instance_id=mounted_kwargs['owner_daemon_instance_id'],
-                config_signature=mounted_kwargs['config_signature'],
-                socket_path=mounted_kwargs['socket_path'],
-                socket_inode=mounted_kwargs['socket_inode'],
-                namespace_epoch=mounted_kwargs['namespace_epoch'],
+            current.with_phase(
+                'mounted',
+                occurred_at=occurred_at,
+                **mounted_kwargs,
                 last_failure_reason=failure_reason,
                 shutdown_intent=None,
             )
         )
-        return
-    app._lifecycle_store.save(
-        lifecycle.with_phase(
-            'mounted',
-            occurred_at=now,
-            **mounted_kwargs,
-            last_failure_reason=failure_reason,
-            shutdown_intent=None,
+
+
+def _record_connectable_mounted(app, *, state: KeeperState, observed_inspection) -> KeeperState:
+    with app._ownership_guard.startup_lock():
+        lifecycle = app._lifecycle_store.load()
+        current_inspection = app._ownership_guard.inspect()
+        current_lease = current_inspection.lease
+        if (
+            lifecycle is None
+            or lifecycle.desired_state != 'running'
+            or _startup_promotion_owned_by_child(lifecycle, current_lease)
+            or not _same_observed_lease(current_lease, observed_inspection.lease)
+            or current_lease is None
+            or current_lease.mount_state is not MountState.MOUNTED
+        ):
+            return state
+        occurred_at = app.clock()
+        mounted_kwargs = _mounted_lifecycle_kwargs(
+            app,
+            lifecycle=lifecycle,
+            inspection=current_inspection,
         )
-    )
+        if not _mounted_lifecycle_is_current(lifecycle, mounted_kwargs):
+            generation_changed = int(lifecycle.generation) != int(current_lease.generation)
+            app._lifecycle_store.save(
+                lifecycle.with_phase(
+                    'mounted',
+                    occurred_at=occurred_at,
+                    **mounted_kwargs,
+                    startup_id=None if generation_changed else lifecycle.startup_id,
+                    startup_stage='mounted',
+                    last_progress_at=occurred_at,
+                    startup_deadline_at=None,
+                    last_failure_reason=None,
+                    shutdown_intent=None,
+                )
+            )
+        return state.with_success(occurred_at=occurred_at)
+
+
+def _startup_promotion_owned_by_child(lifecycle, lease) -> bool:
+    if lifecycle is None or lifecycle.phase != 'starting':
+        return False
+    stage = str(getattr(lifecycle, 'startup_stage', '') or '')
+    if stage not in {
+        'spawn_requested',
+        'socket_listening',
+        'publishing_mounted',
+        'runtime_bootstrap',
+    }:
+        return False
+    if lease is None or lease.mount_state is not MountState.MOUNTED:
+        return False
+    try:
+        return (
+            str(lifecycle.project_id) == str(lease.project_id)
+            and int(lifecycle.generation) == int(lease.generation)
+            and int(lifecycle.owner_pid or 0) == int(lease.ccbd_pid)
+            and str(lifecycle.owner_daemon_instance_id or '')
+            == str(lease.daemon_instance_id or '')
+            and str(lifecycle.socket_path or '') == str(lease.socket_path or '')
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _record_connectable_restart(app, *, observed_inspection) -> None:
+    with app._ownership_guard.startup_lock():
+        lifecycle = app._lifecycle_store.load()
+        current_lease = app._ownership_guard.inspect().lease
+        if (
+            lifecycle is None
+            or lifecycle.desired_state != 'running'
+            or not _same_observed_lease(current_lease, observed_inspection.lease)
+        ):
+            return
+        app._lifecycle_store.save(
+            lifecycle.with_phase(
+                'stopping',
+                occurred_at=app.clock(),
+                desired_state='running',
+                last_failure_reason=None,
+            )
+        )
+
+
+def _same_observed_lease(current, observed) -> bool:
+    if current is None or observed is None:
+        return current is None and observed is None
+    try:
+        return (
+            str(current.project_id) == str(observed.project_id)
+            and int(current.ccbd_pid) == int(observed.ccbd_pid)
+            and int(current.generation) == int(observed.generation)
+            and str(current.daemon_instance_id or '') == str(observed.daemon_instance_id or '')
+            and str(current.socket_path) == str(observed.socket_path)
+            and current.mount_state is observed.mount_state
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def cleanup_transient_keeper_files(app, *, lock_path: Path) -> None:

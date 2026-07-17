@@ -69,13 +69,19 @@ def submit_frontdesk_direct_handoff(
         return receipt
 
 
-def recover_frontdesk_direct_handoffs(dispatcher) -> tuple[str, ...]:
+def recover_frontdesk_direct_handoffs(
+    dispatcher,
+    *,
+    authority_check=None,
+) -> tuple[str, ...]:
     recovered: list[str] = []
     root = _direct_activation_path(dispatcher, 'placeholder').parent
     _validate_authority_path(dispatcher, root, label='activation directory')
     if not root.is_dir():
         return ()
     for path in sorted(root.glob('*.direct-handoff.transaction.json')):
+        if callable(authority_check):
+            authority_check()
         try:
             transaction = _read_json(path)
             request_record = transaction.get('request')

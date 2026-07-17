@@ -170,7 +170,7 @@ def resolved_reconcile_state(runtime) -> str | None:
     if runtime.state is AgentState.DEGRADED and reconcile_state == 'steady':
         return 'degraded'
     if runtime.state in {AgentState.STARTING, AgentState.IDLE, AgentState.BUSY}:
-        if reconcile_state in {None, '', 'degraded', 'recovering', 'failed', 'stopped'}:
+        if reconcile_state in {None, '', 'blocked', 'degraded', 'recovering', 'failed', 'stopped'}:
             return 'steady'
     return reconcile_state
 

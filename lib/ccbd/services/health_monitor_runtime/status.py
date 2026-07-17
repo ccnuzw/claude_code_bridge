@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 from agents.models import AgentState, RuntimeBindingSource, normalize_runtime_binding_source
+from ccbd.services.runtime_recovery_policy import (
+    PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS,
+    normalized_runtime_health,
+)
 from ccbd.services.project_inspection import load_project_daemon_inspection
 
 
@@ -40,6 +44,11 @@ def runtime_health(monitor, runtime) -> str:
         getattr(runtime, 'binding_source', RuntimeBindingSource.PROVIDER_SESSION)
     )
     if runtime.state in {AgentState.STOPPED, AgentState.FAILED}:
+        return runtime.health
+    if (
+        runtime.state is AgentState.DEGRADED
+        and normalized_runtime_health(runtime) in PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS
+    ):
         return runtime.health
     pane_status = monitor._pane_health(runtime)
     if pane_status is not None:

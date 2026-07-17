@@ -133,6 +133,9 @@ def restore_running_jobs(dispatcher) -> tuple:
     restore_entries: list[CcbdRestoreEntry] = []
     dispatcher._last_restore_generated_at = dispatcher._clock()
     for target_kind, _target_name, job_id in dispatcher._state.active_items():
+        authority_check = getattr(dispatcher, '_startup_authority_check', None)
+        if callable(authority_check):
+            authority_check()
         result, entry = _restore_current_job(dispatcher, target_kind=target_kind, job_id=job_id)
         if entry is None:
             continue

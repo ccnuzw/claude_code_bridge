@@ -19,6 +19,7 @@ from terminal_runtime.tmux_backend_runtime import (
     TmuxBackendServices,
     build_backend_services as _build_backend_services_impl,
 )
+from runtime_observability import record_startup_operations
 
 
 def _subprocess_kwargs() -> dict:
@@ -84,11 +85,36 @@ class TmuxBackend(
         if timeout is not None:
             kwargs['timeout'] = timeout
         kwargs['env'] = _isolated_tmux_env()
-        return _run([*self._tmux_base(), *args], check=check, **kwargs)
+        record_startup_operations(
+            {
+                'tmux_backend_command_attempt_count': 1,
+                'tracked_startup_subprocess_spawn_attempt_count': 1,
+            }
+        )
+        try:
+            result = _run([*self._tmux_base(), *args], check=check, **kwargs)
+        except subprocess.SubprocessError:
+            # CalledProcessError and TimeoutExpired both prove that the child
+            # process was created, even though the tmux command did not finish
+            # successfully.
+            _record_tmux_subprocess_started()
+            raise
+        _record_tmux_subprocess_started()
+        return result
 
     @staticmethod
     def _env_tmux_pane() -> str:
         return os.environ.get('TMUX_PANE', '')
+
+
+def _record_tmux_subprocess_started() -> None:
+    record_startup_operations(
+        {
+            'tmux_backend_command_count': 1,
+            'tmux_backend_subprocess_spawn_count': 1,
+            'tracked_startup_subprocess_spawn_count': 1,
+        }
+    )
 
 
 __all__ = ['TmuxBackend']

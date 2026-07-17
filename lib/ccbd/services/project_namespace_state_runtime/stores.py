@@ -19,7 +19,7 @@ class ProjectNamespaceStateStore:
         return self._store.load(path, loader=ProjectNamespaceState.from_record)
 
     def save(self, state: ProjectNamespaceState) -> None:
-        self._store.save(
+        self._store.save_if_changed(
             self._layout.ccbd_state_path,
             state,
             serializer=lambda value: value.to_record(),

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from agents.models import AgentState
+from ccbd.services.runtime_recovery_policy import (
+    PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS,
+    normalized_runtime_health,
+)
 
 from .recovery_context import RecoveryContext
 from .recovery_events import append_recovery_event
@@ -38,6 +42,11 @@ def attempt_recovery_action(ctx: RecoveryContext, *, recovering):
     refreshed = ctx.runtime_service.refresh_provider_binding(ctx.agent_name, recover=True)
     if refreshed is None:
         return None, None
+    if normalized_runtime_health(refreshed) in PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS:
+        return refreshed, str(
+            getattr(refreshed, 'last_failure_reason', None)
+            or normalized_runtime_health(refreshed)
+        )
     if ctx.should_reflow_project_namespace_fn(recovering, recovered=refreshed):
         ctx.remount_project_fn(f'pane_recovery:{ctx.agent_name}')
         return ctx.registry.get(ctx.agent_name), None
@@ -111,9 +120,11 @@ def mark_recovery_failed(
     next_health: str,
     failure_reason: str | None,
 ) -> str:
+    next_health = normalized_runtime_health(refreshed) or next_health
+    recovery_blocked = next_health in PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS
     failure_runtime = ctx.upsert_if_changed_fn(
         refreshed,
-        reconcile_state='degraded',
+        reconcile_state='blocked' if recovery_blocked else 'degraded',
         restart_count=restart_count,
         last_reconcile_at=attempted_at,
         last_failure_reason=failure_reason or next_health or prior_health or 'recover-failed',

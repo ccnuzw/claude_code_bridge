@@ -58,7 +58,7 @@ def maybe_connect_daemon(
     state: DaemonStartState,
     connect_compatible_daemon_fn,
 ) -> DaemonHandle | None:
-    if _phase(inspection) != 'mounted' or not inspection.socket_connectable:
+    if not mounted_control_plane_ready(inspection):
         return None
     handle = connect_compatible_daemon_fn(
         context,
@@ -122,17 +122,18 @@ def finalize_daemon_start(
 ) -> DaemonHandle:
     _manager, _guard, inspection = inspect_daemon_fn(context)
     phase = _phase(inspection)
-    if phase == 'mounted':
+    if phase == 'mounted' and mounted_control_plane_ready(inspection):
         handle = connect_compatible_daemon_fn(context, inspection, restart_on_mismatch=False)
         if handle is not None:
             return DaemonHandle(client=handle.client, inspection=inspection, started=started)
         if inspection.socket_connectable:
             raise CcbdServiceError(incompatible_daemon_error_fn())
-    if phase == 'starting':
+    if phase == 'starting' or (phase == 'mounted' and not mounted_control_plane_ready(inspection)):
         stage = str(getattr(inspection, 'startup_stage', '') or '').strip()
+        state_label = 'lifecycle_starting' if phase == 'starting' else 'lifecycle_mounted'
         if stage:
-            raise CcbdServiceError(f'ccbd is unavailable: lifecycle_starting(stage={stage})')
-        raise CcbdServiceError('ccbd is unavailable: lifecycle_starting')
+            raise CcbdServiceError(f'ccbd is unavailable: {state_label}(stage={stage})')
+        raise CcbdServiceError(f'ccbd is unavailable: {state_label}')
     if phase == 'stopping':
         raise CcbdServiceError('ccbd is unavailable: lifecycle_stopping')
     failure_reason = str(getattr(inspection, 'last_failure_reason', '') or '').strip()
@@ -160,8 +161,16 @@ def _desired_state(inspection) -> str:
     return 'running'
 
 
+def mounted_control_plane_ready(inspection) -> bool:
+    if _phase(inspection) != 'mounted' or not bool(inspection.socket_connectable):
+        return False
+    stage = str(getattr(inspection, 'startup_stage', '') or '').strip()
+    return stage in {'', 'mounted'}
+
+
 __all__ = [
     'DaemonStartState',
     'finalize_daemon_start',
+    'mounted_control_plane_ready',
     'poll_daemon_start_iteration',
 ]

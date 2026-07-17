@@ -15,6 +15,7 @@ from ccbd.supervisor_runtime import start_supervisor, stop_all_supervisor
 from ccbd.supervisor_runtime.state_bundle import SupervisorRuntimeState, SupervisorRuntimeStateMixin
 from cli.services.tmux_cleanup_history import TmuxCleanupHistoryStore
 from cli.services.tmux_project_cleanup import cleanup_project_tmux_orphans_by_socket
+from runtime_observability import collect_startup_operations
 
 
 class RuntimeSupervisor(SupervisorRuntimeStateMixin):
@@ -75,21 +76,28 @@ class RuntimeSupervisor(SupervisorRuntimeStateMixin):
         reflow_workspace: bool = False,
         recreate_reason: str | None = None,
         background_maintenance: bool = False,
+        startup_run_id: str | None = None,
+        daemon_started: bool | None = None,
+        readiness_recorder=None,
     ) -> StartFlowSummary:
-        return start_supervisor(
-            self,
-            agent_names=agent_names,
-            restore=restore,
-            auto_permission=auto_permission,
-            terminal_size=terminal_size,
-            cleanup_tmux_orphans=cleanup_tmux_orphans,
-            interactive_tmux_layout=interactive_tmux_layout,
-            recreate_namespace=recreate_namespace,
-            reflow_workspace=reflow_workspace,
-            recreate_reason=recreate_reason,
-            background_maintenance=background_maintenance,
-            run_start_flow_fn=run_start_flow,
-        )
+        with collect_startup_operations():
+            return start_supervisor(
+                self,
+                agent_names=agent_names,
+                restore=restore,
+                auto_permission=auto_permission,
+                terminal_size=terminal_size,
+                cleanup_tmux_orphans=cleanup_tmux_orphans,
+                interactive_tmux_layout=interactive_tmux_layout,
+                recreate_namespace=recreate_namespace,
+                reflow_workspace=reflow_workspace,
+                recreate_reason=recreate_reason,
+                background_maintenance=background_maintenance,
+                startup_run_id=startup_run_id,
+                daemon_started=daemon_started,
+                readiness_recorder=readiness_recorder,
+                run_start_flow_fn=run_start_flow,
+            )
 
     def stop_all(self, *, force: bool) -> StopAllExecution:
         return stop_all_supervisor(

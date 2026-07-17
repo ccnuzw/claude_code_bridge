@@ -435,6 +435,7 @@ class RuntimeService:
             registry=self._registry,
             session_bindings=self._session_bindings,
             attach_runtime_fn=self.attach,
+            patch_runtime_state_fn=self.patch_runtime_state,
             agent_name=agent_name,
             recover=recover,
         )

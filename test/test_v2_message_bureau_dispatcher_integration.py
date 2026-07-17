@@ -4042,6 +4042,60 @@ def test_dispatcher_tick_keeps_degraded_agent_queued_until_recovered(tmp_path: P
     assert started[0].job_id == job_id
 
 
+def test_dispatcher_tick_does_not_retry_provider_auth_blocked_agent(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-auth-blocked-queue'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude', 'gemini')
+    registry = AgentRegistry(layout, config)
+    blocked_runtime = replace(
+        _runtime('codex', project_id=ctx.project_id, layout=layout, pid=101),
+        state=AgentState.DEGRADED,
+        health='provider-auth-revoked',
+        reconcile_state='blocked',
+        restart_count=1,
+        last_failure_reason='run `codex login` before remounting',
+    )
+    registry.upsert(blocked_runtime)
+
+    class _UnexpectedRuntimeService:
+        def patch_runtime_state(self, runtime, **updates):
+            return runtime
+
+        def refresh_provider_binding(self, agent_name: str, *, recover: bool = False):
+            raise AssertionError(f'blocked runtime must not refresh: {agent_name}:{recover}')
+
+    dispatcher = JobDispatcher(
+        layout,
+        config,
+        registry,
+        runtime_service=_UnexpectedRuntimeService(),
+        clock=lambda: '2026-03-30T00:00:00Z',
+    )
+    receipt = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='user',
+            body='wait for login',
+            task_id='task-provider-auth-blocked',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    )
+    job_id = receipt.jobs[0].job_id
+
+    assert dispatcher.tick() == ()
+    accepted = dispatcher.get(job_id)
+    assert accepted is not None
+    assert accepted.status.value == 'accepted'
+    unchanged = registry.get('codex')
+    assert unchanged is not None
+    assert unchanged.health == 'provider-auth-revoked'
+    assert unchanged.restart_count == 1
+
+
 def test_dispatcher_tick_keeps_recoverable_agent_queued_without_runtime_service(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-degraded-recovery-start'
     ctx = _bootstrap_test_project(project_root)

@@ -66,89 +66,113 @@ def ensure_keeper_started(
 
 
 def clear_shutdown_intent(context) -> None:
-    ShutdownIntentStore(context.paths).clear()
+    manager = MountManager(context.paths)
+    guard = OwnershipGuard(context.paths, manager)
+    with guard.startup_lock():
+        ShutdownIntentStore(context.paths).clear()
 
 
 def record_running_intent(context) -> bool:
     store = CcbdLifecycleStore(context.paths)
-    current = store.load()
-    now = utc_now()
-    if current is None:
-        manager = MountManager(context.paths)
-        current = lifecycle_from_inspection(
-            project_id=context.project.project_id,
-            inspection=OwnershipGuard(context.paths, manager).inspect(),
-            occurred_at=now,
-            config_signature=_current_config_signature(context),
+    manager = MountManager(context.paths)
+    guard = OwnershipGuard(context.paths, manager)
+    with guard.startup_lock():
+        # Pair the running lifecycle intent with removal of any older stop
+        # intent.  The earlier compatibility clear is intentionally repeated
+        # here so a concurrent stop cannot recreate its intent between the
+        # clear and this transaction.
+        ShutdownIntentStore(context.paths).clear()
+        current = store.load()
+        lifecycle_missing = current is None
+        if current is None:
+            current = lifecycle_from_inspection(
+                project_id=context.project.project_id,
+                inspection=guard.inspect(),
+                occurred_at=utc_now(),
+            )
+        startup_requested = current.desired_state != 'running' or current.phase != 'mounted'
+        if not lifecycle_missing and current.desired_state == 'running':
+            return startup_requested
+        store.save(
+            current.with_updates(
+                desired_state='running',
+                socket_path=str(context.paths.ccbd_socket_path),
+                last_failure_reason=None,
+                shutdown_intent=None,
+            )
         )
-    startup_requested = current.desired_state != 'running' or current.phase != 'mounted'
-    store.save(
-        current.with_updates(
-            desired_state='running',
-            config_signature=_current_config_signature(context) or current.config_signature,
-            socket_path=str(context.paths.ccbd_socket_path),
-            last_failure_reason=None,
-            shutdown_intent=None,
-        )
-    )
     return startup_requested
 
 
 def record_shutdown_intent(context, *, reason: str) -> None:
     store = CcbdLifecycleStore(context.paths)
-    current = store.load()
-    now = utc_now()
-    if current is None:
-        manager = MountManager(context.paths)
-        current = lifecycle_from_inspection(
-            project_id=context.project.project_id,
-            inspection=OwnershipGuard(context.paths, manager).inspect(),
-            occurred_at=now,
-            config_signature=_current_config_signature(context),
+    manager = MountManager(context.paths)
+    guard = OwnershipGuard(context.paths, manager)
+    with guard.startup_lock():
+        current = store.load()
+        now = utc_now()
+        if current is None:
+            current = lifecycle_from_inspection(
+                project_id=context.project.project_id,
+                inspection=guard.inspect(),
+                occurred_at=now,
+                config_signature=_current_config_signature(context),
+            )
+        store.save(
+            current.with_phase(
+                'unmounted' if current.phase == 'unmounted' else 'stopping',
+                occurred_at=now,
+                desired_state='stopped',
+                shutdown_intent=reason,
+                last_failure_reason=None,
+            )
         )
-    store.save(
-        current.with_phase(
-            'unmounted' if current.phase == 'unmounted' else 'stopping',
-            occurred_at=now,
-            desired_state='stopped',
-            shutdown_intent=reason,
-            last_failure_reason=None,
+        ShutdownIntentStore(context.paths).save(
+            ShutdownIntent(
+                project_id=context.project.project_id,
+                requested_at=now,
+                requested_by_pid=os.getpid(),
+                reason=reason,
+            )
         )
-    )
-    ShutdownIntentStore(context.paths).save(
-        ShutdownIntent(
-            project_id=context.project.project_id,
-            requested_at=now,
-            requested_by_pid=os.getpid(),
-            reason=reason,
-        )
-    )
 
 
 def finalize_shutdown_lifecycle(context) -> None:
     store = CcbdLifecycleStore(context.paths)
-    current = store.load()
-    now = utc_now()
-    if current is None:
-        manager = MountManager(context.paths)
-        current = lifecycle_from_inspection(
-            project_id=context.project.project_id,
-            inspection=OwnershipGuard(context.paths, manager).inspect(),
-            occurred_at=now,
-            config_signature=_current_config_signature(context),
+    manager = MountManager(context.paths)
+    guard = OwnershipGuard(context.paths, manager)
+    with guard.startup_lock():
+        current_intent = ShutdownIntentStore(context.paths).load()
+        current = store.load()
+        if (
+            current_intent is None
+            or current_intent.project_id != context.project.project_id
+            or (current is not None and current.desired_state != 'stopped')
+        ):
+            return
+        now = utc_now()
+        if current is None:
+            current = lifecycle_from_inspection(
+                project_id=context.project.project_id,
+                inspection=guard.inspect(),
+                occurred_at=now,
+                config_signature=_current_config_signature(context),
+            )
+        store.save(
+            current.with_phase(
+                'unmounted',
+                occurred_at=now,
+                desired_state='stopped',
+                owner_pid=None,
+                owner_daemon_instance_id=None,
+                socket_inode=None,
+                socket_path=str(context.paths.ccbd_socket_path),
+                startup_stage=None,
+                last_progress_at=now,
+                startup_deadline_at=None,
+                last_failure_reason=None,
+            )
         )
-    store.save(
-        current.with_phase(
-            'unmounted',
-            occurred_at=now,
-            desired_state='stopped',
-            owner_pid=None,
-            owner_daemon_instance_id=None,
-            socket_inode=None,
-            socket_path=str(context.paths.ccbd_socket_path),
-            last_failure_reason=None,
-        )
-    )
 
 
 def wait_for_keeper_ready(

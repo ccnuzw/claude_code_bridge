@@ -121,6 +121,23 @@ def test_changed_sidebar_helper_respawns_only_sidebar_pane(monkeypatch, tmp_path
     monkeypatch.setattr(materialize_topology, '_list_panes_by_user_options', lambda *_args, **_kwargs: ['%1'])
     monkeypatch.setattr(
         materialize_topology,
+        'inspect_project_namespace_pane',
+        lambda _backend, pane_id: ProjectNamespacePaneRecord(
+            pane_id=pane_id,
+            session_name='ccb-project',
+            window_name='main',
+            role='sidebar',
+            slot_key='sidebar:main',
+            ccb_window='main',
+            sidebar_instance='main',
+            project_id='project-1',
+            managed_by='ccbd',
+            namespace_epoch=7,
+            alive=True,
+        ),
+    )
+    monkeypatch.setattr(
+        materialize_topology,
         '_pane_option',
         lambda _backend, pane_id, key: pane_options.get(pane_id, {}).get(key, ''),
     )
@@ -130,8 +147,20 @@ def test_changed_sidebar_helper_respawns_only_sidebar_pane(monkeypatch, tmp_path
         lambda _backend, pane_id, args, *, cwd: respawns.append((pane_id, args, cwd)),
     )
 
-    materialize_topology.refresh_topology_sidebar_helpers(controller, backend, topology_plan=topology_plan)
-    materialize_topology.refresh_topology_sidebar_helpers(controller, backend, topology_plan=topology_plan)
+    materialize_topology.refresh_topology_sidebar_helpers(
+        controller,
+        backend,
+        topology_plan=topology_plan,
+        tmux_session_name='ccb-project',
+        namespace_epoch=7,
+    )
+    materialize_topology.refresh_topology_sidebar_helpers(
+        controller,
+        backend,
+        topology_plan=topology_plan,
+        tmux_session_name='ccb-project',
+        namespace_epoch=7,
+    )
 
     assert respawns == [('%1', sidebar.launch_args, str(tmp_path))]
     assert pane_options['%1']['@ccb_sidebar_helper_id'] == 'sha256:new'
@@ -143,11 +172,17 @@ def test_current_sidebar_helper_uses_startup_snapshot_without_tmux_reads(monkeyp
     topology_plan = SimpleNamespace(windows=(SimpleNamespace(name='main', sidebar=sidebar),))
     record = ProjectNamespacePaneRecord(
         pane_id='%1',
+        session_name='ccb-project',
+        window_name='main',
         role='sidebar',
+        slot_key='sidebar:main',
+        ccb_window='main',
         sidebar_instance='main',
         sidebar_helper_id='sha256:current',
         project_id='project-1',
         managed_by='ccbd',
+        namespace_epoch=7,
+        alive=True,
     )
     monkeypatch.setattr(materialize_topology, 'sidebar_helper_fingerprint', lambda: 'sha256:current')
 
@@ -156,6 +191,8 @@ def test_current_sidebar_helper_uses_startup_snapshot_without_tmux_reads(monkeyp
         object(),
         topology_plan=topology_plan,
         pane_records={'%1': record},
+        tmux_session_name='ccb-project',
+        namespace_epoch=7,
     )
 
     assert refreshed == ()

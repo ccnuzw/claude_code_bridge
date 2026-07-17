@@ -57,7 +57,7 @@ of treating decomposition as macro completion. The record binds:
 
 - task-set id and revision;
 - source Frontdesk request and Planner job;
-- plan and Roadmap revision;
+- plan and Roadmap projection revision;
 - ordered child task ids and required/optional membership;
 - child task revisions and terminal evidence digests;
 - closure intent, Planner backfill job, and Frontdesk notification identity.
@@ -113,8 +113,8 @@ runtime acceptance.
   Planner or Frontdesk asks.
 - Adding, removing, or revising a child increments task-set revision and makes
   every older open closure intent stale.
-- Planner writes use expected PlanTree revision; a revision conflict causes a
-  visible retry/replan, never last-writer-wins.
+- Planner writes use the expected legacy PlanTree projection digest; a conflict
+  causes a visible retry/replan, never last-writer-wins.
 - Provider replies remain proposals/evidence. Scripts own task, task-set,
   revision, closure, notification, and delivery authority.
 - Business asks have no elapsed-time timeout. Only terminal provider/job state
@@ -147,6 +147,14 @@ Config V3 agentic-loop feature. Existing per-task round artifacts remain valid;
 task-set closure adds parent aggregation authority rather than replacing child
 authority.
 
+For the integrated single-lane path, `expected PlanTree revision` means the
+digest of the selected Planner projection files. Under Decision 031 it maps to
+`legacy_projection_digest` inside one plan-level proposal. It is not the future
+`portfolio_revision`, `plan_revision`, `task_revision`, or typed authority
+closure and cannot authorize a multi-lane write by itself. Migration must carry
+both the legacy digest and full Decision 031 basis until the old importer is
+retired.
+
 ## Acceptance
 
 - Source tests cover all aggregate rows, exact-once recovery, revision races,
@@ -165,4 +173,5 @@ authority.
 - [018-planner-uses-plan-brief.md](018-planner-uses-plan-brief.md)
 - [019-orchestrator-triage-before-task-detailer.md](019-orchestrator-triage-before-task-detailer.md)
 - [028-frontdesk-owned-planner-silence-handoff.md](028-frontdesk-owned-planner-silence-handoff.md)
+- [031-global-plan-tree-authority-across-worktrees.md](031-global-plan-tree-authority-across-worktrees.md)
 - [../topics/planner-feedback-and-task-set-closure-plan.md](../topics/planner-feedback-and-task-set-closure-plan.md)

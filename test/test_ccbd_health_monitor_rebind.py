@@ -4,6 +4,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from agents.models import AgentRuntime, AgentState
+from ccbd.services.health_monitor_runtime.status import runtime_health
 from ccbd.services.health_monitor_runtime.updates_runtime.rebind import rebind_runtime
 from ccbd.services.provider_runtime_facts import ProviderRuntimeFacts
 
@@ -118,3 +119,19 @@ def test_rebind_runtime_falls_back_to_session_binding_when_facts_missing(monkeyp
     assert updated.pane_id == '%7'
     assert updated.active_pane_id == '%7'
     assert updated.pane_state == 'alive'
+
+
+def test_runtime_health_preserves_terminal_provider_recovery_block() -> None:
+    runtime = _runtime(
+        state=AgentState.DEGRADED,
+        health='provider-auth-revoked',
+        reconcile_state='blocked',
+        last_failure_reason='run `codex login` before remounting',
+    )
+    monitor = SimpleNamespace(
+        _pane_health=lambda runtime: (_ for _ in ()).throw(
+            AssertionError('terminal provider block must bypass pane reassessment')
+        ),
+    )
+
+    assert runtime_health(monitor, runtime) == 'provider-auth-revoked'

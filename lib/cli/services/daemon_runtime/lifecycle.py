@@ -6,7 +6,12 @@ import time
 from ccbd.models import LeaseHealth
 
 from .models import CcbdServiceError, DaemonHandle
-from .lifecycle_start import DaemonStartState, finalize_daemon_start, poll_daemon_start_iteration
+from .lifecycle_start import (
+    DaemonStartState,
+    finalize_daemon_start,
+    mounted_control_plane_ready,
+    poll_daemon_start_iteration,
+)
 
 
 def ensure_daemon_started(
@@ -73,7 +78,7 @@ def connect_mounted_daemon(
 ) -> DaemonHandle:
     _manager, _guard, inspection = inspect_daemon_fn(context)
     phase = _phase(inspection)
-    if phase == 'mounted':
+    if phase == 'mounted' and mounted_control_plane_ready(inspection):
         handle = connect_compatible_daemon_fn(context, inspection, restart_on_mismatch=allow_restart_stale)
         if handle is not None:
             return handle
@@ -87,7 +92,7 @@ def connect_mounted_daemon(
         raise CcbdServiceError('project ccbd is starting; wait for keeper to finish startup')
     if phase == 'stopping':
         raise CcbdServiceError('project ccbd is stopping; wait for shutdown to finish')
-    if phase == 'mounted' and inspection.socket_connectable:
+    if phase == 'mounted' and mounted_control_plane_ready(inspection):
         handle = connect_compatible_daemon_fn(context, inspection, restart_on_mismatch=False)
         if handle is not None:
             return handle
@@ -97,6 +102,10 @@ def connect_mounted_daemon(
         raise CcbdServiceError(
             f'ccbd is unavailable: {inspection.reason}; lifecycle_failure: {failure_reason}'
         )
+    if phase == 'mounted':
+        stage = str(getattr(inspection, 'startup_stage', '') or '').strip()
+        if stage:
+            raise CcbdServiceError(f'ccbd is unavailable: lifecycle_mounted(stage={stage})')
     raise CcbdServiceError(f'ccbd is unavailable: {inspection.reason}')
 
 
@@ -105,6 +114,8 @@ def _should_wait_or_recover(inspection, should_restart_unreachable_daemon_fn) ->
     if _desired_state(inspection) != 'running':
         return False
     if phase in {'unmounted', 'starting', 'failed'}:
+        return True
+    if phase == 'mounted' and not mounted_control_plane_ready(inspection):
         return True
     return (
         phase == 'mounted'
@@ -144,7 +155,9 @@ def _startup_wait_exhausted(
     now = time.time()
     if now >= local_deadline:
         return True
-    if phase != 'starting':
+    if phase != 'starting' and not (
+        phase == 'mounted' and not mounted_control_plane_ready(inspection)
+    ):
         return False
     transaction_deadline = _timestamp_seconds(getattr(inspection, 'startup_deadline_at', None))
     if transaction_deadline is not None and now >= transaction_deadline:

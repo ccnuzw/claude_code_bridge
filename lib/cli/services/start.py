@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
+import time
 
 from agents.config_loader import load_project_config
-from ccbd.lifecycle_report_store import CcbdStartupReportStore
 from ccbd.services.project_namespace import ProjectNamespaceController
 from ccbd.services.project_namespace_runtime import build_namespace_topology_plan
 from ccbd.services.project_namespace_runtime.materialize_topology import refresh_topology_sidebar_helpers
@@ -14,6 +15,7 @@ from .daemon_runtime.policy import STARTUP_TRANSACTION_TIMEOUT_S
 from .layout_status import layout_status
 from .maintenance import startup_ensure_maintenance_heartbeat
 from .start_runtime import StartSummary, start_agents as _start_agents_impl
+from ..startup_process_trace import consume_process_bootstrap_trace
 from .tmux_project_cleanup import ProjectTmuxCleanupSummary
 from workspace.reconcile import format_workspace_blockers, reconcile_start_workspaces
 
@@ -24,23 +26,54 @@ def start_agents(
     *,
     terminal_size: tuple[int, int] | None = None,
 ) -> StartSummary:
+    cli_started_ns = time.perf_counter_ns()
+    process_trace_id, process_timings, readiness_origin_ns = consume_process_bootstrap_trace(
+        cli_started_ns
+    )
     summary = _start_agents_impl(
         context,
         command,
         terminal_size=terminal_size,
+        process_trace_id=process_trace_id,
+        readiness_origin_ns=readiness_origin_ns,
+        readiness_attach_mode=(
+            'no_attach' if os.environ.get('CCB_NO_ATTACH') == '1' else 'interactive'
+        ),
         ensure_daemon_started_fn=ensure_daemon_started,
-        startup_report_store_cls=CcbdStartupReportStore,
         cleanup_summary_cls=ProjectTmuxCleanupSummary,
         before_client_start_fn=_reconcile_start_workspaces,
         enrich_summary_fn=_merge_workspace_guard_summary,
         start_rpc_timeout_s=STARTUP_TRANSACTION_TIMEOUT_S,
     )
-    summary = replace(summary, sidebar_helper_refresh=_refresh_running_sidebar_helpers(context))
+    post_rpc_started_ns = time.perf_counter_ns()
+    stage_started_ns = time.perf_counter_ns()
+    sidebar_helper_refresh = _refresh_running_sidebar_helpers(context)
+    sidebar_helper_refresh_ms = _elapsed_ms(stage_started_ns)
+    summary = replace(summary, sidebar_helper_refresh=sidebar_helper_refresh)
+    stage_started_ns = time.perf_counter_ns()
     summary = _attach_start_layout_summary(context, summary)
+    layout_status_ms = _elapsed_ms(stage_started_ns)
+    stage_started_ns = time.perf_counter_ns()
     heartbeat_summary = startup_ensure_maintenance_heartbeat(context)
-    if heartbeat_summary is None:
-        return summary
-    return replace(summary, maintenance_heartbeat=heartbeat_summary)
+    maintenance_heartbeat_ms = _elapsed_ms(stage_started_ns)
+    if heartbeat_summary is not None:
+        summary = replace(summary, maintenance_heartbeat=heartbeat_summary)
+    timings = dict(summary.cli_timings_ms or {})
+    timings.update(
+        {
+            'sidebar_helper_refresh': sidebar_helper_refresh_ms,
+            'layout_status': layout_status_ms,
+            'maintenance_heartbeat': maintenance_heartbeat_ms,
+            'cli_post_rpc': float(timings.get('cli_post_rpc', 0.0)) + _elapsed_ms(post_rpc_started_ns),
+            'cli_total': _elapsed_ms(cli_started_ns),
+        }
+    )
+    return replace(
+        summary,
+        cli_timings_ms=timings,
+        process_bootstrap_trace_id=process_trace_id,
+        process_bootstrap_timings_ms=process_timings,
+    )
 
 
 def _reconcile_start_workspaces(context):
@@ -78,6 +111,8 @@ def _refresh_running_sidebar_helpers(context) -> dict[str, object]:
             controller,
             backend,
             topology_plan=topology_plan,
+            tmux_session_name=namespace.tmux_session_name,
+            namespace_epoch=namespace.namespace_epoch,
         )
     except Exception as exc:
         return {
@@ -161,6 +196,10 @@ def _compact_start_agent(agent: dict[str, object]) -> dict[str, object]:
         'apply_status': agent.get('apply_status'),
         'failed_apply': agent.get('failed_apply'),
     }
+
+
+def _elapsed_ms(started_ns: int) -> float:
+    return (time.perf_counter_ns() - started_ns) / 1_000_000
 
 
 __all__ = ['StartSummary', 'start_agents']

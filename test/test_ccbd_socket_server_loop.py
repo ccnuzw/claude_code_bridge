@@ -103,6 +103,97 @@ def test_start_worker_starts_single_worker_lane() -> None:
     assert server._worker_thread is None
 
 
+def test_finish_runtime_bootstrap_requires_publication_callback(tmp_path) -> None:
+    server = CcbdSocketServer(tmp_path / 'ccbd.sock')
+    server.listen()
+    start_worker(server, interval=0.2, on_tick=None)
+    server.begin_runtime_bootstrap()
+
+    try:
+        with pytest.raises(TypeError, match='requires a publication callback'):
+            server.finish_runtime_bootstrap(None)
+
+        assert server._runtime_bootstrap_active is True
+        assert server._stop_event.is_set() is False
+    finally:
+        server.shutdown()
+
+
+def test_finish_runtime_bootstrap_callback_failure_stops_serving(tmp_path) -> None:
+    server = CcbdSocketServer(tmp_path / 'ccbd.sock')
+    server.listen()
+    start_worker(server, interval=0.2, on_tick=None)
+    server.begin_runtime_bootstrap()
+
+    def fail_publication() -> None:
+        raise OSError('planned mounted publication failure')
+
+    try:
+        with pytest.raises(OSError, match='planned mounted publication failure'):
+            server.finish_runtime_bootstrap(fail_publication)
+
+        assert server._runtime_bootstrap_active is True
+        assert server._stop_event.is_set() is True
+    finally:
+        server.shutdown()
+
+
+def test_finish_runtime_bootstrap_rejects_sticky_worker_error(tmp_path) -> None:
+    server = CcbdSocketServer(tmp_path / 'ccbd.sock')
+    publication_calls: list[str] = []
+    server.listen()
+    start_worker(server, interval=0.2, on_tick=None)
+    server.begin_runtime_bootstrap()
+    server._record_worker_error(RuntimeError('planned request worker failure'))
+
+    try:
+        with pytest.raises(RuntimeError, match='request serving failed'):
+            server.finish_runtime_bootstrap(lambda: publication_calls.append('published'))
+
+        assert publication_calls == []
+        assert server._runtime_bootstrap_active is True
+        assert server._stop_event.is_set() is True
+    finally:
+        server.shutdown()
+
+
+def test_finish_runtime_bootstrap_rejects_inactive_gate(tmp_path) -> None:
+    server = CcbdSocketServer(tmp_path / 'ccbd.sock')
+    publication_calls: list[str] = []
+    server.listen()
+    start_worker(server, interval=0.2, on_tick=None)
+
+    try:
+        with pytest.raises(RuntimeError, match='runtime bootstrap is not active'):
+            server.finish_runtime_bootstrap(lambda: publication_calls.append('published'))
+
+        assert publication_calls == []
+        assert server._stop_event.is_set() is True
+    finally:
+        server.shutdown()
+
+
+def test_serve_forever_preserves_worker_error_recorded_before_serving(tmp_path) -> None:
+    server = CcbdSocketServer(tmp_path / 'ccbd.sock')
+    serving_calls: list[str] = []
+    failure = RuntimeError('pre-serving worker failed')
+    server.listen()
+    server._record_worker_error(failure)
+    server._stop_event.set()
+
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            server.serve_forever(
+                poll_interval=0.01,
+                on_serving=lambda: serving_calls.append('serving'),
+            )
+    finally:
+        server.shutdown()
+
+    assert caught.value is failure
+    assert serving_calls == []
+
+
 def test_maintenance_worker_runs_periodic_tick_until_stop() -> None:
     server = CcbdSocketServer('/tmp/test.sock')
     calls: list[str] = []

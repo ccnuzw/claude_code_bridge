@@ -98,7 +98,11 @@ def apply_reload_patch(
     if not session_alive(backend, current.tmux_session_name, timeout_s=timeout_s):
         return _blocked('session_unavailable', 'project namespace tmux session is not alive')
 
-    context = SimpleNamespace(backend=backend)
+    context = SimpleNamespace(
+        backend=backend,
+        current=current,
+        desired_session_name=current.tmux_session_name,
+    )
     preserved_agents = tuple(str(item) for item in tuple((patch_plan or {}).get('preserved_agents') or ()))
     removed_agents = _patch_plan_removed_agents(patch_plan)
     tracked_agents = tuple(dict.fromkeys((*preserved_agents, *removed_agents)))

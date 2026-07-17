@@ -105,7 +105,7 @@ targets remain denied.
 `ccb.plan.task_set_closure.v1` requires:
 
 - task-set id/revision and source request;
-- expected PlanTree revision;
+- expected legacy PlanTree projection digest;
 - ordered child ids and revisions;
 - status, last-round result, artifact digest, cleanup/release state per child;
 - aggregate result and deterministic reason;
@@ -126,8 +126,11 @@ Planner returns a proposal containing:
 - whether user-visible reporting is required;
 - compact Frontdesk status body.
 
-Scripts validate expected PlanTree revision and allowed Planner-owned paths
-before applying the proposal.
+Scripts validate the expected legacy PlanTree projection digest and allowed
+Planner-owned paths before applying the proposal. This single-lane digest maps
+to `legacy_projection_digest` under Decision 031; it is not a portfolio, plan,
+or task revision and cannot replace a typed authority closure for multi-lane
+writes.
 
 ## State Machine
 
@@ -286,7 +289,8 @@ evidence capture.
 - multiple child failures generate multiple Planner asks;
 - aggregate pass while any required child is incomplete/non-pass;
 - closure before cleanup/release authority is clean;
-- stale task-set or PlanTree revision accepted;
+- stale task-set, legacy projection digest, or Decision 031 authority closure
+  accepted;
 - duplicate Planner/Frontdesk notification after restart;
 - Planner update silently overwrites newer user work;
 - hidden timeout, fallback, scope shrink, or degraded success;

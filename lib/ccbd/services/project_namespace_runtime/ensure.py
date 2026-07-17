@@ -10,6 +10,7 @@ from .ensure_state import (
 )
 from .materialize_topology import (
     existing_topology_agent_panes,
+    existing_topology_cmd_pane,
     materialize_topology,
     refresh_topology_ui_for_project,
     topology_active_panes,
@@ -70,6 +71,13 @@ def ensure_project_namespace(
                 context,
                 topology_plan=topology_plan,
                 pane_records=pane_records,
+                include_dead=True,
+            )
+            cmd_pane = existing_topology_cmd_pane(
+                controller,
+                context,
+                topology_plan=topology_plan,
+                pane_records=pane_records,
             )
             refresh_topology_ui_for_project(
                 controller,
@@ -79,6 +87,7 @@ def ensure_project_namespace(
                 pane_records=pane_records,
             )
             setattr(controller, '_last_materialized_agent_panes', agent_panes)
+            setattr(controller, '_last_materialized_cmd_pane', cmd_pane)
             setattr(
                 controller,
                 '_last_topology_active_panes',
@@ -92,6 +101,7 @@ def ensure_project_namespace(
             setattr(controller, '_last_topology_pane_records', pane_records)
         else:
             setattr(controller, '_last_materialized_agent_panes', {})
+            setattr(controller, '_last_materialized_cmd_pane', None)
             setattr(controller, '_last_topology_active_panes', ())
             setattr(controller, '_last_topology_pane_records', {})
         return persist_refreshed_namespace(
@@ -111,7 +121,15 @@ def ensure_project_namespace(
             timeout_s=session_probe_timeout_s,
         )
         pane_records = snapshot_project_namespace_panes(context.backend)
+        cmd_pane = existing_topology_cmd_pane(
+            controller,
+            context,
+            topology_plan=topology_plan,
+            pane_records=pane_records,
+            namespace_epoch=epoch,
+        )
         setattr(controller, '_last_materialized_agent_panes', agent_panes)
+        setattr(controller, '_last_materialized_cmd_pane', cmd_pane)
         setattr(
             controller,
             '_last_topology_active_panes',
@@ -120,6 +138,7 @@ def ensure_project_namespace(
                 context,
                 topology_plan=topology_plan,
                 pane_records=pane_records,
+                namespace_epoch=epoch,
             ),
         )
         setattr(controller, '_last_topology_pane_records', pane_records)
@@ -132,6 +151,7 @@ def ensure_project_namespace(
             timeout_s=session_probe_timeout_s,
         )
         setattr(controller, '_last_materialized_agent_panes', {})
+        setattr(controller, '_last_materialized_cmd_pane', None)
         setattr(controller, '_last_topology_active_panes', ())
         setattr(controller, '_last_topology_pane_records', {})
     return build_created_namespace(

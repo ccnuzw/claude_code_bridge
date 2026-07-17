@@ -100,6 +100,54 @@ def test_ensure_daemon_started_can_wait_past_legacy_five_second_budget(monkeypat
     assert current['t'] < 7.0
 
 
+def test_ensure_daemon_started_waits_for_final_mounted_stage(monkeypatch) -> None:
+    current = {'t': 0.0}
+    connect_stages: list[str] = []
+
+    monkeypatch.setattr('cli.services.daemon_runtime.lifecycle.time.time', lambda: current['t'])
+    monkeypatch.setattr(
+        'cli.services.daemon_runtime.lifecycle.time.sleep',
+        lambda seconds: current.__setitem__('t', current['t'] + float(seconds)),
+    )
+
+    def inspection():
+        stage = 'runtime_bootstrap' if current['t'] < 1.0 else 'mounted'
+        return SimpleNamespace(
+            phase='mounted',
+            desired_state='running',
+            health=LeaseHealth.HEALTHY,
+            socket_connectable=True,
+            reason='healthy',
+            last_failure_reason=None,
+            startup_stage=stage,
+            last_progress_at='1970-01-01T00:00:00Z',
+            startup_deadline_at='1970-01-01T00:00:10Z',
+        )
+
+    def connect(context, observed, restart_on_mismatch):
+        del context, restart_on_mismatch
+        connect_stages.append(observed.startup_stage)
+        return DaemonHandle(client='ccbd-client', inspection=observed, started=False)
+
+    handle = ensure_daemon_started_runtime(
+        SimpleNamespace(),
+        clear_shutdown_intent_fn=lambda context: None,
+        record_running_intent_fn=lambda context: True,
+        ensure_keeper_started_fn=lambda context: True,
+        inspect_daemon_fn=lambda context: (None, None, inspection()),
+        connect_compatible_daemon_fn=connect,
+        should_restart_unreachable_daemon_fn=lambda observed: False,
+        restart_unreachable_daemon_fn=lambda context, observed: None,
+        incompatible_daemon_error_fn=lambda: 'incompatible',
+        start_timeout_s=5.0,
+        progress_stall_timeout_s=0.0,
+    )
+
+    assert handle.client == 'ccbd-client'
+    assert connect_stages == ['mounted']
+    assert current['t'] >= 1.0
+
+
 def test_ensure_daemon_started_uses_shared_startup_deadline(monkeypatch) -> None:
     current = {'t': 0.0}
 
@@ -193,6 +241,65 @@ def test_spawned_ccbd_readiness_probe_uses_shared_control_plane_timeout(monkeypa
     ccbd_daemon_process._wait_for_ccbd_ready(process=process, socket_path=socket_path, timeout_s=1.0)
 
     assert captured == [ccbd_daemon_process.CONTROL_PLANE_RPC_TIMEOUT_S]
+
+
+def test_spawned_ccbd_readiness_rejects_old_socket_identity(monkeypatch, tmp_path: Path) -> None:
+    socket_path = tmp_path / 'ccbd.sock'
+    socket_path.touch()
+    payloads = iter(
+        (
+            {
+                'generation': 6,
+                'mount_state': 'mounted',
+                'desired_state': 'running',
+                'serving_pid': 999,
+                'serving_daemon_instance_id': 'old-daemon',
+                'serving_lease_generation': 6,
+                'accepted_startup_id': 'b' * 32,
+                'diagnostics': {
+                    'startup_id': 'b' * 32,
+                    'startup_stage': 'mounted',
+                },
+            },
+            {
+                'generation': 7,
+                'mount_state': 'mounted',
+                'desired_state': 'running',
+                'serving_pid': 4321,
+                'serving_daemon_instance_id': 'new-daemon',
+                'serving_lease_generation': 7,
+                'accepted_startup_id': 'a' * 32,
+                'diagnostics': {
+                    'startup_id': 'a' * 32,
+                    'startup_stage': 'mounted',
+                },
+            },
+        )
+    )
+
+    class FakeClient:
+        def __init__(self, socket_path_arg, *, timeout_s=None) -> None:
+            assert socket_path_arg == socket_path
+            assert timeout_s == ccbd_daemon_process.CONTROL_PLANE_RPC_TIMEOUT_S
+
+        def ping(self, target: str = 'ccbd') -> dict[str, object]:
+            assert target == 'ccbd'
+            return next(payloads)
+
+    monkeypatch.setattr(ccbd_daemon_process, 'CcbdClient', FakeClient)
+    monkeypatch.setattr(ccbd_daemon_process.time, 'sleep', lambda _seconds: None)
+    process = SimpleNamespace(pid=4321, poll=lambda: None)
+
+    ccbd_daemon_process._wait_for_ccbd_ready(
+        process=process,
+        socket_path=socket_path,
+        timeout_s=1.0,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+    )
+
+    with pytest.raises(StopIteration):
+        next(payloads)
 
 
 def test_startup_policy_defaults_to_thirty_second_cold_start_budget(monkeypatch) -> None:

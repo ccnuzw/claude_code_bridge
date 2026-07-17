@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+from time import monotonic_ns
+
 from .agent_runtime_models import RuntimeBindingState
 
 
@@ -24,23 +27,43 @@ def resolve_runtime_binding_state(
     relabel_project_namespace_pane_fn,
     same_tmux_socket_path_fn,
     provider_prepared: bool = False,
+    effective_command=None,
     reused_pane_identity_current: bool = False,
+    timings_ms: dict[str, float] | None = None,
 ) -> RuntimeBindingState:
-    binding, agent_action = launch_or_reuse_binding(
-        context=context,
-        command=command,
-        spec=spec,
-        plan=plan,
-        binding=binding,
-        raw_binding=raw_binding,
-        stale_binding=stale_binding,
-        assigned_pane_id=assigned_pane_id,
-        style_index=style_index,
-        tmux_socket_path=tmux_socket_path,
-        ensure_agent_runtime_fn=ensure_agent_runtime_fn,
-        launch_binding_hint_fn=launch_binding_hint_fn,
-        provider_prepared=provider_prepared,
+    stage_started_ns = monotonic_ns()
+    try:
+        binding, agent_action, launch_timings_ms = launch_or_reuse_binding(
+            context=context,
+            command=command,
+            spec=spec,
+            plan=plan,
+            binding=binding,
+            raw_binding=raw_binding,
+            stale_binding=stale_binding,
+            assigned_pane_id=assigned_pane_id,
+            style_index=style_index,
+            tmux_socket_path=tmux_socket_path,
+            ensure_agent_runtime_fn=ensure_agent_runtime_fn,
+            launch_binding_hint_fn=launch_binding_hint_fn,
+            provider_prepared=provider_prepared,
+            effective_command=effective_command,
+        )
+    except Exception as exc:
+        _merge_launch_timings(
+            timings_ms,
+            getattr(exc, 'ccb_startup_timings_ms', None),
+            enclosing_elapsed_ms=_elapsed_ms(stage_started_ns),
+        )
+        _attach_startup_timings(exc, timings_ms)
+        raise
+    _merge_launch_timings(
+        timings_ms,
+        launch_timings_ms,
+        enclosing_elapsed_ms=_elapsed_ms(stage_started_ns),
     )
+
+    stage_started_ns = monotonic_ns()
     actions_taken: list[str] = []
     if not (agent_action == 'attached' and reused_pane_identity_current):
         actions_taken.extend(
@@ -68,6 +91,7 @@ def resolve_runtime_binding_state(
         tmux_socket_path=tmux_socket_path,
         same_tmux_socket_path_fn=same_tmux_socket_path_fn,
     )
+    _record_elapsed_ms(timings_ms, 'pane_and_runtime_facts', stage_started_ns)
     return RuntimeBindingState(
         binding=binding,
         agent_action=agent_action,
@@ -97,10 +121,19 @@ def launch_or_reuse_binding(
     ensure_agent_runtime_fn,
     launch_binding_hint_fn,
     provider_prepared: bool = False,
+    effective_command=None,
 ):
     if binding is not None:
-        return binding, 'attached'
+        return binding, 'attached', {}
 
+    launch_kwargs = dict(
+        assigned_pane_id=assigned_pane_id,
+        style_index=style_index,
+        tmux_socket_path=tmux_socket_path,
+        provider_prepared=provider_prepared,
+    )
+    if effective_command is not None:
+        launch_kwargs['effective_command'] = effective_command
     launch = ensure_agent_runtime_fn(
         context,
         command,
@@ -113,17 +146,15 @@ def launch_or_reuse_binding(
             assigned_pane_id=assigned_pane_id,
             tmux_socket_path=tmux_socket_path,
         ),
-        assigned_pane_id=assigned_pane_id,
-        style_index=style_index,
-        tmux_socket_path=tmux_socket_path,
-        provider_prepared=provider_prepared,
+        **launch_kwargs,
     )
     binding = launch.binding
+    launch_timings_ms = getattr(launch, 'timings_ms', None)
     if stale_binding and launch.launched:
-        return binding, 'relaunched'
+        return binding, 'relaunched', launch_timings_ms
     if launch.launched:
-        return binding, 'launched'
-    return binding, 'attached'
+        return binding, 'launched', launch_timings_ms
+    return binding, 'attached', launch_timings_ms
 
 
 def relabel_runtime_pane(
@@ -196,6 +227,63 @@ def runtime_pane_facts(
     if same_tmux_socket_path_fn(getattr(binding, 'tmux_socket_path', None), tmux_socket_path):
         project_socket_active_pane_id = runtime_pane_id
     return socket_name, runtime_pane_id, project_socket_active_pane_id
+
+
+def _record_elapsed_ms(
+    timings_ms: dict[str, float] | None,
+    field_name: str,
+    started_ns: int,
+) -> None:
+    if timings_ms is None:
+        return
+    elapsed_ms = _elapsed_ms(started_ns)
+    timings_ms[field_name] = timings_ms.get(field_name, 0.0) + elapsed_ms
+
+
+def _merge_launch_timings(
+    timings_ms: dict[str, float] | None,
+    value: object,
+    *,
+    enclosing_elapsed_ms: float,
+) -> None:
+    if timings_ms is None:
+        return
+    clean: dict[str, float] = {}
+    if isinstance(value, dict):
+        for key, raw_value in value.items():
+            try:
+                parsed = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(parsed) or parsed < 0:
+                continue
+            clean[str(key)] = parsed
+    measured_ms = sum(clean.values())
+    if measured_ms > enclosing_elapsed_ms:
+        clean = {}
+        measured_ms = 0.0
+    for field_name, elapsed_ms in clean.items():
+        timings_ms[field_name] = timings_ms.get(field_name, 0.0) + elapsed_ms
+    timings_ms['unattributed'] = timings_ms.get('unattributed', 0.0) + max(
+        0.0,
+        enclosing_elapsed_ms - measured_ms,
+    )
+
+
+def _elapsed_ms(started_ns: int) -> float:
+    return max(0.0, (monotonic_ns() - started_ns) / 1_000_000)
+
+
+def _attach_startup_timings(
+    exc: Exception,
+    timings_ms: dict[str, float] | None,
+) -> None:
+    if timings_ms is None:
+        return
+    try:
+        setattr(exc, 'ccb_startup_timings_ms', dict(timings_ms))
+    except Exception:
+        return
 
 
 __all__ = ['resolve_runtime_binding_state']

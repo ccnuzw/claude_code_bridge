@@ -15,7 +15,7 @@ from agents.models import (
     WorkspaceMode,
 )
 from ccbd.handlers.ping_runtime.handler import build_ping_handler
-from ccbd.handlers.ping_runtime.payloads import build_ccbd_payload
+from ccbd.handlers.ping_runtime.payloads import build_agent_payload, build_ccbd_payload
 from ccbd.models import LeaseHealth
 from cli.services.ping import ping_target
 from cli.models import ParsedPingCommand
@@ -134,6 +134,12 @@ def test_build_ccbd_payload_prefers_lifecycle_phase_over_lease_mount_state() -> 
         namespace_event_summary={},
         start_policy_summary={},
         control_plane_metrics=_metrics(),
+        serving_identity={
+            'serving_pid': 4321,
+            'serving_daemon_instance_id': 'daemon-1',
+            'serving_lease_generation': 7,
+            'accepted_startup_id': 'a' * 32,
+        },
     )
 
     assert payload['mount_state'] == 'starting'
@@ -145,6 +151,10 @@ def test_build_ccbd_payload_prefers_lifecycle_phase_over_lease_mount_state() -> 
     assert payload['socket_fallback_reason'] is None
     assert payload['socket_filesystem_hint'] is None
     assert payload['tmux_socket_path'] == '/home/demo/.local/state/ccb/projects/proj-1/ccbd/tmux.sock'
+    assert payload['serving_pid'] == 4321
+    assert payload['serving_daemon_instance_id'] == 'daemon-1'
+    assert payload['serving_lease_generation'] == 7
+    assert payload['accepted_startup_id'] == 'a' * 32
     assert payload['diagnostics']['last_request_queue_wait_s'] == 0.012
     assert payload['diagnostics']['last_submit_duration_s'] == 0.034
     assert payload['diagnostics']['last_ping_duration_s'] == 0.056
@@ -329,6 +339,49 @@ def test_build_agent_payload_prefers_runtime_mount_state_over_project_phase() ->
     assert payload['mount_state'] == 'mounted'
     assert payload['runtime_state'] == 'busy'
     assert payload['health'] == 'healthy'
+
+
+def test_build_agent_payload_surfaces_provider_auth_recovery_block() -> None:
+    config = _config()
+    detail = 'run `codex login` in the source profile before remounting'
+    runtime = AgentRuntime(
+        agent_name='demo',
+        state=AgentState.DEGRADED,
+        pid=123,
+        started_at='2026-04-22T00:00:00Z',
+        last_seen_at='2026-04-22T00:00:01Z',
+        runtime_ref='tmux:%1',
+        session_ref='session-1',
+        workspace_path='/tmp/ws',
+        project_id='proj-1',
+        backend_type='pane-backed',
+        queue_depth=0,
+        socket_path=None,
+        health='provider-auth-revoked',
+        provider='codex',
+        reconcile_state='blocked',
+        restart_count=1,
+        last_reconcile_at='2026-04-22T00:00:02Z',
+        last_failure_reason=detail,
+    )
+
+    payload = build_agent_payload(
+        project_id='proj-1',
+        agent_name='demo',
+        registry=SimpleNamespace(
+            spec_for=lambda name: config.agents[name],
+            get=lambda name: runtime,
+        ),
+        inspection=_inspection(phase='mounted', desired_state='running'),
+        execution_registry=SimpleNamespace(get=lambda provider: None),
+    )
+
+    assert payload['runtime_state'] == 'degraded'
+    assert payload['health'] == 'provider-auth-revoked'
+    assert payload['diagnostics']['reconcile_state'] == 'blocked'
+    assert payload['diagnostics']['restart_count'] == 1
+    assert payload['diagnostics']['last_reconcile_at'] == '2026-04-22T00:00:02Z'
+    assert payload['diagnostics']['last_failure_reason'] == detail
 
 
 def test_ping_target_unmounted_ccbd_includes_timing_fields(monkeypatch, tmp_path: Path) -> None:

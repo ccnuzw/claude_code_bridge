@@ -14,6 +14,7 @@ from .models import ProjectNamespace
 from .reflow import reflow_project_workspace
 from .records import namespace_from_state
 from ..project_namespace_state import ProjectNamespaceEventStore, ProjectNamespaceStateStore
+from ..project_namespace_pane import snapshot_project_namespace_panes
 
 
 class ProjectNamespaceController(ProjectNamespaceControllerStateMixin):
@@ -131,6 +132,25 @@ class ProjectNamespaceController(ProjectNamespaceControllerStateMixin):
             raise RuntimeError('project namespace is not available')
         backend = build_backend(self._backend_factory, socket_path=current.tmux_socket_path)
         workspace_window_name = str(current.workspace_window_name or '').strip()
+        pane_records = snapshot_project_namespace_panes(backend)
+        if pane_records is not None:
+            cmd_panes = [
+                pane_id
+                for pane_id, record in pane_records.items()
+                if record.matches_authoritative_topology(
+                    tmux_session_name=current.tmux_session_name,
+                    project_id=self._project_id,
+                    role='cmd',
+                    slot_key='cmd',
+                    window_name=workspace_window_name or None,
+                    managed_by='ccbd',
+                    namespace_epoch=current.namespace_epoch,
+                )
+            ]
+            if len(cmd_panes) == 1:
+                return cmd_panes[0]
+            if len(cmd_panes) > 1:
+                raise RuntimeError('project namespace has multiple authoritative cmd panes')
         if workspace_window_name:
             return window_root_pane(
                 backend,

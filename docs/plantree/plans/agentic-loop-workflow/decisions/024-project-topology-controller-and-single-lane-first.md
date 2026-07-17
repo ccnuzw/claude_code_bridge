@@ -95,4 +95,5 @@ stable baseline and explicit acceptance evidence.
 - [022-semantic-orchestration-bundle-and-controller-execution.md](022-semantic-orchestration-bundle-and-controller-execution.md)
 - [023-roadmap-graph-and-workflow-lanes.md](023-roadmap-graph-and-workflow-lanes.md)
 - [025-single-lane-multi-workgroup-release-gate.md](025-single-lane-multi-workgroup-release-gate.md)
+- [031-global-plan-tree-authority-across-worktrees.md](031-global-plan-tree-authority-across-worktrees.md)
 - [../topics/parallel-roadmap-lanes-and-planner-authority.md](../topics/parallel-roadmap-lanes-and-planner-authority.md)

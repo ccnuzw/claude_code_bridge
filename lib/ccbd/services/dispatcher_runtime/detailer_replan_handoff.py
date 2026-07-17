@@ -109,12 +109,18 @@ def submit_detailer_replan_handoff(
         return receipt
 
 
-def recover_detailer_replan_handoffs(dispatcher) -> tuple[str, ...]:
+def recover_detailer_replan_handoffs(
+    dispatcher,
+    *,
+    authority_check=None,
+) -> tuple[str, ...]:
     recovered: list[str] = []
     root = _intent_root(dispatcher)
     if not root.is_dir():
         return ()
     for path in sorted(root.glob('*.json')):
+        if callable(authority_check):
+            authority_check()
         try:
             intent = _read_json(path)
             request_record = intent.get('request')

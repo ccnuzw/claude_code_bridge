@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from agents.models import AgentState, RuntimeBindingSource, normalize_runtime_binding_source
 
-HARD_BLOCKED_RUNTIME_HEALTHS = frozenset({'session-missing'})
+PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH = 'provider-auth-revoked'
+PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTH = 'provider-recovery-blocked'
+PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS = frozenset(
+    {
+        PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH,
+        PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTH,
+    }
+)
+HARD_BLOCKED_RUNTIME_HEALTHS = frozenset({'session-missing'}) | PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS
 RECOVERABLE_RUNTIME_HEALTHS = frozenset({'pane-dead', 'pane-missing'})
 
 
@@ -23,6 +31,9 @@ def should_attempt_background_recovery(runtime) -> bool:
 
 __all__ = [
     'HARD_BLOCKED_RUNTIME_HEALTHS',
+    'PROVIDER_AUTH_REVOKED_RUNTIME_HEALTH',
+    'PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTH',
+    'PROVIDER_RECOVERY_BLOCKED_RUNTIME_HEALTHS',
     'RECOVERABLE_RUNTIME_HEALTHS',
     'normalized_runtime_health',
     'should_attempt_background_recovery',

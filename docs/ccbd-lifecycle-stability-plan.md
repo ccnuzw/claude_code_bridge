@@ -342,10 +342,47 @@ CLI 不再直接 spawn `ccbd`。CLI 只负责：
 8. keeper spawn child `ccbd`
 9. child 校验自身仍属于当前 `generation/startup_id`
 10. child bind/listen socket
-11. child 执行最小 readiness self-ping
-12. child 写入 `lease.json`
-13. keeper 或 child 将 `phase` promote 到 `mounted`
-14. mounted 后才进入 namespace recovery 与 runtime restore
+11. child 通过正常 request worker 执行带一次性 nonce 的最小 readiness self-ping
+12. child 写入当前 generation 的 mounted `lease.json`，但内存 lease 只在后续
+    lifecycle 写成功后可见
+13. child 保持 `phase=starting` 并写入 `startup_stage=runtime_bootstrap`，立即进入
+    连续 accept；此阶段只允许 ping，普通 RPC 继续等待
+14. child 在 maintenance lane 执行 restore/handoff/adopt，并在每个可恢复单元间
+    重新核对 generation、owner、daemon instance 与 startup id
+15. child 在短锁内最终写入 `phase=mounted/startup_stage=mounted` 并开放普通 RPC
+16. keeper 只观察 active child startup，不能因 interim lease/socket 可用而抢先 promote
+
+公开 `CcbdApp.start()` 只执行到第 13 步；它不能在持续 accept 尚未运行时直接执行
+第 14-15 步。后续 `serve_forever()` 必须识别同一 prepared transaction，在正常
+accept/maintenance loop 中完成 bootstrap 后再发布最终 mounted。
+
+实现约束：`lifecycle.json` 的 durable atomic replace 只保证单次文件写完整，不能
+替代跨进程 read-modify-write 串行化。CLI running intent、keeper 首次 lifecycle
+materialization 与 keeper `starting` transaction 必须共用 project
+`startup.lock`，并在拿锁后重新读取 lifecycle/lease。keeper 写完 `starting` 后
+必须在 spawn/wait child 前释放锁；success/failure 收尾重新拿短锁，并以
+`startup_id + generation` fence，只能基于 fresh current record 更新。已经
+`desired_state=running` 的 CLI start 是 no-op intent，不能用旧快照覆盖 keeper 或
+child 的 phase/progress/config authority。相同规则适用于 stop/finalize、child
+progress/mounted/failure/unmount、heartbeat、keeper connectable observation、reload
+signature 与 namespace epoch 写入；任何 writer 都不能以锁外 snapshot 回写。
+
+keeper 必须把刚发布的 `startup_id + generation` 作为一次性 child fence 传入。
+child 在同一 `startup.lock` 下验证 lifecycle、检查 lease takeover 条件并认领 keeper
+分配的精确 generation；不能在 lease 缺失时自行从 1 重新计数。child 发布 mounted
+前再次验证 lifecycle 与 lease holder。若 stop 或新 startup 已抢先落盘，旧 child
+只允许释放仍属于自己的资源并退出，不能写 failed/unmounted 覆盖新事务。
+
+用于启动耗时诊断时，keeper 在 durable `phase=starting` save 返回后、仍持有该短锁
+的瞬间采样 host monotonic counter，并随同一次性 child fence 传递。child 入口立即
+消费并移除原值，只在内存中保留；start RPC 仅在 startup id、generation、当前 daemon
+lease identity 与 `T0 <= T1 <= T2 <= RPC` 全部一致时把它投影为相对毫秒 T1。原始
+counter 不得落盘，缺失或格式错误只降级为 observation upper bound，不能阻断启动。
+
+readiness 不能只相信 child 返回的内存身份：keeper 还必须核对响应中的当前
+`mounted/running` lifecycle、generation、startup id、mounted stage、serving PID
+与 daemon instance。等待超时或身份持续矛盾时，只终止并 reap 本次 spawn 的独立
+进程组，防止慢 child 晚到后继续发布 lease/socket。
 
 ### 6.3 mounted 的严格含义
 
@@ -355,11 +392,14 @@ CLI 不再直接 spawn `ccbd`。CLI 只负责：
 - self-ping 已经成功
 - 当前 generation 仍持有 authority
 - 当前 generation 的 lease 已发布
+- runtime bootstrap 已完成，且 lifecycle 明确为
+  `phase=mounted/startup_stage=mounted`
 
 禁止的旧行为：
 
 - 先写 mounted，再尝试 listen
 - socket 仅存在文件路径，但服务端尚未 ready 也算 mounted
+- 把 `starting/runtime_bootstrap` 的 interim mounted lease 当作 caller-ready
 
 ### 6.4 readiness 分层
 
@@ -368,7 +408,8 @@ CLI 不再直接 spawn `ccbd`。CLI 只负责：
 1. control-plane readiness
    - 当前 authoritative generation 已 bind/listen project socket
    - 当前 authoritative generation 已通过最小 readiness probe
-   - `phase=mounted` 仅以这一层为发布条件
+   - `phase=mounted/startup_stage=mounted` 仅以这一层为发布条件；
+     `starting/runtime_bootstrap` 只表示 self-ping 后的受限连续服务
 2. namespace UI readiness
    - project tmux namespace 已存在
    - authoritative session/window target 已可被 tmux 选择
@@ -427,7 +468,27 @@ CLI 不再直接 spawn `ccbd`。CLI 只负责：
 
 原则：
 
-- mounted 发布只依赖 `bootstrap_core` 完成后的 control-plane readiness
+- self-ping 与 mounted lease 只依赖 `bootstrap_core`；最终 lifecycle mounted 还要求
+  当前安全实现完成 generation-fenced `bootstrap_runtime`。待 runtime bootstrap
+  失败可降级/重试而不撤站后，才可通过独立证据评估是否把普通 RPC readiness
+  前移到 core-ready 边界
+- self-ping 必须走既有 request worker，不新增 helper thread；self-client 使用可识别
+  的本地 UNIX peer path，先到的慢连接暂存到探针完成后，不能占满探针总预算
+- self-ping 成功后正常 accept loop 立即运行；runtime bootstrap 期间 ping 可用，
+  非 ping 请求 fail closed/继续等待正式 readiness
+- 最终 `mounted/mounted` durable save 与 normal-RPC gate 开放必须在同一短
+  dispatch gate 临界区内完成。durable 文件先可见但 gate 尚未开放时，到达的请求
+  必须等待；save、目录 fsync、worker 健康复核或 authority 复核任一失败，都必须
+  在释放 gate 前先置 stopping，ping 与普通 RPC 均不得把该文件误认成 ready
+- runtime-bootstrap finish 必须携带明确的 publication callback，并在 callback
+  前后检查 active state、listening socket、stop event、sticky worker error 与
+  request worker 存活；inactive、无 callback、已停止或 worker 已失败全部 fail closed
+- request dispatch 必须在同一 gate 线性化区间内检查 stop/bootstrap 状态并决定
+  handler 是否可以启动。shutdown 清理 bootstrap flag 不等于开放服务，`stop_event`
+  始终优先拒绝请求
+- request/maintenance worker 在同一 bound-socket generation 内的首个异常必须保持
+  sticky；启动另一 worker 或从 probe 转入 serve loop 不得清空它。只有成功绑定
+  fresh socket generation 时才能重置 error slot
 - socket server 必须把 accept 与请求处理解耦，但 handler、mutating op 后的 tick、periodic heartbeat/reconcile tick 仍在一个串行 worker lane 中执行，避免 runtime authority 文件并发写入
 - 不属于最小 control-plane readiness 的重型工作，不得无界地阻塞 mounted 发布
 - 冷启动 `ask` 允许在 backend mounted 后尽早提交，由 daemon supervision 异步完成后续 runtime 收敛
@@ -512,9 +573,15 @@ socket path 不能再通过 blind `unlink` + `bind` 方式竞争。
 1. socket cleanup 必须在 lifecycle lock 保护下进行
 2. 只有当前 generation 持有 socket 清理权
 3. bind 前不能因为 path 存在就直接删除
-4. startup 只能清理已确认属于失效 generation 的 inode
+4. live socket 与非 socket 路径必须原样保留并 fail closed；startup 只能清理
+   不可连接且 stale check 前后 inode 未变化的 socket
 5. shutdown 只能 unlink 自己 bind 的 inode
 6. 旧 generation 不得删除新 generation 替换后的 socket path
+7. bind/listen/settimeout 任一步失败必须关闭本次 fd，并只清理本次 bind 的 inode
+8. 关闭 fd、复核/unlink owned path、释放 lease/lifecycle 必须与 bind 共用
+   `startup.lock`；worker join 必须留在锁外
+9. lease holder mismatch 不能折叠成 missing lease；只有 fresh locked read 证明 lease
+   真正不存在时，才允许 lifecycle-only unmount fallback
 
 ### 9.3 目标结果
 

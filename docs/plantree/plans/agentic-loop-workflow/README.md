@@ -104,6 +104,12 @@ recoverable workflow loops.
   accepted Phase2 regression closure, rejected real Planner permission
   projection, provider/model qualification boundaries, RolePack refreeze
   requirements, and the next safe admission order.
+- [history/global-plan-tree-control-review-20260715.md](history/global-plan-tree-control-review-20260715.md):
+  independent review findings and revision disposition for repository-global
+  Plan Tree election, authority closure, migration, integration, and acceptance.
+- [history/global-plan-tree-claude-coworker-review-20260715.md](history/global-plan-tree-claude-coworker-review-20260715.md):
+  requested Claude coworker review accepting the revised global Plan Tree
+  design with small specification clarifications, all now incorporated.
 - [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
   P2 post-acceptance deployment-readiness evidence for real-project
   frontdesk macro-intake pressure across direct, detail, macro-adjustment, and
@@ -252,10 +258,24 @@ recoverable workflow loops.
 - [topics/planner-role-design.md](topics/planner-role-design.md): planner
   authority, readiness rules, clarification boundaries, script authority, and
   orchestrator triage handoff.
+- [topics/ccb-workflow-plan-tree-skill-overlay.md](topics/ccb-workflow-plan-tree-skill-overlay.md):
+  Config V3/Planner-only replacement of the public logical `plan-tree` skill,
+  with managed-home isolation, Decision 030 proposal-only permissions,
+  projection digest binding, reload behavior, and negative activation gates.
 - [topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md):
   target Plan Tree Roadmap Graph, Workflow Lane, ready-frontier, planner
   single-writer, code-worktree, conflict, and integration-gate design for
   serial and parallel project work.
+- [topics/global-plan-tree-authority-and-cross-worktree-control.md](topics/global-plan-tree-authority-and-cross-worktree-control.md):
+  sole detailed protocol for portfolio/local identity, locator election,
+  holder lease/fencing, canonical task migration, typed authority closure,
+  consistent retrieval, and integration recovery across Git worktrees.
+- [topics/global-plan-tree-cross-worktree-acceptance-matrix.md](topics/global-plan-tree-cross-worktree-acceptance-matrix.md):
+  falsifiable control, task-store, lane, integration-saga, freshness, real
+  provider, and zero-residue gates with explicit fault injection and recovery.
+- [topics/global-plan-tree-storage-and-projection-migration.md](topics/global-plan-tree-storage-and-projection-migration.md):
+  guarded migration from shared task-index authority and three-file legacy
+  Planner projection into canonical task records and typed global proposals.
 - [topics/planner-feedback-and-task-set-closure-plan.md](topics/planner-feedback-and-task-set-closure-plan.md):
   implementation and real-test plan for Detailer-to-Planner macro correction,
   task-set terminal aggregation, revision-fenced Planner Roadmap backfill, and
@@ -271,6 +291,10 @@ recoverable workflow loops.
   accepted planning boundary for direct restricted Detailer feedback, durable
   task-set closure authority, exact-once Planner rehydration, and Frontdesk
   status notification.
+- [decisions/031-global-plan-tree-authority-across-worktrees.md](decisions/031-global-plan-tree-authority-across-worktrees.md):
+  decision that linked worktrees share one repository Plan Tree control domain,
+  one elected and fenced writer and authority stream, while lanes consume
+  immutable typed snapshots and integration uses a recoverable promotion saga.
 - [topics/state-and-script-contract.md](topics/state-and-script-contract.md):
   proposed short-term progress store, script entrypoints, state transitions,
   artifact requirements, and plan-tree synchronization rules.
@@ -635,6 +659,9 @@ then [topics/role-profiles-and-capacity-skill.md](topics/role-profiles-and-capac
 then [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md),
 then [topics/planner-role-design.md](topics/planner-role-design.md), then
 [topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md), then
+[topics/global-plan-tree-authority-and-cross-worktree-control.md](topics/global-plan-tree-authority-and-cross-worktree-control.md), then
+[topics/global-plan-tree-storage-and-projection-migration.md](topics/global-plan-tree-storage-and-projection-migration.md), then
+[topics/global-plan-tree-cross-worktree-acceptance-matrix.md](topics/global-plan-tree-cross-worktree-acceptance-matrix.md), then
 [topics/planner-plan-tree-brief-and-detail-boundary.md](topics/planner-plan-tree-brief-and-detail-boundary.md), then
 [topics/task-detailer-role-design.md](topics/task-detailer-role-design.md), then
 [topics/plan-update-script-landing.md](topics/plan-update-script-landing.md),

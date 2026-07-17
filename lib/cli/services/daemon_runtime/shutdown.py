@@ -11,6 +11,7 @@ def _request_shutdown_or_mark_unmounted(
     *,
     inspection,
     manager,
+    guard,
     force: bool,
     client_factory,
 ) -> None:
@@ -21,7 +22,7 @@ def _request_shutdown_or_mark_unmounted(
             if not force:
                 raise CcbdServiceError(str(exc)) from exc
     else:
-        mark_inspected_lease_unmounted(manager, inspection)
+        mark_inspected_lease_unmounted(manager, inspection, ownership_guard=guard)
 
 
 def _wait_for_daemon_shutdown(
@@ -29,6 +30,7 @@ def _wait_for_daemon_shutdown(
     daemon_pid: int,
     inspection,
     manager,
+    guard,
     shutdown_timeout_s: float,
     wait_for_pid_exit_fn,
     terminate_pid_tree_fn,
@@ -39,7 +41,7 @@ def _wait_for_daemon_shutdown(
     if not wait_for_pid_exit_fn(daemon_pid, timeout_s=shutdown_timeout_s):
         terminate_pid_tree_fn(daemon_pid, timeout_s=shutdown_timeout_s, is_pid_alive_fn=is_pid_alive_fn)
     if not is_pid_alive_fn(daemon_pid):
-        mark_inspected_lease_unmounted(manager, inspection)
+        mark_inspected_lease_unmounted(manager, inspection, ownership_guard=guard)
 
 
 def _wait_for_keeper_shutdown(
@@ -83,7 +85,7 @@ def shutdown_daemon(
     shutdown_timeout_s: float,
 ) -> KillSummary:
     record_shutdown_intent_fn(context, reason='kill')
-    manager, _guard, inspection = inspect_daemon_fn(context)
+    manager, guard, inspection = inspect_daemon_fn(context)
     lease = inspection.lease
     daemon_pid = lease_pid_fn(lease)
     keeper_pid = keeper_pid_fn(context, lease)
@@ -91,6 +93,7 @@ def shutdown_daemon(
         context,
         inspection=inspection,
         manager=manager,
+        guard=guard,
         force=force,
         client_factory=client_factory,
     )
@@ -98,6 +101,7 @@ def shutdown_daemon(
         daemon_pid=daemon_pid,
         inspection=inspection,
         manager=manager,
+        guard=guard,
         shutdown_timeout_s=shutdown_timeout_s,
         wait_for_pid_exit_fn=wait_for_pid_exit_fn,
         terminate_pid_tree_fn=terminate_pid_tree_fn,

@@ -1503,8 +1503,12 @@ def _wait_for_path(path: Path, timeout: float = 5.0) -> None:
             if path.suffix != '.sock':
                 return
             try:
-                CcbdClient(path, timeout_s=0.2).ping('ccbd')
-                return
+                payload = CcbdClient(path, timeout_s=0.2).ping('ccbd')
+                diagnostics = payload.get('diagnostics')
+                stage = diagnostics.get('startup_stage') if isinstance(diagnostics, dict) else None
+                if stage in {None, '', 'mounted'}:
+                    return
+                last_error = f'startup_stage={stage}'
             except CcbdClientError as exc:
                 last_error = str(exc)
         time.sleep(0.02)

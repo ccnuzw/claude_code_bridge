@@ -62,18 +62,100 @@ The latest startup report must capture the most recent startup-related transacti
 - `daemon_generation`
 - optional `daemon_started`
   - whether the foreground `ccb` command had to start a new daemon
+- optional `startup_run_id`
+  - a `start_<uuid>` correlation identity generated once per foreground start
+    command and echoed by the start RPC; legacy daemon-boot and old-client
+    records may omit it
 - `requested_agents`
 - `desired_agents`
 - `actions_taken`
 - `agent_results`
   - each result may include `duration_ms`, `provider_prepare_ms`,
     `provider_prepare_count`, and a machine-readable `binding_reject_reason`
+  - result `health` reflects the final runtime authority after restore
+    bookkeeping, not the earlier binding-classification intent; both
+    `healthy` and `restored` are successful runtime health values
+  - each result may also include a non-negative `timings_ms` map with the
+    accurately observed `prepare_launch_context`, `build_start_cmd`,
+    `tmux_respawn`, `pane_identity`, `session_write`,
+    `provider_post_launch`, `binding_resolve`, `pane_and_runtime_facts`,
+    `authority_commit`, `restore_bookkeeping`, and `unattributed` boundaries
+  - current-source start results persist every named Agent timing key; a stage
+    that did not execute is `0.0`, while legacy records may omit keys
+  - `prepare_launch_context` spans runtime-directory/session-id preparation,
+    provider `prepare_runtime`, run-cwd resolution, and the optional provider
+    `prepare_launch_context` hook; it is not limited to the provider hook
 - `timings_ms`
   - non-negative stage durations, including `namespace_ensure`,
     `context_and_layout_plan`, `tmux_namespace_runtime`,
     `agent_prepare_and_classify`, `tmux_layout`, `active_panes_and_cmd`,
-    `agent_runtime_commit`, `tmux_cleanup`, `flow_total`, and
-    `supervisor_total` when those stages were reached
+    `agent_runtime_commit`, cumulative `agent_runtime_*` substage totals,
+    `tmux_cleanup`, `flow_total`, and `supervisor_total` when those stages were
+    reached
+- optional `readiness_timeline`
+  - diagnostics schema `1` correlates one `trace_id`, `startup_run_id`, keeper
+    startup id, expected/actual daemon generation, attach mode, Agent scopes,
+    RPC-accept offset, and T0-T6 point records on one host monotonic origin
+  - persisted point records contain only relative milliseconds, status,
+    provenance source, and an optional Agent-name scope; the absolute
+    `origin_monotonic_ns` and exact keeper-acceptance performance-counter value
+    are transient inputs and must never be persisted
+  - `timeline_complete=true` requires a matching positive daemon generation,
+    an observed RPC-accept offset, complete point/status/duration shape,
+    exact T4 requested-Agent and T6 desired-Agent scopes, and monotonic
+    `T2 <= RPC <= T3 <= T4 <= T6` ordering
+  - source-test `--no-attach` records T5 as
+    `not_applicable_no_attach`; it must not synthesize foreground attach or
+    first-frame latency
+  - a cold T1 is exact only when the diagnostics checkpoint sampled immediately
+    after keeper's durable `phase=starting` commit matches startup id,
+    generation, current daemon lease identity, and timeline ordering.  It uses
+    status `reached` and source `keeper_lifecycle_starting_committed`.  Without
+    that proof, the compatible-daemon observation remains
+    `observed_upper_bound` at T2; an already-mounted start uses
+    `not_required_already_mounted`
+  - daemon boot ping evidence must expose lifecycle `startup_stage` together
+    with serving PID, daemon instance, lease generation, in-memory startup
+    generation, and accepted startup id.  `starting/runtime_bootstrap` is
+    bounded progress after a successful self-ping and mounted lease; it is not
+    a completed T2.  Only `phase=mounted/startup_stage=mounted` with matching
+    durable and serving identity is caller-ready.  Final lifecycle persistence
+    and opening the normal-RPC gate are dispatch-atomic: a ping that arrives in
+    the persistence window waits, and a failed publication (including an error
+    after file replacement) returns a stopping/unavailable error rather than a
+    mounted readiness payload
+- optional `operation_counts`
+  - a non-negative integer map collected only while the current daemon-boot or
+    start-command request owns the startup collector
+
+  - `tmux_backend_command_attempt_count`, `tmux_backend_command_count`,
+    `tmux_backend_subprocess_spawn_count`,
+    `tracked_startup_subprocess_spawn_attempt_count`, and
+    `tracked_startup_subprocess_spawn_count` cover calls routed through
+    `TmuxBackend._tmux_run`; `tracked_startup_subprocess_*` is deliberately not
+    a process-wide subprocess total
+  - `atomic_durable_write_attempt_count`, `atomic_durable_write_count`,
+    `atomic_durable_write_byte_count`, and
+    `atomic_durable_write_skip_count` cover the shared `storage.atomic` path;
+    direct file writes, copies, and JSONL appends are outside this counter
+  - `provider_prepare_attempt_count`, `provider_prepare_count`, and
+    `provider_prepare_atomic_write_*` cover the explicit provider preparation
+    boundary and atomic writes inside it; these are not projection-file totals
+  - `orphan_cleanup_pass_count`, `orphan_cleanup_skip_count`,
+    `orphan_cleanup_socket_scan_count`, and the owned/orphan/killed pane counts
+    cover the explicit startup orphan-cleanup pass
+  - `startup_report_write_attempt_count` covers the enclosing report write
+    attempt; the report's own atomic write is intentionally excluded from
+    `atomic_durable_write_*` in that same payload to avoid recursive rewrites
+
+Daemon-boot latest-report publication is lifecycle-fenced.  A child may replace
+the latest report only while its keeper startup id and generation are still the
+current transaction and its lifecycle phase agrees with the reported terminal
+status.  A superseded child's late failure must not overwrite a newer
+generation's successful report.  The report's `inspection.startup_id` and
+`daemon_generation` provide the durable correlation for daemon-boot records;
+foreground `start_command` records continue to use `startup_run_id`.
+
 - `inspection`
 - `socket_placement`
   - at minimum preferred/effective socket paths plus root kind and fallback reason for both `ccbd` and project tmux socket selection
@@ -83,15 +165,247 @@ Rules:
 
 - daemon boot must write a startup report
 - foreground `start` must overwrite it with the more specific `start_command` report
+- the daemon/control-plane request lane is the sole startup-report writer for
+  `start_command`; the foreground CLI must not load and rewrite the latest
+  report after its RPC because a later start may already own that path
+- a new start client must require its RPC response `startup_run_id`, persisted
+  report `startup_run_id`, and foreground observation `startup_run_id` to
+  match before treating timing evidence as the same transaction; a missing
+  response identity is tolerated only for compatibility with an older daemon
 - accepted binding reuse must report `provider_prepare_count=0`; launch and
   relaunch through the normal managed start path must report exactly one
   provider preparation pass
+- accepted binding reuse must preserve an existing successful `healthy` or
+  `restored` runtime health value. A no-op start must not toggle restored
+  provenance to healthy or create an authority write solely for that toggle
 - timing fields are diagnostics only, must not affect lifecycle authority, and
   malformed/non-finite persisted values must be ignored by readers
-- `ping('ccbd')` and `doctor` must surface the latest startup timing map and
-  aggregate provider preparation count when a startup report is available
+- readiness tracing is diagnostics only and first-observation-wins.  A stale,
+  malformed, future-origin, generation-less, duplicate, or out-of-order trace
+  must not change startup authority; benchmark readers reject it rather than
+  repairing or reordering the evidence
+- the structural readiness gate must count cold T1 upper bounds, exact keeper
+  checkpoints, and warm not-required records separately.  Every cold timeline
+  needs an exact checkpoint to satisfy the Goal's formal-readiness gate; an
+  upper bound may prove correlation but cannot satisfy that gate
+- operation counters are diagnostics only, must not affect startup behavior or
+  authority, and malformed, fractional, boolean, or negative persisted values
+  must be ignored by readers
+- the request-scoped collector uses context-local propagation. It does not
+  automatically follow work submitted to a new thread; future concurrent
+  startup work must explicitly propagate or pass the collector before its
+  counters can be considered complete
+- until narrower request-scoped hooks exist, no startup report may claim a
+  global subprocess total, process-snapshot total, helper-spawn total, or
+  provider projection file/byte total by inferring those values from Agent
+  launches or provider preparation
+- per-Agent timing fields are additive rather than nested totals; their sum
+  must not exceed `duration_ms`, and setup or compatibility paths without an
+  accurate finer hook are counted only as `unattributed`
+- when an Agent launch fails after its identity is known, the failed startup
+  report must retain one structured Agent result with `action=failed`, provider,
+  original failure reason, completed additive timings, and duration; diagnostic
+  propagation must not replace or wrap the original startup exception
+- `ping('ccbd')` and `doctor` must surface the latest startup timing map,
+  request-scoped operation-count map, per-Agent timing maps, and aggregate
+  provider preparation count when a startup report is available
+- non-interactive foreground output must expose a stable JSON-safe CLI timing
+  map covering `cli_pre_rpc`, `daemon_ensure`, `start_rpc`, `cli_post_rpc`, and
+  `cli_total`; synchronous sidebar refresh, layout status, and maintenance
+  heartbeat work belongs to `cli_post_rpc`, while render and attach latency is
+  outside that map and may be reported as externally unattributed wall time
+- source-benchmark process bootstrap timings are a separate optional surface;
+  they must not be inserted into the stable CLI phase map.  When the source
+  benchmark enables them, foreground output includes a random
+  `startup_process_trace_id` plus
+  `startup_process_bootstrap_timings_ms` with the non-overlapping stages
+  `popen_begin_to_ccb_test_entry`, `ccb_test_entry_to_pre_exec`,
+  `ccb_test_pre_exec_to_ccb_py_entry`, `ccb_py_entry_to_main`, and
+  `ccb_py_main_to_cli_start`
+- process bootstrap tracing is accepted only through the guarded source-test
+  wrapper.  Absolute monotonic timestamps are consumed before the normal CLI
+  import fan-out and must not reach output, reports, daemon/provider child
+  environments, or benchmark artifacts.  A malformed or forged trace must not
+  alter product startup; the benchmark instead rejects a profiled sample that
+  lacks the complete durations or whose emitted trace id differs from the id
+  retained by its `Popen` owner
 - startup report write failure must not replace the original startup error with a diagnostics-only error
 - when project tmux preparation fails, `failure_reason` must preserve the user-facing startup failure plus tmux command context, the effective tmux socket path, socket path byte length when known, and original tmux stderr/stdout detail when available
+
+#### External startup benchmark artifacts
+
+The source-only startup benchmark writes its raw evidence to an explicitly
+owned external test fixture, not into the live project's `.ccb` authority.  A
+round may contain `run.json`, the immutable startup-report snapshot,
+`scenario-construction.before.json`, `scenario-construction.ready.json`, the
+current/final `scenario-construction.json`, and `resource-profile.json`; final
+cleanup may additionally produce `cleanup-resource-audit.json`.
+
+Rules:
+
+- before any scenario constructor can mutate runtime state, the benchmark must
+  atomically publish and durably directory-sync the immutable `before` phase.
+  After the constructor it publishes an immutable `ready` phase whose
+  predecessor is the `before` SHA256.  The terminal manifest retains both
+  immutable references and names the `ready` SHA256 as its predecessor.  A
+  start-spawn exception therefore leaves a non-passing `ready` record rather
+  than silently losing the attempted round
+- the terminal scenario reference in `run.json` binds benchmark id, round
+  ordinal, CLI scenario, scenario id, variant, instrumentation arm, artifact
+  path, validation status, and SHA256.  Summary construction reopens the final
+  and both immutable phase artifacts, verifies their digests and predecessor
+  chain, and checks the binding against the corresponding run.  Missing,
+  swapped, tampered, pass-with-reasons, or orphan attempted-round artifacts
+  fail the scenario gate
+- scenario identity is a stable double-read of lifecycle, lease, namespace,
+  and configured runtime authority.  Mixed record types, project ids, config
+  signatures, or daemon generations fail closed.  Raw Agent names, PIDs,
+  provider prompts, runtime records, and paths are not persisted; identity
+  equality uses HMAC digests under a fresh non-exported benchmark key, while
+  only aggregate record/live-process counts and sanitized authority state are
+  written
+- the implemented scenario constructors are S1 warm attach, S3 deterministic
+  mixed recovery, S4 official full-cold reset, and S5a preflight-pristine cold.
+  S1/S3 prime and S4 publish
+  their `before` phase before invoking official `ccb_test kill`; their ready
+  state requires consistent stopped/unmounted authority, a non-attachable
+  namespace, zero active runtime records, and a clean bounded full-discovery
+  process audit.  S5a additionally requires absent ccbd/Agent state and an
+  empty isolated source home.  Ordinary S1 rounds require the same daemon,
+  namespace, generation, and live configured runtime identities before and
+  after the command.  Cold rounds require mounted/live authority afterward and
+  newly created or changed daemon, namespace, generation, and Agent runtime
+  identities; a relabelled same-generation daemon is not a cold sample
+- S3 is available only for an explicitly owned external fixture with at least
+  two configured deterministic provider stubs and serial launch authority.  A
+  caller-supplied global or Provider-specific `STUB_LAUNCH_*` control makes
+  preflight fail; Agent selection, delay, barrier, cancel, failure, probe path,
+  and run identity for this scenario are harness-owned.  A
+  source-test-only failure latch is projected through the already validated
+  provider `*_START_CMD`: the selected target launch is held alive until the
+  official single-Agent `ccb_test restart` RPC has returned, then released to
+  fail.  This prevents the restart handler's own recovery checks from consuming
+  the foreground compensation launch.  The ready phase requires exactly that
+  pseudonymous target slot dead, every peer slot live and unchanged, and the
+  same daemon/generation/namespace.  The measured start must produce exactly
+  one target `relaunched` result with `pane_dead` and one provider prepare,
+  attach every peer with zero prepare, preserve namespace and peer identities,
+  and advance the target probe sequence from selected failure match 2N to
+  non-selected recovery match 2N+1.  Any automatic supervision recovery event
+  after the frozen cursor, peer mutation, project-wide topology rebuild, or
+  probe mismatch fails closed
+- each S3 round copies the raw launch-probe snapshot into its access-restricted
+  `0700` run directory as a `0600` file and binds its SHA256 from the final
+  manifest.  Agent names and PIDs may exist only in that raw external snapshot;
+  scenario manifests retain HMAC slot/identity values and aggregate counters
+- each usable resource profile must bind the benchmark coordinates, stdout
+  `startup_run_id`, persisted startup-report `startup_run_id`, and startup
+  report digest; an identity or digest mismatch is measurement-integrity
+  failure rather than a resource zero
+- for a profiled source startup, `run.json` separately records the correlated
+  process trace id and duration map.  If `B` is the sum of the five process
+  bootstrap durations, `C` is `cli_total`, and `W` is the foreground command
+  wall, then `post_cli_residual = W - B - C`; external named attribution is
+  `B + C`.  `external_minus_cli_total = W - C` remains available for
+  compatibility but includes both bootstrap and post-CLI residual.  A residual
+  below the bounded floating-point tolerance is measurement-integrity failure
+- the CLI timing partition must fit inside `cli_total`, and the synchronous
+  post-RPC subpartition must fit inside `cli_post_rpc`; readiness milestones
+  must fit inside the independently measured foreground command wall
+- the resource sampler's command wall and the benchmark runner's outer wall
+  are independent observations.  Their signed difference is retained as
+  `sampler_and_runner_overhead_ms`; a materially negative value rejects the
+  profile rather than being clamped to zero
+- profile, spawn, command-exit, and profile-end timestamps must be monotonic,
+  and every retained sample must lie inside the profile window.  Reversed
+  timestamps or out-of-window samples make the profile unavailable
+- Linux resource sampling reads `/proc` directly and identifies a process
+  instance by PID plus `/proc/<pid>/stat` start ticks; it must not persist argv,
+  cwd, environment values, provider prompts, or raw procfs text
+- CPU ticks and process I/O derived from periodic process snapshots are
+  labelled sampled lower bounds; command-child rusage, sampled aggregate peak
+  RSS, process-count peak, capability gaps, scan overhead, and scheduling
+  misses remain separate fields
+- `/proc/<pid>/io` counters are monotonic only within the same PID/start-ticks
+  identity.  During one profile window the sampler may keep at most 256
+  read-only, close-on-exec `/proc/<pid>/io` handles.  Each handle is opened
+  relative to a no-follow proc directory handle and accepted only after a stat
+  read from that same directory proves the expected PID/start-ticks identity;
+  later samples use a bounded offset-zero read.  This prevents PID reuse from
+  rebinding a handle and lets a handle opened while the process was alive read
+  the real final counters while that process is a zombie, when a fresh procfs
+  open would fail.  During targeted command-window discovery, handle
+  acquisition happens immediately after the stat identity read and before
+  slower cmdline/executable/cwd classification, so classification work does not
+  recreate the same exit race.  Handles are never inherited or persisted and
+  are closed on success, timeout, and exception paths.  Limit, open, read, reuse, prime, and
+  identity-mismatch counts are aggregate diagnostics only
+- the sampler aggregation keeps a last-valid I/O value per identity and field:
+  a transient unavailable read followed by a valid non-regressing value, or a
+  valid final read from an already-open identity handle, recovers the full
+  sampled delta without an additional I/O observation.  Missing baseline
+  values, terminal values that the stable handle cannot read, identities that
+  never produce a valid value, and counter regressions remain unresolved and
+  force `process_io_partial`.  Raw unavailable events, recovered identity-field
+  gap sequences, unresolved gaps/identities, and counter regressions are
+  reported separately.  Unresolved identity-field gaps are additionally
+  partitioned into mutually exclusive baseline, terminal, never-valid, and
+  regression counts without persisting process identity or raw procfs text;
+  the partition counts sum to the unresolved-gap count.  The formal gate is
+  driven by unresolved gaps, not by a recovered transient event.  Process I/O
+  remains a sampled lower bound because a process can still be created and
+  fully exit between samples
+- the pre-spawn full-discovery baseline is outside the measured command wall;
+  sampling during the command follows the foreground root, current runtime
+  authority, previously observed process identities, and their descendants so
+  a full-machine scan is not added to every sampling interval
+- repeated benchmark rounds keep two identity sets: the next round is seeded
+  only with process identities still present in the prior terminal snapshot,
+  while the final cleanup audit retains the cumulative observed identities.
+  Dead foreground identities must not accumulate in active sampling work;
+  each persisted sample reports only an aggregate unavailable-I/O event count.
+  Within each targeted snapshot, the foreground root and its discovered
+  descendants are read before persistent project peers.  Stable identity
+  handles remove the observed live-to-zombie stat/I/O tear without increasing
+  the number of I/O observations; a first-seen zombie or a process wholly
+  between samples remains explicitly outside that recovery guarantee
+- unavailable or partial resource telemetry cannot turn a successful startup
+  into a successful formal performance claim, and it must not replace an
+  original startup timeout, exit error, or report-validation failure
+- foreground sampler execution owns and reaps its direct `Popen`; timeout
+  handling is bounded terminate/kill/reap logic so descendants retaining an
+  inherited pipe cannot make the benchmark wait unboundedly.  Project runtime
+  cleanup remains the separate official control-plane cleanup step
+- final cleanup evidence is separate from any startup run.  After the official
+  control-plane cleanup reports `unmounted`/`stopped`, the benchmark requires
+  two bounded consecutive full-discovery snapshots with no known or
+  project-attributed process before reporting the cleanup resource audit as
+  `clean`
+- benchmark summaries must keep `formal_claim_allowed=false` until every
+  independent sample-count, readiness, attribution, instrumentation-overhead,
+  scenario, provider, fault, and platform gate is satisfied; a passing
+  resource-correlation gate alone is only smoke evidence
+- platforms without usable `/proc` must report resource capability as
+  unavailable.  Missing fields are not coerced to zero and do not authorize a
+  Linux-only performance conclusion on that platform
+- instrumentation overhead A/B is a dedicated warm-only benchmark mode.  It
+  writes a seeded balanced-ABBA `benchmark-plan.json` before the first runtime
+  mutation, primes once, and runs adjacent control/instrumented arms against
+  the same generation and frozen reuse identity
+- both A/B arms measure spawn-to-exit wall with the same direct-`Popen`, bounded
+  timeout boundary.  The control arm disables `/proc` sampling, process trace,
+  and readiness trace by design, but must still pass native run-id, startup
+  report, generation/config, warm-reuse, zero-Provider-prepare, and authority
+  drift checks
+- a control arm that emits trace/readiness/resource evidence, or an
+  instrumented arm missing any of those correlated surfaces, is invalid; failed
+  pairs remain in the artifact and are never retried or replaced
+- summary wall/stage/resource/readiness distributions must not mix arms.
+  Resource/readiness/attribution gates use only the instrumented arm; control
+  trust and paired `instrumented - control` deltas are separate.  Formal
+  overhead pass requires `3 + 20` pairs, zero invalid pairs, paired p50 and the
+  deterministic bootstrap 95% CI upper bound within `max(10 ms, 2% of control
+  p50)`
 
 ### 3.3 Shutdown Report
 
@@ -209,8 +523,20 @@ Rules:
   files
 - `doctor` and bundle export must include these records when present
 - `ping('ccbd')` and `doctor` should surface start-policy summary fields when available
+- `ping('<agent>')` diagnostics must surface runtime `reconcile_state`,
+  `restart_count`, `last_reconcile_at`, and `last_failure_reason`. A terminal
+  provider-auth block must report health `provider-auth-revoked`,
+  `reconcile_state=blocked`, and the actionable login/remount reason rather
+  than collapsing to generic `pane-dead` or `stale`
 - `ping('ccbd')` and `doctor` must surface namespace summary fields such as epoch, tmux socket path, session name, and latest lifecycle event when available
 - `ping('ccbd')` and `doctor` must surface current socket placement diagnostics, including preferred/effective socket path, root kind, fallback reason, and filesystem hint when known
+- `ping('ccbd')` must remain available during the post-self-ping
+  `runtime_bootstrap` stage so startup waiters can distinguish live progress
+  from a dead listener; non-ping bootstrap rejections are availability state,
+  not evidence of a mounted generation or permission to retry after a request
+  was sent.  This diagnostic exception ends fail-closed when final publication
+  fails or serving stops; shutdown flag cleanup must not reopen ping or normal
+  RPC dispatch
 - `ping('ccbd')` and `doctor` should surface lightweight control-plane metrics when available, including handler latency, heartbeat wall duration, heartbeat step duration, heartbeat runtime-store write count, project-view cache/response/build/tmux counts, process RSS/FD/thread counts, service-graph version/created-at/retained-count metadata, pending maintenance ticks, and reload timing fields when a reload feature exists; until old-graph in-flight retention is implemented, `service_graph_retained_count` means published graph count, not RCU-style old graph retention; these metrics are diagnostics only and must not add config watchers, tmux mutations, or heavy steady-state scans
 - `ccb layout status --json` may include best-effort tmux observation
   metadata for each observed pane, including `pane_index`, `pane_left`,
@@ -224,6 +550,11 @@ Rules:
   `reload_drain` plus `dispatch_blocked_by_reload_drain=true`. Project-view
   cache reuse must account for the drain file revision so sidebar state does
   not remain stale after a busy unload is recorded or retired.
+- `project_view` must expose terminal provider-auth blocks as failed activity
+  reason `provider_auth_revoked`, runtime health `provider-auth-revoked`, and
+  `runtime_failure_reason`; sidebar clients should render a concise
+  `[login]` action instead of a generic stale indicator, while the diagnostics
+  reason retains the complete login-and-remount instruction
 - `ccbd` heartbeat may automatically retry a ready active unload drain by
   reusing the same guarded additive reload transaction after dispatcher
   completion polling shows the removed agent has no outstanding work. This is

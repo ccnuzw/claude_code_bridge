@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import threading
+import time
 
 import pytest
 
@@ -9,6 +11,7 @@ from ccbd.api_models import DeliveryScope, MessageEnvelope
 from ccbd.app import CcbdApp
 from ccbd.models import LeaseHealth, MountState
 from ccbd.services.health import HealthMonitor
+from ccbd.services.lifecycle import build_lifecycle
 from ccbd.services.mount import MountManager
 from ccbd.services.ownership import OwnershipConflictError, OwnershipGuard
 from ccbd.services.project_namespace_state import ProjectNamespaceState, ProjectNamespaceStateStore
@@ -462,6 +465,102 @@ def test_ownership_guard_blocks_healthy_lease_and_allows_stale_takeover(tmp_path
     inspection = stale_guard.inspect()
     assert inspection.health is LeaseHealth.STALE
     assert stale_guard.verify_or_takeover(project_id=ctx.project_id, pid=222, socket_path=layout.ccbd_socket_path) == 4
+
+
+def test_expected_claim_uses_keeper_generation_when_lease_is_missing(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-expected-missing'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+    manager = MountManager(layout)
+    guard = OwnershipGuard(layout, manager)
+
+    guard.assert_expected_claim_allowed(
+        project_id=ctx.project_id,
+        pid=222,
+        socket_path=layout.ccbd_socket_path,
+        daemon_instance_id='daemon-new',
+        expected_generation=7,
+    )
+
+
+def test_expected_claim_allows_skipped_generation_over_stale_predecessor(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-expected-stale'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+    manager = MountManager(
+        layout,
+        clock=lambda: '2026-03-18T00:00:00Z',
+        uid_getter=lambda: 1000,
+        boot_id_getter=lambda: 'boot-1',
+    )
+    manager.mark_mounted(
+        project_id=ctx.project_id,
+        pid=111,
+        socket_path=layout.ccbd_socket_path,
+        generation=3,
+        daemon_instance_id='daemon-old',
+    )
+    guard = OwnershipGuard(
+        layout,
+        manager,
+        clock=lambda: '2026-03-18T00:01:00Z',
+        pid_exists=lambda _pid: False,
+        socket_probe=lambda _path: False,
+    )
+
+    guard.assert_expected_claim_allowed(
+        project_id=ctx.project_id,
+        pid=222,
+        socket_path=layout.ccbd_socket_path,
+        daemon_instance_id='daemon-new',
+        expected_generation=7,
+    )
+
+
+def test_expected_claim_rejects_live_or_same_generation_other_holder(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-expected-conflict'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+    manager = MountManager(
+        layout,
+        clock=lambda: '2026-03-18T00:00:00Z',
+        uid_getter=lambda: 1000,
+        boot_id_getter=lambda: 'boot-1',
+    )
+    manager.mark_mounted(
+        project_id=ctx.project_id,
+        pid=111,
+        socket_path=layout.ccbd_socket_path,
+        generation=3,
+        daemon_instance_id='daemon-old',
+    )
+    healthy_guard = OwnershipGuard(
+        layout,
+        manager,
+        clock=lambda: '2026-03-18T00:00:05Z',
+        pid_exists=lambda _pid: True,
+        socket_probe=lambda _path: True,
+    )
+
+    with pytest.raises(OwnershipConflictError, match='does not allow expected claim'):
+        healthy_guard.assert_expected_claim_allowed(
+            project_id=ctx.project_id,
+            pid=222,
+            socket_path=layout.ccbd_socket_path,
+            daemon_instance_id='daemon-new',
+            expected_generation=7,
+        )
+    with pytest.raises(OwnershipConflictError, match='already held or superseded'):
+        healthy_guard.assert_expected_claim_allowed(
+            project_id=ctx.project_id,
+            pid=222,
+            socket_path=layout.ccbd_socket_path,
+            daemon_instance_id='daemon-new',
+            expected_generation=3,
+        )
 
 
 def test_ownership_guard_allows_unmounted_foreign_lease_takeover(tmp_path: Path) -> None:
@@ -1376,6 +1475,24 @@ def test_ccbd_heartbeat_keeps_backend_mounted_on_background_supervision_failure(
     app = CcbdApp(project_root)
 
     app.start()
+    thread_errors: list[BaseException] = []
+
+    def run_server() -> None:
+        try:
+            app.serve_forever(poll_interval=0.01)
+        except BaseException as exc:
+            thread_errors.append(exc)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        lifecycle = app.lifecycle_store.load()
+        if lifecycle is not None and lifecycle.phase == 'mounted':
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError('ccbd did not reach mounted while serving')
 
     monkeypatch.setattr(app.health_monitor, 'check_all', lambda: {})
     monkeypatch.setattr(app.runtime_supervision, 'reconcile_once', lambda: (_ for _ in ()).throw(RuntimeError('tmux boom')))
@@ -1383,6 +1500,7 @@ def test_ccbd_heartbeat_keeps_backend_mounted_on_background_supervision_failure(
     monkeypatch.setattr(app.dispatcher, 'tick', lambda: ())
     monkeypatch.setattr(app.dispatcher, 'poll_completions', lambda: ())
     monkeypatch.setattr(app.job_heartbeat, 'tick', lambda dispatcher: ())
+    monkeypatch.setattr('ccbd.app_runtime.lifecycle.full_heartbeat_due', lambda app, started: True)
 
     app.heartbeat()
 
@@ -1394,9 +1512,12 @@ def test_ccbd_heartbeat_keeps_backend_mounted_on_background_supervision_failure(
     assert lifecycle.last_failure_reason == 'heartbeat:runtime_supervision: RuntimeError: tmux boom'
 
     app.request_shutdown()
+    server_thread.join(timeout=3.0)
     lease = app.mount_manager.load_state()
     assert lease is not None
     assert lease.mount_state is MountState.UNMOUNTED
+    assert server_thread.is_alive() is False
+    assert thread_errors == []
 
 
 def test_ccbd_request_shutdown_does_not_unmount_replaced_lease_holder(tmp_path: Path) -> None:
@@ -1415,6 +1536,20 @@ def test_ccbd_request_shutdown_does_not_unmount_replaced_lease_holder(tmp_path: 
         generation=1,
         daemon_instance_id=app.daemon_instance_id,
     )
+    app.startup_generation = 1
+    old_lifecycle = build_lifecycle(
+        project_id=ctx.project_id,
+        occurred_at='2026-07-17T00:00:00Z',
+        desired_state='running',
+        phase='mounted',
+        generation=1,
+        startup_id='a' * 32,
+        startup_stage='mounted',
+        owner_pid=app.pid,
+        owner_daemon_instance_id=app.daemon_instance_id,
+        socket_path=app.paths.ccbd_socket_path,
+    )
+    app.lifecycle_store.save(old_lifecycle)
     app.mount_manager.mark_mounted(
         project_id=ctx.project_id,
         pid=app.pid + 1,
@@ -1430,6 +1565,7 @@ def test_ccbd_request_shutdown_does_not_unmount_replaced_lease_holder(tmp_path: 
     assert lease.mount_state is MountState.MOUNTED
     assert lease.ccbd_pid == app.pid + 1
     assert lease.daemon_instance_id == 'replacement-daemon'
+    assert app.lifecycle_store.load() == old_lifecycle
 
 
 def test_ccbd_foreign_pane_reflow_uses_persisted_start_policy(tmp_path: Path, monkeypatch) -> None:

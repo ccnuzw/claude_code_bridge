@@ -91,6 +91,17 @@ def test_coerce_command() -> None:
     assert runner._coerce_command("   ") is None
 
 
+def test_persisted_command_summary_drops_arguments_and_prompt_text() -> None:
+    runner = _load_runner()
+    secret = "private-workflow-prompt-token"
+
+    summary = runner._summarize_command(f"python /private/path/worker.py --prompt {secret}")
+
+    assert summary == "executable:python:worker.py"
+    assert secret not in summary
+    assert "/private/path" not in summary
+
+
 def test_collect_phase_samples_stops_when_inactive() -> None:
     runner = _load_runner()
     process_rows = (
@@ -211,7 +222,7 @@ def test_aggregate_phase_rollup_math() -> None:
     assert summary["buckets"]["ccb/ccbd/main"]["rss_max_mib"] == 6.0
     assert summary["buckets"]["tmux-server"]["rss_max_mib"] == 8.0
     assert summary["buckets"]["ccb/ccbd/main"]["top_commands"][0]["avg_cpu_pct"] == 15.0
-    assert summary["buckets"]["tmux-server"]["top_commands"][0]["command"] == "tmux: server"
+    assert summary["buckets"]["tmux-server"]["top_commands"][0]["command"] == "executable:tmux-server"
 
 
 def test_run_load_phase_branches(tmp_path: Path) -> None:
@@ -336,6 +347,8 @@ def test_run_lifecycle_profile_writes_result(tmp_path: Path, monkeypatch: pytest
     assert result["phases"]["load"]["samples"] == 3
     assert result["parameters"]["ask_count"] == 5
     assert result["parameters"]["ask_concurrency"] == 2
+    assert result["parameters"]["ask_message_persisted"] is False
+    assert "ask_message" not in result["parameters"]
     assert result["schema_version"] == 1
 
 

@@ -12,6 +12,7 @@ from ccbd.services.project_namespace_pane import ProjectNamespacePaneRecord
 from ccbd.start_preparation import prepare_start_agents
 from cli.context import CliContextBuilder
 from cli.models import ParsedStartCommand
+from cli.services.role_command_policy import RoleCommandPolicy
 from provider_backends.claude import launcher as claude_launcher
 from provider_backends.runtime_restore import ProviderRestoreTarget
 from project.resolver import bootstrap_project
@@ -69,6 +70,12 @@ def test_prepare_start_agents_skips_provider_preparation_for_reused_binding(
         'ccbd.start_preparation.prepare_provider_workspace',
         lambda **kwargs: calls.append(kwargs['agent_name']),
     )
+    monkeypatch.setattr(
+        'ccbd.start_preparation.effective_start_command',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError('reused bindings must not resolve a launch command')
+        ),
+    )
 
     prepared = prepare_start_agents(
         targets=('agent1',),
@@ -92,6 +99,7 @@ def test_prepare_start_agents_skips_provider_preparation_for_reused_binding(
     assert calls == []
     assert prepared[0].binding is binding
     assert prepared[0].provider_prepared is False
+    assert prepared[0].effective_command is None
 
 
 def test_prepare_start_agents_prepares_missing_binding_once(monkeypatch, tmp_path: Path) -> None:
@@ -412,7 +420,7 @@ permission = "manual"
         lambda **kwargs: ProviderRestoreTarget(run_cwd=project_root, has_history=False),
     )
 
-    prepare_start_agents(
+    prepared = prepare_start_agents(
         targets=('reviewer',),
         config=config,
         paths=paths,
@@ -433,3 +441,104 @@ permission = "manual"
 
     payload = json.loads(managed_settings.read_text(encoding='utf-8'))
     assert payload['permissions']['allow'] == ['Read', 'Write', 'Edit', 'Bash(git:*)', 'Bash(ccb ask *)']
+    assert prepared[0].effective_command is context.command
+    assert prepared[0].effective_command.auto_permission is True
+
+
+def test_prepare_start_agents_uses_hard_role_effective_command_for_claude_projection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-start-prep-hard-role'
+    source_home = tmp_path / 'source-home'
+    (source_home / '.claude').mkdir(parents=True)
+    (source_home / '.claude' / 'settings.json').write_text(
+        json.dumps({'theme': 'dark'}),
+        encoding='utf-8',
+    )
+    (project_root / '.ccb').mkdir(parents=True)
+    (project_root / '.ccb' / 'ccb.config').write_text(
+        'version = 2\ndefault_agents = ["reviewer"]\n\n'
+        '[agents.reviewer]\nprovider = "claude"\ntarget = "."\n'
+        'workspace_mode = "inplace"\nrestore = "auto"\npermission = "manual"\n'
+        'role = "test.hard"\n',
+        encoding='utf-8',
+    )
+    bootstrap_project(project_root)
+    command = ParsedStartCommand(
+        project=None,
+        agent_names=('reviewer',),
+        restore=True,
+        auto_permission=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    config = load_project_config(project_root).config
+    paths = PathLayout(project_root)
+    policy = RoleCommandPolicy(
+        role_id='test.hard',
+        path=tmp_path / 'command-surface.toml',
+        mode='deny_all_except',
+        enforcement='required',
+        if_unsupported='fail_mount',
+        generic_shell=False,
+        generic_ccb=False,
+        supported_providers=('claude',),
+        provider_tools=(),
+        allowed_effects=(),
+        forbidden_effects=(),
+        allowed=(),
+    )
+    monkeypatch.setattr(
+        'cli.services.runtime_launch.role_command_policy_for_spec',
+        lambda _spec: policy,
+    )
+    monkeypatch.setattr(
+        'cli.services.role_command_policy.role_command_policy_for_spec',
+        lambda _spec: policy,
+    )
+    monkeypatch.setattr(
+        'cli.services.provider_hooks.current_provider_source_home',
+        lambda: source_home,
+    )
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(run_cwd=project_root, has_history=False),
+    )
+    from cli.services.provider_hooks import prepare_provider_workspace as real_prepare_provider_workspace
+
+    observed_auto_permission: list[bool] = []
+
+    def capture_prepare(**kwargs):
+        observed_auto_permission.append(bool(kwargs['auto_permission']))
+        return real_prepare_provider_workspace(**kwargs)
+
+    monkeypatch.setattr('ccbd.start_preparation.prepare_provider_workspace', capture_prepare)
+
+    prepared = prepare_start_agents(
+        targets=('reviewer',),
+        config=config,
+        paths=paths,
+        context=context,
+        project_root=project_root,
+        project_id=context.project.project_id,
+        tmux_socket_path=None,
+        tmux_session_name=None,
+        workspace_window_id=None,
+        resolve_agent_binding_fn=lambda **kwargs: None,
+        project_binding_filter_fn=lambda binding, **kwargs: binding,
+        restore_state_builder=lambda restore_mode: AgentRestoreState(
+            restore_mode=RestoreMode(restore_mode),
+            last_checkpoint=None,
+            conversation_summary='pending restore',
+        ),
+    )
+
+    assert context.command.auto_permission is True
+    assert prepared[0].effective_command.auto_permission is False
+    assert observed_auto_permission == [False]
+    managed_home = paths.agent_provider_state_dir('reviewer', 'claude') / 'home'
+    settings = json.loads((managed_home / '.claude' / 'settings.json').read_text(encoding='utf-8'))
+    trust = json.loads((managed_home / '.claude.json').read_text(encoding='utf-8'))
+    assert 'skipDangerousModePermissionPrompt' not in settings
+    assert 'bypassPermissionsModeAccepted' not in trust

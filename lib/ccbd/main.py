@@ -13,6 +13,10 @@ if str(_LIB_ROOT) not in sys.path:
     sys.path.insert(0, str(_LIB_ROOT))
 
 from ccbd.app import CcbdApp
+from ccbd.startup_fence import (
+    consume_expected_startup_fence,
+    consume_keeper_startup_checkpoint,
+)
 
 
 def _install_signal_traceback_dump() -> None:
@@ -30,7 +34,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     _install_signal_traceback_dump()
-    app = CcbdApp(args.project)
+    expected_startup_fence = consume_expected_startup_fence()
+    keeper_startup_checkpoint = consume_keeper_startup_checkpoint(
+        expected_startup_fence
+    )
+    app = CcbdApp(
+        args.project,
+        expected_startup_fence=expected_startup_fence,
+        keeper_startup_checkpoint=keeper_startup_checkpoint,
+    )
     try:
         app.serve_forever()
     except KeyboardInterrupt:

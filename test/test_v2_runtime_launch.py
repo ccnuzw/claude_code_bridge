@@ -372,6 +372,58 @@ def test_ensure_agent_runtime_configures_claude_managed_home_without_touching_wo
     assert managed_payload['hooks']['Stop'][0]['hooks'][0]['command']
 
 
+def test_ensure_agent_runtime_consumes_prepared_effective_command_without_recomputing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-prepared-effective-command'
+    (project_root / '.ccb').mkdir(parents=True)
+    raw_command = ParsedStartCommand(
+        project=None,
+        agent_names=('reviewer',),
+        restore=False,
+        auto_permission=True,
+    )
+    effective_command = ParsedStartCommand(
+        project=None,
+        agent_names=('reviewer',),
+        restore=False,
+        auto_permission=False,
+    )
+    ctx = _context(project_root, raw_command)
+    spec = _spec('reviewer', provider='claude')
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    observed: dict[str, object] = {}
+
+    def fake_ensure_impl(context, command, *_args, **_kwargs):
+        observed['context'] = context
+        observed['command'] = command
+        return runtime_launch.RuntimeLaunchResult(launched=False, binding=None)
+
+    monkeypatch.setattr(runtime_launch, '_ensure_agent_runtime_impl', fake_ensure_impl)
+    monkeypatch.setattr(
+        runtime_launch,
+        'effective_start_command',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError('prepared effective command must not be recomputed')
+        ),
+    )
+
+    result = ensure_agent_runtime(
+        ctx,
+        raw_command,
+        spec,
+        plan,
+        None,
+        provider_prepared=True,
+        effective_command=effective_command,
+    )
+
+    assert result == runtime_launch.RuntimeLaunchResult(launched=False, binding=None)
+    assert observed['context'] is ctx
+    assert observed['command'] is effective_command
+
+
 def test_ensure_agent_runtime_launches_named_codex_session(monkeypatch, tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     (project_root / '.ccb').mkdir(parents=True)

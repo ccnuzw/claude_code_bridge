@@ -61,7 +61,7 @@ def test_load_valid_project_config(tmp_path: Path) -> None:
     assert result.config.windows_explicit is False
     assert result.config.entry_window == 'main'
     assert [window.name for window in result.config.windows] == ['main']
-    assert result.config.windows[0].layout_spec == 'agent1:codex'
+    assert result.config.windows[0].layout_spec == 'cmd; agent1:codex'
     assert result.config.windows[0].agent_names == ('agent1',)
     assert result.config.maintenance_heartbeat.enabled is False
     assert result.config.maintenance_heartbeat.assessor == 'ccb_self'

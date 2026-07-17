@@ -75,6 +75,7 @@ class ProjectConfig:
             self.windows,
             layout_spec=rendered_layout,
             default_agents=defaults,
+            cmd_enabled=bool(self.cmd_enabled),
         )
         tool_windows = normalize_tool_windows(self.tool_windows)
         validate_tool_windows_do_not_conflict(windows, tool_windows)

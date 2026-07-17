@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -9,6 +10,11 @@ import time
 from runtime_env.control_plane import control_plane_env
 
 from ccbd.socket_client import CcbdClient, CcbdClientError
+from ccbd.startup_fence import (
+    EXPECTED_GENERATION_ENV,
+    EXPECTED_STARTUP_ID_ENV,
+    KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV,
+)
 from ccbd.startup_policy import CONTROL_PLANE_RPC_TIMEOUT_S
 
 
@@ -23,38 +29,79 @@ def spawn_ccbd_process(
     ccbd_dir: Path,
     timeout_s: float,
     keeper_pid: int | None = None,
+    expected_startup_id: str | None = None,
+    expected_generation: int | None = None,
+    keeper_startup_accepted_perf_counter_ns: int | None = None,
 ) -> None:
     script = Path(__file__).resolve().parent / 'main.py'
-    env = _ccbd_env(keeper_pid=keeper_pid)
-    ccbd_dir.mkdir(parents=True, exist_ok=True)
-    stdout_log = open(ccbd_dir / 'ccbd.stdout.log', 'ab')
-    stderr_log = open(ccbd_dir / 'ccbd.stderr.log', 'ab')
-    process = subprocess.Popen(
-        [sys.executable, str(script), '--project', str(project_root)],
-        cwd=str(project_root),
-        env=env,
-        stdout=stdout_log,
-        stderr=stderr_log,
-        start_new_session=True,
+    env = _ccbd_env(
+        keeper_pid=keeper_pid,
+        expected_startup_id=expected_startup_id,
+        expected_generation=expected_generation,
+        keeper_startup_accepted_perf_counter_ns=keeper_startup_accepted_perf_counter_ns,
     )
-    _wait_for_ccbd_ready(process=process, socket_path=socket_path, timeout_s=timeout_s)
+    ccbd_dir.mkdir(parents=True, exist_ok=True)
+    with open(ccbd_dir / 'ccbd.stdout.log', 'ab') as stdout_log, open(
+        ccbd_dir / 'ccbd.stderr.log',
+        'ab',
+    ) as stderr_log:
+        process = subprocess.Popen(
+            [sys.executable, str(script), '--project', str(project_root)],
+            cwd=str(project_root),
+            env=env,
+            stdout=stdout_log,
+            stderr=stderr_log,
+            start_new_session=True,
+        )
+        try:
+            _wait_for_ccbd_ready(
+                process=process,
+                socket_path=socket_path,
+                timeout_s=timeout_s,
+                expected_startup_id=expected_startup_id,
+                expected_generation=expected_generation,
+            )
+        except Exception:
+            _terminate_spawned_process(process)
+            raise
 
 
-def _wait_for_ccbd_ready(*, process: subprocess.Popen[bytes], socket_path: Path, timeout_s: float) -> None:
+def _wait_for_ccbd_ready(
+    *,
+    process: subprocess.Popen[bytes],
+    socket_path: Path,
+    timeout_s: float,
+    expected_startup_id: str | None = None,
+    expected_generation: int | None = None,
+) -> None:
     deadline = time.time() + max(0.0, float(timeout_s))
     last_error: str | None = None
     while time.time() < deadline:
         if socket_path.exists():
             try:
-                CcbdClient(socket_path, timeout_s=CONTROL_PLANE_RPC_TIMEOUT_S).ping('ccbd')
-                return
+                payload = CcbdClient(socket_path, timeout_s=CONTROL_PLANE_RPC_TIMEOUT_S).ping('ccbd')
+                if _ready_payload_matches_expected(
+                    payload,
+                    process=process,
+                    expected_startup_id=expected_startup_id,
+                    expected_generation=expected_generation,
+                ):
+                    return
+                last_error = 'ccbd readiness identity does not match expected startup transaction'
             except CcbdClientError as exc:
                 last_error = str(exc)
         if process.poll() is not None:
             if socket_path.exists():
                 try:
-                    CcbdClient(socket_path, timeout_s=CONTROL_PLANE_RPC_TIMEOUT_S).ping('ccbd')
-                    return
+                    payload = CcbdClient(socket_path, timeout_s=CONTROL_PLANE_RPC_TIMEOUT_S).ping('ccbd')
+                    if _ready_payload_matches_expected(
+                        payload,
+                        process=process,
+                        expected_startup_id=expected_startup_id,
+                        expected_generation=expected_generation,
+                    ):
+                        return
+                    last_error = 'ccbd readiness identity does not match expected startup transaction'
                 except CcbdClientError as exc:
                     last_error = str(exc)
             raise CcbdProcessError(f'ccbd exited before ready with code {process.returncode}')
@@ -62,8 +109,33 @@ def _wait_for_ccbd_ready(*, process: subprocess.Popen[bytes], socket_path: Path,
     raise CcbdProcessError(last_error or 'timed out waiting for ccbd to become ready')
 
 
-def _ccbd_env(*, keeper_pid: int | None) -> dict[str, str]:
-    env = control_plane_env(extra={'PYTHONUNBUFFERED': '1'})
+def _ccbd_env(
+    *,
+    keeper_pid: int | None,
+    expected_startup_id: str | None = None,
+    expected_generation: int | None = None,
+    keeper_startup_accepted_perf_counter_ns: int | None = None,
+) -> dict[str, str]:
+    startup_id = str(expected_startup_id or '').strip()
+    generation = int(expected_generation or 0)
+    if bool(startup_id) != bool(generation):
+        raise ValueError('expected startup fence requires both startup_id and generation')
+    if generation < 0:
+        raise ValueError('expected startup generation cannot be negative')
+    accepted_ns = _positive_diagnostics_int(
+        keeper_startup_accepted_perf_counter_ns
+    )
+    if not startup_id or not generation:
+        accepted_ns = None
+    extra = {
+        'PYTHONUNBUFFERED': '1',
+        EXPECTED_STARTUP_ID_ENV: startup_id or None,
+        EXPECTED_GENERATION_ENV: str(generation) if generation else None,
+        KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV: (
+            str(accepted_ns) if accepted_ns is not None else None
+        ),
+    }
+    env = control_plane_env(extra=extra)
     lib_root = str(Path(__file__).resolve().parents[1])
     script_root = Path(__file__).resolve().parents[2]
     _prepend_tool_paths(env, script_root)
@@ -72,6 +144,89 @@ def _ccbd_env(*, keeper_pid: int | None) -> dict[str, str]:
     if keeper_pid is not None and keeper_pid > 0:
         env['CCB_KEEPER_PID'] = str(int(keeper_pid))
     return env
+
+
+def _positive_diagnostics_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed > 0 and str(parsed) == str(value).strip() else None
+
+
+def _ready_payload_matches_expected(
+    payload: dict[str, object],
+    *,
+    process: subprocess.Popen[bytes],
+    expected_startup_id: str | None,
+    expected_generation: int | None,
+) -> bool:
+    startup_id = str(expected_startup_id or '').strip()
+    generation = int(expected_generation or 0)
+    if not startup_id and not generation:
+        return True
+    if not startup_id or generation <= 0:
+        return False
+    try:
+        serving_pid = int(payload.get('serving_pid') or 0)
+        serving_generation = int(payload.get('serving_lease_generation') or 0)
+        lifecycle_generation = int(payload.get('generation') or 0)
+    except (TypeError, ValueError):
+        return False
+    diagnostics = payload.get('diagnostics')
+    if not isinstance(diagnostics, dict):
+        return False
+    return (
+        serving_pid == int(process.pid)
+        and serving_generation == generation
+        and lifecycle_generation == generation
+        and str(payload.get('accepted_startup_id') or '') == startup_id
+        and bool(str(payload.get('serving_daemon_instance_id') or '').strip())
+        and str(payload.get('mount_state') or '') == 'mounted'
+        and str(payload.get('desired_state') or '') == 'running'
+        and str(diagnostics.get('startup_id') or '') == startup_id
+        and str(diagnostics.get('startup_stage') or '') == 'mounted'
+    )
+
+
+def _terminate_spawned_process(
+    process: subprocess.Popen[bytes],
+    *,
+    timeout_s: float = 1.0,
+) -> None:
+    if process.poll() is not None:
+        try:
+            process.wait(timeout=0)
+        except Exception:
+            pass
+        return
+    try:
+        os.killpg(int(process.pid), signal.SIGTERM)
+    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+        try:
+            process.terminate()
+        except Exception:
+            pass
+    try:
+        process.wait(timeout=max(0.0, float(timeout_s)))
+        return
+    except (subprocess.TimeoutExpired, TimeoutError):
+        pass
+    except Exception:
+        return
+    try:
+        os.killpg(int(process.pid), signal.SIGKILL)
+    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+        try:
+            process.kill()
+        except Exception:
+            pass
+    try:
+        process.wait(timeout=max(0.0, float(timeout_s)))
+    except Exception:
+        pass
 
 
 def _prepend_tool_paths(env: dict[str, str], script_root: Path) -> None:

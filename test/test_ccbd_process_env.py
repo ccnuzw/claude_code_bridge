@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
 
-from ccbd.daemon_process import _ccbd_env, _prepend_tool_paths
+import pytest
+
+import ccbd.daemon_process as daemon_process
+from ccbd.daemon_process import _ccbd_env, _prepend_tool_paths, _ready_payload_matches_expected
+from ccbd.startup_fence import (
+    EXPECTED_GENERATION_ENV,
+    EXPECTED_STARTUP_ID_ENV,
+    KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV,
+)
 
 
 def test_ccbd_env_prefers_current_worktree_tools(monkeypatch) -> None:
@@ -20,6 +29,96 @@ def test_ccbd_env_prefers_current_worktree_tools(monkeypatch) -> None:
     assert env['CCB_KEEPER_PID'] == '123'
 
 
+def test_ccbd_env_injects_exact_startup_fence_and_drops_inherited_values(monkeypatch) -> None:
+    monkeypatch.setenv(EXPECTED_STARTUP_ID_ENV, 'b' * 32)
+    monkeypatch.setenv(EXPECTED_GENERATION_ENV, '99')
+
+    env = _ccbd_env(
+        keeper_pid=123,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+        keeper_startup_accepted_perf_counter_ns=1234567,
+    )
+
+    assert env[EXPECTED_STARTUP_ID_ENV] == 'a' * 32
+    assert env[EXPECTED_GENERATION_ENV] == '7'
+    assert env[KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV] == '1234567'
+
+
+def test_ccbd_env_drops_inherited_or_malformed_diagnostics_checkpoint(monkeypatch) -> None:
+    monkeypatch.setenv(KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV, '999')
+
+    legacy_env = _ccbd_env(keeper_pid=123)
+    malformed_env = _ccbd_env(
+        keeper_pid=123,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+        keeper_startup_accepted_perf_counter_ns=-1,
+    )
+
+    assert KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV not in legacy_env
+    assert KEEPER_STARTUP_ACCEPTED_PERF_COUNTER_NS_ENV not in malformed_env
+
+
+def test_ccbd_env_rejects_partial_startup_fence() -> None:
+    try:
+        _ccbd_env(keeper_pid=123, expected_startup_id='a' * 32)
+    except ValueError as exc:
+        assert 'requires both' in str(exc)
+    else:
+        raise AssertionError('partial startup fence should fail')
+
+
+def test_ready_payload_requires_serving_child_identity() -> None:
+    process = type('Process', (), {'pid': 4321})()
+    payload = {
+        'generation': 7,
+        'mount_state': 'mounted',
+        'desired_state': 'running',
+        'serving_pid': 4321,
+        'serving_daemon_instance_id': 'daemon-1',
+        'serving_lease_generation': 7,
+        'accepted_startup_id': 'a' * 32,
+        'diagnostics': {
+            'startup_id': 'a' * 32,
+            'startup_stage': 'mounted',
+        },
+    }
+
+    assert _ready_payload_matches_expected(
+        payload,
+        process=process,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+    )
+    assert not _ready_payload_matches_expected(
+        {**payload, 'serving_pid': 9999},
+        process=process,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+    )
+    assert not _ready_payload_matches_expected(
+        {**payload, 'accepted_startup_id': 'b' * 32},
+        process=process,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+    )
+    assert not _ready_payload_matches_expected(
+        {
+            **payload,
+            'generation': 8,
+            'mount_state': 'starting',
+            'diagnostics': {
+                'startup_id': 'b' * 32,
+                'startup_stage': 'spawn_requested',
+            },
+        },
+        process=process,
+        expected_startup_id='a' * 32,
+        expected_generation=7,
+    )
+
+
 def test_prepend_tool_paths_deduplicates_existing_entries(tmp_path: Path) -> None:
     root = tmp_path / 'repo'
     (root / 'bin').mkdir(parents=True)
@@ -28,3 +127,76 @@ def test_prepend_tool_paths_deduplicates_existing_entries(tmp_path: Path) -> Non
     _prepend_tool_paths(env, root)
 
     assert env['PATH'].split(os.pathsep) == [str(root / 'bin'), str(root), '/usr/bin']
+
+
+def test_spawn_failure_reclaims_only_spawned_child_and_closes_parent_logs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    process = type('Process', (), {'pid': 4321})()
+
+    def fake_popen(*args, **kwargs):
+        captured['stdout'] = kwargs['stdout']
+        captured['stderr'] = kwargs['stderr']
+        captured['start_new_session'] = kwargs['start_new_session']
+        return process
+
+    def fail_wait(**kwargs) -> None:
+        assert kwargs['process'] is process
+        raise daemon_process.CcbdProcessError('readiness mismatch')
+
+    reclaimed: list[object] = []
+    monkeypatch.setattr(daemon_process.subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr(daemon_process, '_wait_for_ccbd_ready', fail_wait)
+    monkeypatch.setattr(daemon_process, '_terminate_spawned_process', reclaimed.append)
+
+    with pytest.raises(daemon_process.CcbdProcessError, match='readiness mismatch'):
+        daemon_process.spawn_ccbd_process(
+            project_root=tmp_path,
+            socket_path=tmp_path / 'ccbd.sock',
+            ccbd_dir=tmp_path / '.ccb' / 'ccbd',
+            timeout_s=0.01,
+            expected_startup_id='a' * 32,
+            expected_generation=7,
+        )
+
+    assert reclaimed == [process]
+    assert captured['start_new_session'] is True
+    assert captured['stdout'].closed
+    assert captured['stderr'].closed
+
+
+def test_spawned_process_cleanup_escalates_and_reaps(monkeypatch) -> None:
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self) -> None:
+            self.wait_calls = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, *, timeout):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired('ccbd', timeout)
+            return -9
+
+        def terminate(self) -> None:
+            raise AssertionError('process-group termination should be used')
+
+        def kill(self) -> None:
+            raise AssertionError('process-group kill should be used')
+
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(daemon_process.os, 'killpg', lambda pid, sig: signals.append((pid, sig)))
+    process = FakeProcess()
+
+    daemon_process._terminate_spawned_process(process, timeout_s=0.01)
+
+    assert signals == [
+        (4321, daemon_process.signal.SIGTERM),
+        (4321, daemon_process.signal.SIGKILL),
+    ]
+    assert process.wait_calls == 2

@@ -9,12 +9,13 @@ def update_current_lease_config_signature(
     *,
     expected_generation: int,
 ):
-    return app.mount_manager.update_config_signature(
-        config_signature=config_signature,
-        expected_pid=app.pid,
-        expected_daemon_instance_id=app.daemon_instance_id,
-        expected_generation=expected_generation,
-    )
+    with app.ownership_guard.startup_lock():
+        return app.mount_manager.update_config_signature(
+            config_signature=config_signature,
+            expected_pid=app.pid,
+            expected_daemon_instance_id=app.daemon_instance_id,
+            expected_generation=expected_generation,
+        )
 
 
 def assert_current_lease_signature_handoff(app, *, expected_generation: int) -> None:
@@ -40,36 +41,37 @@ def update_mounted_lifecycle_config_signature(
     namespace_epoch: int | None,
     expected_generation: int,
 ):
-    assert_mounted_lifecycle_signature_handoff(
-        app,
-        expected_generation=expected_generation,
-    )
-    lifecycle = app.lifecycle_store.load()
-    assert lifecycle is not None
-    signature = str(config_signature or '').strip()
-    if not signature:
-        raise RuntimeError('config_signature cannot be empty')
-    updated = lifecycle.with_updates(
-        desired_state='running',
-        keeper_pid=getattr(app, 'keeper_pid', None),
-        owner_pid=app.pid,
-        owner_daemon_instance_id=app.daemon_instance_id,
-        config_signature=signature,
-        socket_path=str(app.paths.ccbd_socket_path),
-        socket_inode=current_socket_inode(app.paths.ccbd_socket_path),
-        namespace_epoch=(
-            int(namespace_epoch)
-            if namespace_epoch is not None
-            else lifecycle.namespace_epoch
-        ),
-        startup_stage='mounted',
-        last_progress_at=app.clock(),
-        startup_deadline_at=None,
-        last_failure_reason=None,
-        shutdown_intent=None,
-    )
-    app.lifecycle_store.save(updated)
-    return updated
+    with app.ownership_guard.startup_lock():
+        assert_mounted_lifecycle_signature_handoff(
+            app,
+            expected_generation=expected_generation,
+        )
+        lifecycle = app.lifecycle_store.load()
+        assert lifecycle is not None
+        signature = str(config_signature or '').strip()
+        if not signature:
+            raise RuntimeError('config_signature cannot be empty')
+        updated = lifecycle.with_updates(
+            desired_state='running',
+            keeper_pid=getattr(app, 'keeper_pid', None),
+            owner_pid=app.pid,
+            owner_daemon_instance_id=app.daemon_instance_id,
+            config_signature=signature,
+            socket_path=str(app.paths.ccbd_socket_path),
+            socket_inode=current_socket_inode(app.paths.ccbd_socket_path),
+            namespace_epoch=(
+                int(namespace_epoch)
+                if namespace_epoch is not None
+                else lifecycle.namespace_epoch
+            ),
+            startup_stage='mounted',
+            last_progress_at=app.clock(),
+            startup_deadline_at=None,
+            last_failure_reason=None,
+            shutdown_intent=None,
+        )
+        app.lifecycle_store.save(updated)
+        return updated
 
 
 def assert_mounted_lifecycle_signature_handoff(

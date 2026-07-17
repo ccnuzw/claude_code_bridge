@@ -1,6 +1,6 @@
 # Agentic Loop Workflow Open Questions
 
-Date: 2026-07-10
+Date: 2026-07-15
 
 ## Product Questions
 
@@ -115,13 +115,10 @@ Date: 2026-07-10
 10. What is the smallest Roadmap Graph schema that supports dependencies,
     scope claims, joins, priority, pause/resume, and plan revision without
     turning Plan Tree into a general workflow DSL?
-11. Should production concurrent mode keep the canonical Plan Tree in the main
-    checkout or one shared plan-control worktree while preserving one authority
-    copy and a clean user main checkout?
-12. Which semantic scope-claim vocabulary is required for the first two-lane
+11. Which semantic scope-claim vocabulary is required for the first two-lane
     gate: files, modules, interfaces, schemas, commands, runtime resources, and
     release surfaces?
-13. What measured planning-queue latency should permit multiple scoped planner
+12. What measured planning-queue latency should permit multiple scoped planner
     instances, and what default maximum should config validation enforce?
 
 ## Multi-Workgroup Release Questions

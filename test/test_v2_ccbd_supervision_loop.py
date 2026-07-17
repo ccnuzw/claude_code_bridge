@@ -1222,6 +1222,69 @@ def test_runtime_supervision_loop_persists_failure_reason_and_event(tmp_path: Pa
     assert events[1].details == {'reason': 'pane-dead'}
 
 
+def test_runtime_supervision_loop_stops_after_provider_auth_recovery_is_blocked(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-supervision-auth-blocked'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex')
+    registry = AgentRegistry(layout, config)
+    session = RecoveringBindingSession(
+        pane_id='%41',
+        fake_session_id='codex-session-old',
+        recovered_pane_id='%88',
+        recovered_session_id='codex-session-new',
+        recover_ok=False,
+    )
+    detail = 'Inherited Codex authentication is unchanged; run `codex login` before remounting'
+    session.data = {
+        'pane_recovery_block': {
+            'reason': 'provider_auth_revoked',
+            'detail': detail,
+            'pane_id': '%41',
+        }
+    }
+    runtime_service = RuntimeService(
+        layout,
+        registry,
+        ctx.project_id,
+        session_bindings=_binding_map('codex', session),
+        clock=lambda: '2026-03-18T00:00:00Z',
+    )
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101, health='pane-dead'))
+    loop = RuntimeSupervisionLoop(
+        project_id=ctx.project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        runtime_service=runtime_service,
+        clock=lambda: '2026-03-18T00:00:10Z',
+        generation_getter=lambda: 12,
+    )
+
+    assert loop.reconcile_once() == {'codex': 'provider-auth-revoked'}
+
+    blocked = registry.get('codex')
+    assert blocked is not None
+    assert blocked.state is AgentState.DEGRADED
+    assert blocked.health == 'provider-auth-revoked'
+    assert blocked.reconcile_state == 'blocked'
+    assert blocked.restart_count == 1
+    assert blocked.last_failure_reason == detail
+    assert session.ensure_calls == 1
+
+    assert loop.reconcile_once() == {'codex': 'provider-auth-revoked'}
+
+    unchanged = registry.get('codex')
+    assert unchanged is not None
+    assert unchanged.restart_count == 1
+    assert unchanged.last_failure_reason == detail
+    assert session.ensure_calls == 1
+    events = SupervisionEventStore(layout).read_all()
+    assert [event.event_kind for event in events] == ['recover_started', 'recover_failed']
+    assert events[1].details == {'reason': detail}
+
+
 def test_runtime_supervision_loop_persists_mount_failure(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-supervision-mount-failure'
     project_root.mkdir()

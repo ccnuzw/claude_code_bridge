@@ -156,6 +156,33 @@ Date: 2026-06-24
   [topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md)
   and
   [decisions/023-roadmap-graph-and-workflow-lanes.md](decisions/023-roadmap-graph-and-workflow-lanes.md).
+- Accepted the cross-worktree Plan Tree consistency refinement: one repository
+  control domain uses committed portfolio identity, local repository identity,
+  one explicit locator, and one generation/fenced holder to publish a serialized
+  authority target ref. Lane worktrees use immutable typed authority closures
+  and revision-fenced proposals. Code plus an explicit Plan Tree
+  `promotion_pending` record first form one hidden candidate; target promotion,
+  final Plan Tree completion, and event publication then advance through a
+  recoverable saga. Shared lane runtime is projected into Markdown only at
+  stable checkpoints. See
+  [decisions/031-global-plan-tree-authority-across-worktrees.md](decisions/031-global-plan-tree-authority-across-worktrees.md)
+  and
+  [topics/global-plan-tree-authority-and-cross-worktree-control.md](topics/global-plan-tree-authority-and-cross-worktree-control.md).
+  Canonical task and typed Planner projection cutover is isolated in
+  [topics/global-plan-tree-storage-and-projection-migration.md](topics/global-plan-tree-storage-and-projection-migration.md).
+  Fault-injection acceptance is frozen in
+  [topics/global-plan-tree-cross-worktree-acceptance-matrix.md](topics/global-plan-tree-cross-worktree-acceptance-matrix.md).
+  The requested Claude coworker review accepted the architecture with small
+  clarifications; all findings are incorporated and dispositioned in
+  [history/global-plan-tree-claude-coworker-review-20260715.md](history/global-plan-tree-claude-coworker-review-20260715.md).
+- Accepted a CCB-only Plan Tree skill boundary for Config V3 workflows. The
+  public skill remains unchanged outside the workflow. Only the exact
+  `version=3` / `agentic-loop` / `agentic_loop_v1` Planner Role receives a
+  complete specialized `plan-tree` replacement in its managed provider home.
+  The replacement is proposal-only, digest-bound to the Planner Role and
+  permission surface, and cannot activate deferred Roadmap Graph/lane fields
+  without a controller capability envelope. See
+  [topics/ccb-workflow-plan-tree-skill-overlay.md](topics/ccb-workflow-plan-tree-skill-overlay.md).
 - Accepted the single-lane Planner feedback and task-set closure boundary:
   local Detailer results return to Orchestrator, macro-impact findings return
   directly to Planner, decomposition is not macro completion, mixed child
@@ -1429,9 +1456,17 @@ acceptance remain active. See
 
 ## Deferred
 
-- Concurrent multi-lane Roadmap Graph execution and arbitration. Multi-node
-  fanout inside the current single lane is no longer deferred; it is the active
-  release goal.
+- Concurrent multi-lane Roadmap Graph execution and arbitration. Its accepted
+  prerequisite is the repository-global Plan Tree control domain, explicit
+  election/fencing, canonical task migration, typed authority closure,
+  transactional target-ref stream, shared lane registry, immutable snapshot,
+  and integration saga in
+  [Decision 031](decisions/031-global-plan-tree-authority-across-worktrees.md).
+  Every pre-concurrency and two-lane row in the
+  [acceptance matrix](topics/global-plan-tree-cross-worktree-acceptance-matrix.md)
+  must pass.
+  Multi-node fanout inside the current single lane is no longer deferred; it is
+  the active release goal.
 - Full multi-round loop-runner-mediated dynamic agent load/unload beyond the
   bounded `run-once` smoke.
 - Long-running loop runner daemon.
