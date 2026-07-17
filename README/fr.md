@@ -6,7 +6,7 @@
 **Coordonne Codex, Claude, Gemini et d'autres agents CLI dans des workflows visibles, contrôlables et reprenables directement**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.2.0-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.2.1-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -180,9 +180,9 @@ Cette commande guide l'installation et la configuration.
 <details>
 <summary><b>Détails de l'app mobile, frontière de sécurité et source</b></summary>
 
-CCB 8.2.0 inclut le code source Flutter de CCB Mobile dans [`mobile/`](../mobile/) et publie l'APK Android via GitHub Releases :
+CCB 8.2.1 inclut le code source Flutter de CCB Mobile dans [`mobile/`](../mobile/) et publie l'APK Android via GitHub Releases :
 
-- [Télécharger l'APK CCB Mobile v8.2.0](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.0/ccb-mobile-v8.2.0.apk)
+- [Télécharger l'APK CCB Mobile v8.2.1](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.1/ccb-mobile-v8.2.1.apk)
 - Source de l'app : [`mobile/app`](../mobile/app)
 - Source du gateway serveur : [`lib/mobile_gateway`](../lib/mobile_gateway)
 
@@ -261,6 +261,16 @@ Merci à [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) pou
 ## Notes de version
 
 <details open>
+<summary><b>v8.2.1</b> - Démarrage déterministe, récupération d'authentification explicite et connexion Android en arrière-plan</summary>
+
+- Ajoute des barrières de génération de démarrage, une preuve de disponibilité bornée et des diagnostics chronologiques.
+- Arrête les boucles de redémarrage sans issue liées à l'authentification provider et affiche l'action de connexion requise.
+- Ajoute une connexion Android en arrière-plan sur activation et un seul état de réponse active par Agent.
+- Synchronise les artefacts Linux, macOS, npm et Android signé avec la version 8.2.1.
+
+</details>
+
+<details>
 <summary><b>v8.2.0</b> - Démarrage accéléré, correctifs provider et fiabilité Mobile</summary>
 
 - Réduit le travail répété au démarrage de ccbd sans affaiblir les contrôles de lifecycle et d'ownership.

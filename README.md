@@ -6,7 +6,7 @@
 **Coordinate Codex, Claude, Gemini, and other CLI agents in visible, controllable workflows you can take over**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.2.0-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.2.1-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -186,9 +186,9 @@ This command guides installation and configuration.
 <details>
 <summary><b>Mobile App details, safety boundary, and source</b></summary>
 
-CCB 8.2.0 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
+CCB 8.2.1 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
 
-- [Download CCB Mobile v8.2.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.0/ccb-mobile-v8.2.0.apk)
+- [Download CCB Mobile v8.2.1 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.1/ccb-mobile-v8.2.1.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -272,6 +272,17 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 ## Release Notes
 
 <details open>
+<summary><b>v8.2.1</b> - Deterministic startup, actionable auth recovery, and Android background access</summary>
+
+- Added end-to-end startup generation fencing, bounded readiness proof, and detailed startup operation/timeline diagnostics.
+- Stopped unrecoverable provider-auth restart loops and exposed the required login action through ping, project view, and the sidebar.
+- Preserved additive reload identity and idempotent shutdown behavior under the stricter lifecycle authority model.
+- Added opt-in Android background connection controls and kept one working reply state per agent.
+- Synchronized Linux, macOS, npm, and signed Android artifacts for 8.2.1.
+
+</details>
+
+<details>
 <summary><b>v8.2.0</b> - Faster startup, provider fixes, and Mobile reliability</summary>
 
 - Reduced repeated ccbd startup work while preserving lifecycle and ownership checks.

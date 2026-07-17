@@ -1,5 +1,59 @@
 # Changelog
 
+## v8.2.1 (2026-07-17)
+
+### Startup And Lifecycle Reliability
+
+- **Startup Generations Are Fenced End To End**: keeper, daemon, socket,
+  lifecycle, lease, and mounted publication now carry one verified startup
+  identity, preventing stale or overlapping attempts from publishing authority.
+- **Readiness Is Proven Before Mount Publication**: ccbd opens a bounded
+  bootstrap probe and validates socket ownership, serving identity, namespace,
+  pane topology, and runtime authority before the project becomes mounted.
+- **Startup Diagnostics Are Actionable**: operation counts, process and I/O
+  samples, readiness timelines, exact T1 attribution, and phase checkpoints are
+  available through the performance and diagnostics tooling without weakening
+  lifecycle checks.
+- **CLI-Only Cost Has An Isolated S0 Baseline**: the benchmark primes one
+  healthy project, measures the version introspection fast path without opening
+  another startup transaction, and proves daemon, namespace, runtime, and
+  startup-report authority remained unchanged before teardown.
+
+### Recovery And Communication
+
+- **Revoked Provider Authentication Stops Restart Loops**: unrecoverable auth
+  failures become a durable blocked runtime state, remain queued instead of
+  respawning, and expose the required login action through ping, project view,
+  and the sidebar. This completes Issue #251 option 2 while retaining supported
+  in-place credential refresh.
+- **Reload And Shutdown Preserve Authority Boundaries**: additive topology
+  reloads validate session and namespace-epoch pane identity, and an accepted
+  shutdown request remains idempotent while the server is already stopping.
+- **Runtime Imports Are Order Independent**: the app runtime package now loads
+  public exports lazily, eliminating a handler/bootstrap circular import that
+  could break isolated diagnostics and test collection.
+
+### Mobile And Gateway
+
+- **Android Can Keep A User-Enabled Background Connection**: the Mobile app
+  exposes Android background-access status, foreground-service controls, and
+  battery-restriction guidance while preserving explicit opt-in behavior.
+- **Conversation Progress Stays Agent Scoped**: each agent retains one working
+  reply indicator, so background refreshes and agent switching cannot duplicate
+  or transfer an in-progress reply.
+- **Push Support Remains Optional**: FCM authentication dependencies stay
+  optional and fail closed when deployment-owned Firebase configuration is not
+  present.
+
+### Planning And Release Surface
+
+- **Parallel PlanTree Work Has A Global Authority Design**: the workflow plan
+  documents cross-worktree roots, global roadmap control, lane ownership,
+  evidence projection, migration, and acceptance gates for future v3 rollout.
+- **Release Versions Are Synchronized**: CLI, npm, Linux, macOS, Android,
+  localized badges, workflow defaults, download links, and checksums target
+  8.2.1.
+
 ## v8.2.0 (2026-07-16)
 
 ### Startup Performance

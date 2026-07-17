@@ -6,7 +6,7 @@
 **Coordina Codex, Claude, Gemini y otros agentes CLI en flujos visibles y controlables que puedes tomar directamente**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.2.0-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.2.1-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -180,9 +180,9 @@ Este comando guía la instalación y configuración.
 <details>
 <summary><b>Detalles de Mobile App, límite de seguridad y fuente</b></summary>
 
-CCB 8.2.0 incluye el código Flutter de CCB Mobile en [`mobile/`](../mobile/) y publica el APK Android mediante GitHub Releases:
+CCB 8.2.1 incluye el código Flutter de CCB Mobile en [`mobile/`](../mobile/) y publica el APK Android mediante GitHub Releases:
 
-- [Descargar CCB Mobile v8.2.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.0/ccb-mobile-v8.2.0.apk)
+- [Descargar CCB Mobile v8.2.1 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.1/ccb-mobile-v8.2.1.apk)
 - Fuente de la app: [`mobile/app`](../mobile/app)
 - Fuente del gateway del servidor: [`lib/mobile_gateway`](../lib/mobile_gateway)
 
@@ -261,6 +261,16 @@ Gracias a [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) po
 ## Notas de versión
 
 <details open>
+<summary><b>v8.2.1</b> - Inicio determinista, recuperación de autenticación accionable y conexión Android en segundo plano</summary>
+
+- Añade cercas de generación de inicio, prueba acotada de disponibilidad y diagnósticos de operaciones y cronología.
+- Detiene los reinicios sin salida por autenticación del provider y muestra la acción de inicio de sesión necesaria.
+- Añade conexión Android en segundo plano opcional y un único estado de respuesta activa por Agent.
+- Sincroniza los artefactos Linux, macOS, npm y Android firmado con 8.2.1.
+
+</details>
+
+<details>
 <summary><b>v8.2.0</b> - Inicio más rápido, correcciones de providers y Mobile fiable</summary>
 
 - Reduce trabajo repetido durante el inicio de ccbd sin debilitar las comprobaciones de lifecycle y ownership.
